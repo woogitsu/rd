@@ -10,6 +10,9 @@
       "name": "admin"
     },
     {
+      "name": "audit-reviews"
+    },
+    {
       "name": "board"
     },
     {
@@ -352,6 +355,58 @@
         ],
         "x-rd-matrix-ids": [
           "admin.accountRequestReject"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/anonymizations": {
+      "post": {
+        "operationId": "admin_anonymizationPreview",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.anonymizationPreview",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.anonymizationPreview"
         ],
         "x-rd-mfa": true,
         "x-rd-ok-status": [
@@ -2941,6 +2996,344 @@
         ],
         "x-rd-roles": [
           "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit-reviews/{year}": {
+      "get": {
+        "operationId": "auditReviews_list",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditReviews.list",
+        "tags": [
+          "audit-reviews"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "audit": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "auditReviews.list"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "audit",
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit-reviews/{year}/conclusion": {
+      "post": {
+        "operationId": "auditReviews_conclusion",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditReviews.conclusion",
+        "tags": [
+          "audit-reviews"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "audit": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "auditReviews.conclusion"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "audit"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit-reviews/{year}/notes": {
+      "post": {
+        "operationId": "auditReviews_noteCreate",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditReviews.noteCreate",
+        "tags": [
+          "audit-reviews"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "audit": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "auditReviews.noteCreate"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "audit"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit-reviews/{year}/notes/{id}/answers": {
+      "post": {
+        "operationId": "auditReviews_answer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditReviews.answer",
+        "tags": [
+          "audit-reviews"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "auditReviews.answer"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit-reviews/{year}/notes/{id}/closure": {
+      "post": {
+        "operationId": "auditReviews_close",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditReviews.close",
+        "tags": [
+          "audit-reviews"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "audit": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "auditReviews.close"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "audit"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -18085,8 +18478,13 @@
           "alt_text_required",
           "ambiguous_csv_delimiter",
           "ambiguous_local_time",
+          "anonymization_plan_changed",
+          "anonymization_row_mismatch",
           "approval_required",
           "approval_stale",
+          "audit_review_closed",
+          "audit_review_not_found",
+          "audit_review_target_not_found",
           "authorization_superseded",
           "backup_failed",
           "bank_import_not_configured",
@@ -18128,6 +18526,7 @@
           "data_request_closed",
           "data_request_export_in_progress",
           "data_request_identity_not_verified",
+          "data_request_kind_not_erasable",
           "data_request_kind_not_exportable",
           "data_request_kind_not_restrictable",
           "data_request_not_found",
@@ -18189,6 +18588,7 @@
           "invalid_alt_text",
           "invalid_amount",
           "invalid_audience",
+          "invalid_audit_review_body",
           "invalid_author",
           "invalid_bic",
           "invalid_body",
@@ -18214,6 +18614,7 @@
           "invalid_csv_header",
           "invalid_current_password",
           "invalid_cursor",
+          "invalid_data_request_id",
           "invalid_date",
           "invalid_date_range",
           "invalid_datetime",
@@ -18227,6 +18628,7 @@
           "invalid_document_date",
           "invalid_document_id",
           "invalid_domain",
+          "invalid_dry_run",
           "invalid_due_on",
           "invalid_effective_on",
           "invalid_email",
@@ -18239,6 +18641,7 @@
           "invalid_explicit_license",
           "invalid_format",
           "invalid_from",
+          "invalid_household_id",
           "invalid_iban",
           "invalid_id",
           "invalid_idempotency_key",
@@ -18276,10 +18679,12 @@
           "invalid_photo_id",
           "invalid_photos",
           "invalid_plan_digest",
+          "invalid_plan_sha256",
           "invalid_post_id",
           "invalid_provider_pause_id",
           "invalid_quorum_rule",
           "invalid_reason",
+          "invalid_reason_code",
           "invalid_received_on",
           "invalid_reference",
           "invalid_reference_text",
@@ -18467,6 +18872,10 @@
           "resolution_required",
           "restore_drill_failed",
           "restore_report_bad_identifier",
+          "retention_period_not_elapsed",
+          "retention_policy_missing",
+          "retention_policy_not_approved",
+          "retention_rule_not_evaluable",
           "retry_later",
           "review_expense_only",
           "revision_conflict",
@@ -18605,6 +19014,16 @@
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
+        "code": "anonymization_plan_changed",
+        "meaning": "Dane gospodarstwa zmieniły się od podglądu. Zrób podgląd jeszcze raz i zatwierdź nowy plan.",
+        "retry": "Tak, po ponownym podglądzie (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "anonymization_row_mismatch",
+        "meaning": "Liczba zmienionych wierszy nie zgadza się z planem — operację wycofano, nic nie zostało zanonimizowane.",
+        "retry": "Tak, po ponownym podglądzie (dane zmieniły się w międzyczasie)."
+      },
+      {
         "code": "approval_required",
         "meaning": "Operacja wymaga wcześniejszego zatwierdzenia.",
         "retry": "Nie — popraw dane żądania."
@@ -18613,6 +19032,21 @@
         "code": "approval_stale",
         "meaning": "Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie.",
         "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "audit_review_closed",
+        "meaning": "Uwaga została już zamknięta przez Komisję Rewizyjną. Dodaj nową uwagę, jeśli sprawa wymaga dalszej kontroli.",
+        "retry": "Nie — dodaj nową uwagę."
+      },
+      {
+        "code": "audit_review_not_found",
+        "meaning": "Nie znaleziono uwagi Komisji Rewizyjnej.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "audit_review_target_not_found",
+        "meaning": "Nie znaleziono wskazanego wpisu księgi, uzgodnienia ani roku w tym roku szkolnym.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "authorization_superseded",
@@ -18818,6 +19252,11 @@
         "code": "data_request_identity_not_verified",
         "meaning": "Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy.",
         "retry": "Nie — najpierw zmień stan żądania."
+      },
+      {
+        "code": "data_request_kind_not_erasable",
+        "meaning": "Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "data_request_kind_not_exportable",
@@ -19125,6 +19564,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_audit_review_body",
+        "meaning": "Treść uwagi musi mieć od 3 do 2000 znaków.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_author",
         "meaning": "Niepoprawny autor.",
         "retry": "Nie — popraw dane żądania."
@@ -19250,6 +19694,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_data_request_id",
+        "meaning": "Podaj identyfikator żądania osoby (tylko przy powodzie data_subject_request).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_date",
         "meaning": "Niepoprawna data.",
         "retry": "Nie — popraw dane żądania."
@@ -19315,6 +19764,11 @@
         "retry": "Nie — popraw dane."
       },
       {
+        "code": "invalid_dry_run",
+        "meaning": "Pole dryRun musi być wartością logiczną.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_due_on",
         "meaning": "Podaj poprawną datę terminu odpowiedzi.",
         "retry": "Nie — popraw dane żądania."
@@ -19373,6 +19827,11 @@
         "code": "invalid_from",
         "meaning": "Podaj poprawną datę początkową (RRRR-MM-DD).",
         "retry": "Nie — popraw dane."
+      },
+      {
+        "code": "invalid_household_id",
+        "meaning": "Niepoprawny identyfikator gospodarstwa.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "invalid_iban",
@@ -19560,6 +20019,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_plan_sha256",
+        "meaning": "Podaj skrót planu (planSha256) z podglądu.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_post_id",
         "meaning": "Niepoprawny identyfikator wpisu.",
         "retry": "Nie — popraw dane żądania."
@@ -19577,6 +20041,11 @@
       {
         "code": "invalid_reason",
         "meaning": "Podaj powód (3–500 znaków).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_reason_code",
+        "meaning": "Podaj powód przebiegu: retention_policy albo data_subject_request.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -20513,6 +20982,26 @@
         "code": "restore_report_bad_identifier",
         "meaning": "Raport zgodności odrzucił nieprawidłową nazwę tabeli. Sprawdź schemat bazy.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "retention_period_not_elapsed",
+        "meaning": "Okres przechowywania danych tego gospodarstwa jeszcze nie upłynął — nic nie zostało zanonimizowane.",
+        "retry": "Nie — poczekaj do upływu okresu z polityki retencji."
+      },
+      {
+        "code": "retention_policy_missing",
+        "meaning": "Brak zatwierdzonej polityki retencji (D-04) dla wszystkich kategorii danych — nic nie zostało zanonimizowane.",
+        "retry": "Nie — najpierw administrator danych wpisuje politykę retencji."
+      },
+      {
+        "code": "retention_policy_not_approved",
+        "meaning": "Polityka retencji nie ma zatwierdzenia drugiej osoby — nic nie zostało zanonimizowane.",
+        "retry": "Nie — najpierw zatwierdź politykę retencji."
+      },
+      {
+        "code": "retention_rule_not_evaluable",
+        "meaning": "Polityka retencji ma tylko opis reguły, bez okresu — system nie potrafi wyliczyć terminu, nic nie zostało zanonimizowane.",
+        "retry": "Nie — popraw politykę retencji (okres retain_for)."
       },
       {
         "code": "retry_later",

@@ -9,7 +9,12 @@
 
 import { sha256Hex } from '../storage.js';
 
-const DOCS_PREFIX = 'docs/';
+// Dokumenty (`docs/`, tabela documents) i pliki zdjęć galerii (`photos/`,
+// tabela news_photo_files, migracja 0084) — oba w prywatnym buckecie.
+const SETS = Object.freeze([
+  Object.freeze({ name: 'documents', prefix: 'docs/', table: 'documents', sizeColumn: 'byte_size' }),
+  Object.freeze({ name: 'photos', prefix: 'photos/', table: 'news_photo_files', sizeColumn: 'byte_size' }),
+]);
 const MAX_LISTED_IDS = 50;
 const LOCAL_KINDS = new Set(['memory', 'directory']);
 
@@ -32,9 +37,11 @@ async function listAllKeys(storage, prefix) {
 // policzone z faktycznej treści (nie z metadanych dostawcy).
 export async function buildStorageManifest(storage, { now = new Date() } = {}) {
   const entries = [];
-  for (const key of await listAllKeys(storage, DOCS_PREFIX)) {
-    const object = await storage.getObject(key);
-    entries.push({ key, sha256: sha256Hex(object.body), size: object.body.length });
+  for (const set of SETS) {
+    for (const key of await listAllKeys(storage, set.prefix)) {
+      const object = await storage.getObject(key);
+      entries.push({ key, sha256: sha256Hex(object.body), size: object.body.length });
+    }
   }
   return { format: 'rd-storage-manifest-v1', generatedAt: now.toISOString(), entries };
 }
@@ -52,14 +59,20 @@ export function parseStorageManifest(value) {
   return manifest;
 }
 
-async function documentRows(db) {
+async function setRows(db, set) {
   const { rows } = await db.query(
-    `SELECT id, object_key, sha256, byte_size FROM documents
+    `SELECT id, object_key, sha256, ${set.sizeColumn} AS byte_size FROM ${set.table}
      WHERE object_key IS NOT NULL AND sha256 IS NOT NULL AND object_key LIKE $1
      ORDER BY object_key`,
-    [`${DOCS_PREFIX}%`],
+    [`${set.prefix}%`],
   );
-  return rows;
+  return rows.map((row) => ({ ...row, set: set.name }));
+}
+
+async function documentRows(db) {
+  const all = [];
+  for (const set of SETS) all.push(...await setRows(db, set));
+  return all;
 }
 
 function capped(ids) {
@@ -88,7 +101,8 @@ export async function verifyStorageBackup({ db, manifest }) {
   }
   const orphaned = parsed.entries.filter((entry) => !documentKeys.has(entry.key)).length;
   const report = {
-    documentsWithObject: rows.length,
+    documentsWithObject: rows.filter((row) => row.set === 'documents').length,
+    photoFilesWithObject: rows.filter((row) => row.set === 'photos').length,
     objectsInBackup: parsed.entries.length,
     expectedBytes,
     backupBytes,
@@ -129,11 +143,38 @@ export async function runStorageRestoreDrill({ db, backupStorage, restoreStorage
     restored += 1;
   }
   return {
-    documentsWithObject: rows.length,
+    documentsWithObject: rows.filter((row) => row.set === 'documents').length,
+    photoFilesWithObject: rows.filter((row) => row.set === 'photos').length,
     sampled: sample.length,
     restored,
     missingInBackup: capped(missing),
     hashFailures: capped(failed),
     ok: restored === sample.length,
   };
+}
+
+// Raport zgodności bucketu z bazą (bez kopiowania i bez pobierania treści):
+// dla `docs/` i `photos/` liczba wierszy z kluczem, obiektów w magazynie,
+// obiektów OSIEROCONYCH (w buckecie, bez wiersza) i wierszy BEZ OBIEKTU
+// (identyfikatory techniczne wierszy, nie klucze). Tylko odczyt. Osierocony
+// obiekt bywa skutkiem nieudanej transakcji — to ostrzeżenie do ręcznej
+// decyzji, nie błąd; wiersz bez obiektu psuje `ok`.
+export async function reportStorageConsistency({ db, storage }) {
+  const sets = {};
+  let ok = true;
+  for (const set of SETS) {
+    const rows = await setRows(db, set);
+    const keys = new Set(await listAllKeys(storage, set.prefix));
+    const rowKeys = new Set(rows.map((row) => row.object_key));
+    const withoutObject = rows.filter((row) => !keys.has(row.object_key)).map((row) => row.id);
+    const orphaned = [...keys].filter((key) => !rowKeys.has(key)).length;
+    sets[set.name] = {
+      rowsWithObjectKey: rows.length,
+      objectsInStorage: keys.size,
+      orphanedObjects: orphaned,
+      rowsWithoutObject: capped(withoutObject),
+    };
+    if (withoutObject.length) ok = false;
+  }
+  return { sets, ok };
 }

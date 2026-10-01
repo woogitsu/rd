@@ -672,6 +672,13 @@ async function makeAdminTarget(ctx, stage) {
     await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/data-requests/${json.request.id}/status`, { status: 'identity_verified' });
     return { requestId: json.request.id };
   }
+  if (stage === 'dataRequestErasure') {
+    // #91: anonimizacja wymaga żądania usunięcia po weryfikacji tożsamości (hh-1); macierz robi tylko podgląd.
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'erasure', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/data-requests/${json.request.id}/status`, { status: 'identity_verified' });
+    return { requestId: json.request.id };
+  }
   throw new Error(`unknown admin fixture ${stage}`);
 }
 
@@ -806,6 +813,16 @@ const MAKERS = {
       description: `Wpis ${marker(target.key)}`, occurredOn: yearDate(target, '10-01'), method: 'bank',
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
+  },
+  // #137: pytanie KR zapisane wprost w bazie przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  auditNote: async (ctx, target) => {
+    const noteId = nextKey('fx-arn-id');
+    await ctx.db.query(
+      `INSERT INTO audit_review_notes (id, school_year_id, kind, target_type, target_id, body, created_by, idempotency_key)
+       VALUES ($1, $2, 'question', 'year', $2, 'Pytanie pomocnicze (syntetyczne)', 'u-fx-admin', $3)`,
+      [noteId, target.schoolYearId, nextKey('fx-arn-key')],
+    );
+    return { noteId };
   },
   // #125: przygotowanie do utworzenia migawki — zmiana księgi (nowa treść) i bieżąca migawka roku.
   reportSnapshotPrep: async (ctx, target) => {
@@ -1439,6 +1456,7 @@ const MODULE_SOURCES = {
   admin: ['../src/pg/routes/admin.js'],
   reconciliation: ['../src/pg/routes/reconciliation.js'],
   'financial-reports': ['../src/pg/routes/financial-reports.js'],
+  'audit-reviews': ['../src/pg/routes/audit-reviews.js'],
   exports: ['../src/pg/routes/exports.js'],
   families: ['../src/pg/routes/families.js'],
   print: ['../src/pg/routes/print.js'],

@@ -125,6 +125,10 @@ const CATALOG = {
   'report.cash_flow.generated': ['finance', 'Raport przepływów bank/kasa'],
   'report.snapshot.created': ['finance', 'Utworzenie migawki sprawozdania'],
   'report.snapshot.approved': ['finance', 'Zatwierdzenie migawki sprawozdania'],
+  'audit_review.note_added': ['finance', 'Uwaga Komisji Rewizyjnej'],
+  'audit_review.answered': ['finance', 'Odpowiedź na uwagę Komisji Rewizyjnej'],
+  'audit_review.closed': ['finance', 'Zamknięcie uwagi Komisji Rewizyjnej'],
+  'audit_review.conclusion_recorded': ['finance', 'Wniosek końcowy Komisji Rewizyjnej'],
   'board.overview.exported': ['finance', 'Eksport przeglądu zarządu'],
 
   // --- year_close ---
@@ -219,6 +223,8 @@ const CATALOG = {
   'processing_restriction.applied': ['privacy', 'Nałożenie ograniczenia przetwarzania danych (gospodarstwo lub opiekun)'],
   'processing_restriction.lifted': ['privacy', 'Zdjęcie ograniczenia przetwarzania danych (nowy zapis, historia zostaje)'],
   'data_subject_request.exported': ['privacy', 'Eksport danych jednej rodziny dla żądania osoby'],
+  'household.anonymization_previewed': ['privacy', 'Podgląd anonimizacji gospodarstwa (bez zmian danych)'],
+  'household.anonymized': ['privacy', 'Anonimizacja danych osobowych gospodarstwa z zachowaniem księgi'],
   'privacy_notice.created': ['privacy', 'Utworzenie wersji informacji o prywatności'],
   'privacy_notice.approved': ['privacy', 'Zatwierdzenie informacji o prywatności'],
   'privacy_notice.published': ['privacy', 'Publikacja informacji o prywatności'],
@@ -301,4 +307,35 @@ export function auditDomainActions(domain) {
 export function auditDomainReadable(domain, roles = []) {
   const readRoles = AUDIT_DOMAINS[domain]?.readRoles ?? [];
   return roles.some((role) => readRoles.includes(role));
+}
+
+// #181 pkt 3: źródło zdarzenia bez aktora (`actor_id = NULL`). Wiersze są
+// append-only, więc źródło jest pochodną akcji (i `metadata.source` tam, gdzie
+// akcję zapisują dwie ścieżki), liczoną przy odczycie — bez migracji.
+// `actorKind`: `user` (jest aktor), `system` (proces serwera: worker e-mail,
+// webhook Brevo, bootstrap) albo `anonymous` (osoba bez sesji: logowanie,
+// link rezygnacji). Etykiety źródeł: AUDIT_SOURCE_LABELS.
+export const AUDIT_SOURCE_LABELS = Object.freeze({
+  email_worker: 'Worker e-mail',
+  brevo_webhook: 'Powiadomienie dostawcy (Brevo)',
+  unsubscribe_link: 'Link rezygnacji z wiadomości',
+  login: 'Logowanie (bez sesji)',
+  bootstrap: 'Uruchomienie systemu (pierwszy administrator)',
+  system: 'Proces systemowy',
+});
+
+const WEBHOOK_ACTIONS = new Set(['email.address_suppressed', 'email.webhook.previous_secret_used']);
+
+export function auditEventSource(action, actorId, metadata = {}) {
+  if (actorId) return { actorKind: 'user', source: null };
+  if (action === 'auth.bootstrap_issued') return { actorKind: 'system', source: 'bootstrap' };
+  if (WEBHOOK_ACTIONS.has(action)) return { actorKind: 'system', source: 'brevo_webhook' };
+  if (action === 'email.preference.opt_out') {
+    return metadata?.source === 'link'
+      ? { actorKind: 'anonymous', source: 'unsubscribe_link' }
+      : { actorKind: 'system', source: 'brevo_webhook' };
+  }
+  if (action.startsWith('email.')) return { actorKind: 'system', source: 'email_worker' };
+  if (action.startsWith('auth.') || action.startsWith('mfa.')) return { actorKind: 'anonymous', source: 'login' };
+  return { actorKind: 'system', source: 'system' };
 }

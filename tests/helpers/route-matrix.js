@@ -1531,6 +1531,15 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
+  // Anonimizacja gospodarstwa (#91): wariant zachowawczy — admin + krok w górę MFA. Macierz wywołuje tylko podgląd
+  // (dryRun), który niczego nie zmienia; wykonanie i odmowy: tests/pg-anonymization.test.js.
+  adminRoute('admin.anonymizationPreview', 'POST', '/api/admin/anonymizations', {
+    object: 'dataRequestErasure',
+    build: ({ obj }) => ({
+      path: '/api/admin/anonymizations',
+      body: { householdId: 'hh-1', reasonCode: 'data_subject_request', dataRequestId: obj.requestId, dryRun: true },
+    }),
+  }),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
   adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
@@ -1599,6 +1608,50 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=xlsx` }),
+  },
+
+  // ---------- ścieżka kontroli Komisji Rewizyjnej (#137, 0176) ----------
+  // Odczyt: audit, zarząd, skarbnik (przydział bez klasy, rok 1, MFA). Pytanie, zamknięcie i wniosek: tylko audit;
+  // odpowiedź: zarząd i skarbnik. Admin, dyrekcja, przedstawiciel i przydział klasowy: 403 (D-09, wariant zachowawczy).
+  {
+    id: 'auditReviews.list', module: 'audit-reviews', method: 'GET', path: '/api/audit-reviews/:year',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null,
+    build: ({ target }) => ({ path: `/api/audit-reviews/${target.schoolYearId}` }),
+  },
+  {
+    id: 'auditReviews.noteCreate', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/notes',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: null,
+    build: ({ target, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/notes`, headers: withKey(key),
+      body: { kind: 'question', targetType: 'year', targetId: target.schoolYearId, body: 'Pytanie syntetyczne do roku.' },
+    }),
+  },
+  {
+    id: 'auditReviews.answer', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/notes/:id/answers',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'auditNote' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/notes/${obj.noteId}/answers`, headers: withKey(key),
+      body: { body: 'Odpowiedź syntetyczna.' },
+    }),
+  },
+  {
+    id: 'auditReviews.close', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/notes/:id/closure',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'auditNote' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/notes/${obj.noteId}/closure`, headers: withKey(key), body: {},
+    }),
+  },
+  {
+    id: 'auditReviews.conclusion', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/conclusion',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: null,
+    build: ({ target, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/conclusion`, headers: withKey(key), body: { body: 'Wniosek syntetyczny.' },
+    }),
   },
 
   // ---------- sprawozdanie roczne i przepływy (#125) ----------

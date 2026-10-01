@@ -632,10 +632,8 @@ danych: nowa, pusta tabela; brak zmian w istniejących tabelach. Brak wiersza
 dla kategorii oznacza „nie usuwaj” (ta sama semantyka co `documents.retain_until`
 sprzed tej migracji). Raport kandydatów `GET /api/admin/retention/preview`
 (`src/pg/routes/admin.js`) liczy wyłącznie wiersze per kategoria i rok/rok
-szkolny — nie usuwa ani nie anonimizuje żadnych danych. **Mechanizm wykonania
-retencji (usuwanie/anonimizacja) świadomie nie jest częścią tej migracji ani
-tego PR** — wymaga osobnej decyzji o kształcie funkcji anonimizującej,
-testów rodzeństwa/opieki dzielonej i przeglądu bezpieczeństwa (patrz #91).
+szkolny — nie usuwa ani nie anonimizuje żadnych danych. Mechanizm wykonania
+retencji (anonimizacja) nie jest częścią tej migracji — dodaje go 0174 (niżej).
 Wycofanie na pustej bazie: `DROP TABLE retention_policies` i funkcji guard.
 
 `0075_privacy_notices.sql` (issue #145, D-06) dodaje `privacy_notices` —
@@ -1361,6 +1359,48 @@ trybu odtworzenia `SET LOCAL rd.restore` (zwykły parametr sesji).
 Dowód: `tests/pg-real-app-role.test.js` (`npm run test:pg-real`). Wycofanie:
 REVOKE ALL na tabelach/sekwencjach/funkcjach schematu i `ALTER DEFAULT
 PRIVILEGES … REVOKE`, REVOKE USAGE na schemacie, `DROP ROLE rd_app`.
+
+`0174_anonymization_runs.sql` (issue #91, D-04/D-07) dodaje mechanizm
+anonimizacji gospodarstwa z zachowaniem księgi (opis: `docs/RETENTION.md`).
+Tabela `anonymization_runs` (tylko dopisywanie; `UPDATE`/`DELETE`/`TRUNCATE`
+odrzucane) trzyma: gospodarstwo, powód jako kod (`retention_policy` |
+`data_subject_request`), odwołania do polityk/żądania, `plan_sha256`, liczniki,
+aktora i czas — bez danych osobowych. Furtką w strażnikach niezmienności jest
+`rd_anonymization_update_allowed(tabela, stary, nowy)`: `UPDATE` przechodzi
+tylko w transakcji z `set_config('rd.anonymization_run', <uuid>, true)`, dla
+tabel i kolumn z listy w migracji i tylko na `NULL`/`[zanonimizowano]`/
+`zanonimizowano@anonim.invalid`; kwoty, daty, status, gospodarstwo, rok i klucze
+idempotencji pozostają chronione. Funkcje zmienione (wczesne wyjście na
+początku, reszta gałęzi bez zmian): `family_history_immutable`,
+`immutable_financial_record`, `immutable_payment_event`, `email_snapshot_guard`,
+`payment_entry_guard`, `guardian_update_request_guard`, `enrollment_guard`,
+`year_freeze_direct`, `guardian_household_check`, `student_household_check`,
+`guardian_contact_history` (pomija wiersz historii w kontekście przebiegu).
+**Skutki dla danych:** sama migracja nie zmienia żadnego wiersza (nowa pusta
+tabela i funkcje). Dane zmieniają dopiero przebiegi administratora
+(`POST /api/admin/anonymizations`) — zmiana jest nieodwracalna w bazie
+(odtworzenie z kopii sprzed przebiegu przywraca dane osobowe; procedura w
+RETENTION.md). Numer 0174 jest kolejnością nakładania (kolejne wolne numery
+rezerwują równoległe gałęzie); redefinicje funkcji zachowują wszystkie gałęzie
+(`npm run migrations:check-functions`). Wycofanie: przywrócić poprzednie
+definicje funkcji z migracji 0003, 0007, 0014, 0017, 0023, 0038, 0055, 0087,
+0136, `DROP FUNCTION rd_anonymization_update_allowed, rd_anonymization_active`,
+`DROP TABLE anonymization_runs` (na bazie z danymi tylko po kopii zapasowej).
+
+`0176_audit_review_notes.sql` (#137, część niezależna od D-09) dodaje tabelę
+`audit_review_notes`: niezmienną (UPDATE/DELETE: `immutable_financial_record`,
+TRUNCATE: `deny_truncate`, `created_at` z zegara bazy) ścieżkę kontroli
+Komisji Rewizyjnej — pytanie lub ustalenie KR (`question`/`finding`) do wpisu
+księgi, uzgodnienia albo całego roku, odpowiedź zarządu/skarbnika (`answer`,
+inna osoba niż autor pytania), zamknięcie przez KR (`closed`, jedno na pytanie,
+po nim brak odpowiedzi) i wniosek końcowy roku (`conclusion`, najnowszy
+obowiązuje, poprzednie zostają). Zamknięty rok odrzuca nowe zapisy
+(`a0_year_freeze`; wariant zachowawczy, do decyzji D-09/D-21). Klucz
+idempotencji jest wymagany i unikalny. Skutki dla danych: tylko nowa tabela,
+funkcja `audit_review_notes_guard()` i triggery; żaden wiersz nie jest
+zmieniany. `body` to wolny tekst za bramką danych osobowych; w `audit_events`
+trafiają wyłącznie identyfikatory. Tabela jest w eksporcie rocznym.
+Wycofanie: DROP TABLE i DROP FUNCTION (na bazie z zapisami tylko po kopii).
 
 `0178_processing_restrictions.sql` (#100, RODO art. 18) dodaje tabelę
 `processing_restrictions` (tylko dopisywanie: nałożenie `restrict` i zdjęcie

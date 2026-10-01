@@ -2,7 +2,7 @@
 // Nie łączy się z Railway ani z prawdziwym bucketem: kopia to katalog
 // (np. pobrany przez operatora po decyzji D-01/D-20), cel odtworzenia to katalog.
 //
-//   DATABASE_URL=…                   tylko odczyt tabeli documents
+//   DATABASE_URL=…                   tylko odczyt tabel documents i news_photo_files
 //   --backup-dir <katalog>           kopia z obiektami docs/<id>
 //   --restore-dir <katalog>          (opcjonalnie) cel próby odtworzenia
 //   --sample <N>                     rozmiar próbki (domyślnie 20)
