@@ -35,6 +35,8 @@ export const CHECKLIST_ITEM_LABELS = Object.freeze({
 // Ostrzeżenia są informacyjne: nie blokują zamknięcia ponad to, co blokuje serwer.
 export const WARNING_CODES = Object.freeze([
   'unallocated_payments',
+  'payments_not_in_ledger',
+  'payment_ledger_amount_mismatch',
   'expenses_without_evidence',
   'large_expenses_without_resolution',
   'reconciliation_missing',
@@ -47,6 +49,8 @@ export const WARNING_CODES = Object.freeze([
 
 export const WARNING_LABELS = Object.freeze({
   unallocated_payments: 'Wpłaty nieprzypisane do gospodarstwa (kwota do wyjaśnienia)',
+  payments_not_in_ledger: 'Wpłaty zapisane (netto > 0) bez ujęcia w księdze — może to być księgowanie zbiorcze (kwota = netto wpłat)',
+  payment_ledger_amount_mismatch: 'Wpłaty z wpisem księgi o innym netto (kwota = suma różnic) — do wyjaśnienia, bez korekty z urzędu',
   expenses_without_evidence: 'Wydatki bez dowodu (dokumentu)',
   large_expenses_without_resolution: 'Wydatki powyżej 3000 EUR bez przyjętej uchwały',
   reconciliation_missing: 'Brak zatwierdzonego uzgodnienia rachunku w tym roku',
