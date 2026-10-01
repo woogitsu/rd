@@ -207,6 +207,27 @@ docelowym. Różnice widoczne dopiero tam (typy `bigint` jako tekst, brak `rowCo
 mikrosekundy `timestamptz`, prawdziwe blokady, ponowienia 40001 w `src/db.js`) to
 realne ryzyka wdrożenia na Railway. Pełny przebieg trwa kilkanaście minut.
 
+Sprzątanie baz i strefa czasowa (nocny `--all`):
+
+- Skrypt uruchamia pliki testowe PO KOLEI (jak `--test-concurrency=1`, osobny proces
+  `node --test` na plik) i po każdym pliku usuwa bazy `rd_t_<znacznik>_*` i
+  `rd_tpl_<znacznik>_*` swojego przebiegu (`DROP DATABASE … WITH (FORCE)`;
+  znacznik `RD_TEST_PG_RUN_TAG` losuje skrypt, więc cudze bazy na tym samym serwerze
+  zostają). Wcześniej porzucone bazy (~16 MB każda, także szablon `rd_tpl_*`) kumulowały
+  się przez cały przebieg i potrafiły zapełnić dysk (ENOSPC). Podsumowanie na końcu:
+  liczba plików, plików z błędem i baz usuniętych przez skrypt (0 = testy posprzątały same).
+- `tests/helpers/pg.js` dodatkowo rejestruje `after()` na poziomie pliku testowego:
+  zamyka niezamknięte pule, usuwa niezamknięte bazy i szablon. Testy zarządzające bazą same
+  (`db.close()`) działają bez zmian — `DROP DATABASE IF EXISTS` jest idempotentne.
+- Strefa: serwer własny startuje z `timezone=UTC` i `log_timezone=UTC`, procesy testów
+  mają `TZ=UTC`, a sesje `createRealTestDb()` ustawiają `-c timezone=UTC` (także z
+  `RD_TEST_PG_APP_ROLE`). UTC to domyślna strefa na Railway; to ustawienie testów, nie
+  decyzja o strefie aplikacji (`tests/pg-class-coverage.test.js` pada przy innej strefie
+  serwera, bo daty z `timestamptz` zależą od niej). Usługa `postgres` w nocnym workflow
+  ma `TZ: UTC`/`PGTZ: UTC`.
+- Kontrola dysku po lokalnym pełnym przebiegu: `psql -c '\l'` nie powinno pokazywać baz
+  `rd_t_*`; katalog `/tmp/rd-pg-real-*` skrypt usuwa sam (także po SIGINT/SIGTERM).
+
 ### Testy wyścigów
 
 `tests/pg-real-domain-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera jak w
