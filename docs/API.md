@@ -21,6 +21,8 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/email/campaigns/{id}/recipients` (#543) | `household_id`, `id` | 200 / 200 | kampania |
 | `GET /api/email/campaigns/{id}/attention` (#543) | `outbox_id` | 200 / 200 | kampania |
 | `GET /api/email/suppressions?schoolYearId=` (#543) | `created_at` malejąco, `email_hash` | 500 / 500 | rok szkolny |
+| `GET /api/meetings?schoolYearId=` | `scheduled_at` malejąco, `id` | 500 / 500 | rok szkolny |
+| `GET /api/admin/guardian-update-requests` | `created_at`, `id` rosnąco | 200 / 200 | `status` |
 | `GET /api/admin/data-requests` (#543) | `received_on`, `created_at`, `id` rosnąco | 500 / 500 | `status`, `kind` |
 
 Uprawnienia tras nie zmieniły się: kursor niczego nie odblokowuje, a każde
@@ -95,6 +97,22 @@ faktycznie wysyłanych przez trasy (z kursorem): brak `Seq Scan` na tabeli listy
 Zapytanie `GET /api/documents` łączy `document_status_events` bezpośrednio zamiast
 widoku `document_current_status` (ten sam wynik, bo najwyżej jedno zdarzenie na
 dokument), żeby planer mógł użyć indeksu.
+
+## Listy o stałym limicie z jawnym `truncated`
+
+Tam, gdzie kursor nie ma sensu (krótkie rejestry, widok publiczny), serwer pobiera
+o jeden wiersz więcej niż pokazuje i zwraca `truncated: true`, gdy lista jest
+niepełna; panel wtedy pokazuje komunikat o obcięciu:
+
+| Trasa | Pokazane | Pole |
+| --- | --- | --- |
+| `GET /api/meetings/shared-minutes` | 200 najnowszych | `truncated` |
+| `GET /api/meetings/public-notices` | 200 najbliższych | `truncated` |
+| `GET /api/news-photos` | 200 najnowszych | `truncated` |
+| `GET /api/admin/grant-requests` | 200 najnowszych | `truncated` |
+| `GET /api/admin/account-requests` | 200 najnowszych | `truncated` |
+
+Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCursor`.
 
 ## Poza zakresem (nadal ograniczone)
 

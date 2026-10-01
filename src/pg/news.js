@@ -1069,10 +1069,11 @@ export async function listPhotos(db, actor, input = {}) {
   if (status !== null && !['pending', 'verified', 'revoked'].includes(status)) throw new NewsError('invalid_status');
   const { rows } = await db.query(
     `SELECT ${PHOTO_COLUMNS} FROM news_photos WHERE ($1::text IS NULL OR rights_status = $1)
-      ORDER BY uploaded_at DESC, id LIMIT 200`,
+      ORDER BY uploaded_at DESC, id LIMIT 201`,
     [status],
   );
-  return { photos: rows.map((r) => internalPhoto(r)) };
+  // #159: 201 wierszy = jawny sygnał obcięcia rejestru (pokazujemy 200 najnowszych).
+  return { photos: rows.slice(0, 200).map((r) => internalPhoto(r)), truncated: rows.length > 200 };
 }
 
 // ---------- HTTP ----------
