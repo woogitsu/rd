@@ -299,19 +299,26 @@ wpłat, operacji finansowych, zmian ról i wysyłek. Pilnują tego trzy warstwy:
   zostawiają zdarzenie z `actor_id`, `entity_type` i `entity_id`. Wyjątek wymaga wpisu
   z uzasadnieniem w `AUDIT_EXEMPT_ROUTES` (podglądy, powtórki) albo `AUDIT_ACTORLESS_ROUTES`
   (publiczne linki z tokenem).
-- Ten sam plik, poziom wiersza: po każdym udanym zapisie każdy **nowy** wiersz tabeli
-  z kolumną `id` (poza `audit_events`) ma zdarzenie z tego żądania, którego `entity_id`
-  to id wiersza albo id obiektu nadrzędnego. Listy wyjątków są w
+- Ten sam plik, poziom wiersza: po każdym udanym zapisie każdy **nowy, zmieniony albo
+  usunięty** wiersz tabeli z kolumną `id` (poza `audit_events`) ma zdarzenie z tego
+  żądania, którego `entity_id` to id wiersza albo id obiektu nadrzędnego. Zmianę wykrywa
+  skrót treści wiersza (`md5(to_jsonb(...))`) przed i po żądaniu. Listy wyjątków są w
   `tests/helpers/audit-row-coverage.js`: `AUDIT_ROW_PARENTS` (wiersze podrzędne i historia,
-  np. storno podziału wpłaty → podział), `AUDIT_ROW_TECHNICAL` (liczniki, klucze
-  deduplikacji, dziennik dostępu) i `AUDIT_ROW_ROUTE_EXEMPT` (import: jedno zdarzenie
-  `import.committed` na partię). Kontrola pozytywna detektora:
-  `tests/audit-row-coverage.test.js`.
+  np. storno podziału wpłaty → podział), `AUDIT_ROW_UPDATE_SOURCES` (tylko zmiana
+  i usunięcie: zmiana uboczna opisana zdarzeniem operacji, np. trigger przypisania wpłaty
+  → `payment.assigned` z `metadata.paymentEntryId`, zastąpiona informacja RODO →
+  `privacy_notice.published` z `metadata.supersededNoticeId`),
+  `AUDIT_ROW_VOLATILE_COLUMNS` (kolumny techniczne pomijane w skrócie: `sessions.last_seen_at`),
+  `AUDIT_ROW_TECHNICAL` (liczniki, klucze deduplikacji, dziennik dostępu)
+  i `AUDIT_ROW_ROUTE_EXEMPT` (import: jedno zdarzenie `import.committed` na partię).
+  Kontrola pozytywna detektora i migawki: `tests/audit-row-coverage.test.js`.
 - `tests/audit-transaction-boundary.test.js`: zdarzenie zmieniające stan zapisuje się
   w transakcji zmiany (`insertAuditEvent(tx, …)` oraz lokalne pomocniki `audit(tx, …)`),
   a `tests/audit-actions-catalog.test.js` wymaga etykiety i domeny każdej akcji
   w `shared/audit-actions.js`.
 
 Poza zakresem sprawdzenia: tabele bez kolumny `id` (np. liczniki prób logowania, hasła),
-zmiany istniejących wierszy (UPDATE) bez nowego wiersza — te obejmuje poziom trasy — oraz
-zadania poza trasami HTTP (worker e-mail, skrypty operatora).
+zadania poza trasami HTTP (worker e-mail, skrypty operatora — odtworzenie z paczki ma
+osobny test zdarzenia `export.restored` w `tests/pg-export.test.js`, pierwszy administrator
+`role_grant.created` z `source: 'bootstrap'` w `tests/pg-bootstrap-admin.test.js`) oraz
+ścieżki tras, których macierz nie wykonuje (np. drugi wariant tej samej trasy).

@@ -97,6 +97,10 @@ test('release requires two different people (four eyes); same person is refused'
       method: 'POST', body: { schoolYearId: YEAR, requestId: req.body.requestId },
     });
     assert.equal(approved.status, 201, JSON.stringify(approved.body));
+    // #184: zużycie wniosku (consumed_at) ma ślad — zdarzenie zdjęcia niesie id wniosku.
+    const released = await t.db.query("SELECT metadata_json FROM audit_events WHERE action = 'email.suppression.released'");
+    assert.equal(released.rows.length, 1);
+    assert.equal(released.rows[0].metadata_json.requestId, req.body.requestId);
     // Wniosek zużyty — drugie użycie odmawia.
     const reused = await t.call(t.board2, `/api/email/suppressions/${hash}/release`, {
       method: 'POST', body: { schoolYearId: YEAR, requestId: req.body.requestId },

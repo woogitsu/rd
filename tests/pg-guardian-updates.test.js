@@ -101,6 +101,10 @@ describe('wniosek rodzica o aktualizację kontaktu (#140)', () => {
 
     const { rows } = await db.query('SELECT count(*) AS n FROM guardian_update_requests WHERE guardian_id = $1', ['g-3']);
     assert.equal(Number(rows[0].n), 1, 'drugie wysłanie nie tworzy drugiego wniosku');
+    // #184: zużycie linku (used_at) ma ślad — zdarzenie wniosku niesie id linku.
+    const created = await db.query("SELECT metadata_json FROM audit_events WHERE action = 'guardian_update_request.created'");
+    assert.equal(created.rows.length, 1);
+    assert.equal(created.rows[0].metadata_json.linkId, link.linkId);
     // Zatwierdzenie jeszcze nie nastąpiło — e-mail opiekuna bez zmian.
     const guardian = await db.query('SELECT email FROM guardians WHERE id = $1', ['g-3']);
     assert.equal(guardian.rows[0].email, 'stary@example.invalid');

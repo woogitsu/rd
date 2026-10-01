@@ -123,6 +123,14 @@ test('publikacja nowej wersji odsuwa poprzednią (superseded); import zatwierdzo
 
     const pub = await call(env, '/api/public/privacy-notice');
     assert.equal(pub.data.bodyText, 'Wersja druga.');
+
+    // #184: zastąpienie poprzedniej wersji ma ślad w zdarzeniu publikacji nowej.
+    const { rows: events } = await db.query(
+      "SELECT entity_id, metadata_json FROM audit_events WHERE action = 'privacy_notice.published' ORDER BY occurred_at, entity_id",
+    );
+    const byNotice = Object.fromEntries(events.map((row) => [row.entity_id, row.metadata_json]));
+    assert.equal(byNotice[id1].supersededNoticeId, null, 'pierwsza publikacja niczego nie zastępuje');
+    assert.equal(byNotice[id2].supersededNoticeId, id1);
   } finally {
     await db.close();
   }
