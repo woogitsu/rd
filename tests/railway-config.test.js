@@ -62,3 +62,28 @@ test('railway.email-worker.json nie migruje, nie odtwarza, przypina region UE i 
   assert.doesNotMatch(text, /postgres(ql)?:\/\/|DATABASE_URL|BREVO|API_KEY|SECRET|PASSWORD|TOKEN|EMAIL_SENDING_ENABLED/i);
   assert.equal(workerConfig.environments, undefined, 'environment overrides are managed in Railway, not in repo');
 });
+
+// Usługi cron kopii i próby odtworzenia (#90): osobne pliki, nigdy w railway.json.
+const cronConfigs = [
+  { file: '../railway.backup.json', start: 'node scripts/backup-postgres.js', script: 'backup:postgres', cron: '17 2 * * *' },
+  { file: '../railway.restore-drill.json', start: 'node scripts/restore-drill.js', script: 'restore:drill', cron: '43 4 * * 1' },
+];
+for (const { file, start, script, cron } of cronConfigs) {
+  const cfg = JSON.parse(await readFile(new URL(file, import.meta.url), 'utf8'));
+  test(`${file.slice(3)}: jeden przebieg crona, bez restartu, bez sekretów, region UE`, () => {
+    // Node bezpośrednio, aby SIGTERM przy redeployu trafił do procesu zadania.
+    assert.equal(cfg.deploy.startCommand, start);
+    assert.equal(pkg.scripts[script], start);
+    assert.equal(cfg.deploy.cronSchedule, cron);
+    assert.equal(cfg.deploy.restartPolicyType, 'NEVER');
+    assert.equal(cfg.deploy.healthcheckPath, undefined);
+    assert.equal(cfg.deploy.preDeployCommand, undefined);
+    // Próba na produkcji wymaga jawnej flagi w osobnej decyzji, nie w pliku repozytorium.
+    assert.doesNotMatch(cfg.deploy.startCommand, /--allow-production|--force|--send/);
+    assert.doesNotMatch([cfg.build.buildCommand, cfg.deploy.startCommand].join(' '), /migrat|db:|wrangler|deploy/i);
+    assert.deepEqual(Object.keys(cfg.deploy.multiRegionConfig), ['europe-west4-drams3a']);
+    assert.equal(cfg.deploy.multiRegionConfig['europe-west4-drams3a'].numReplicas, 1);
+    assert.doesNotMatch(JSON.stringify(cfg), /postgres(ql)?:\/\/|DATABASE_URL|BREVO|API_KEY|SECRET|PASSWORD|TOKEN|BACKUP_|RESTORE_DRILL_/i);
+    assert.equal(cfg.environments, undefined, 'environment overrides are managed in Railway, not in repo');
+  });
+}
