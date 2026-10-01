@@ -179,6 +179,7 @@ async function loadList({ append = false } = {}) {
       category: String(data.get("category") ?? ""),
       q: String(data.get("q") ?? ""),
       includeInactive: data.get("includeInactive") === "on",
+      validationOutdated: data.get("validationOutdated") === "on",
     };
     state.cursor = "";
   }

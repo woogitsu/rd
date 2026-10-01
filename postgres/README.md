@@ -1274,3 +1274,19 @@ dziennika nie pokazuje wtedy liczby), nic nie jest uzupełniane wstecznie.
 Tabela poza eksportem rocznym (samo zdarzenie jest w `audit_events`);
 retencja do decyzji D-04 — domyślnie nie usuwać. Wycofanie: DROP TABLE
 i funkcji strażnika (znikają tylko liczniki powtórzeń; zdarzenia zostają).
+
+`0161_document_validation_version.sql` (#89, część: ślad wersji reguł)
+dodaje kolumnę `documents.validation_version` (INTEGER, NULL albo >= 1,
+CHECK `documents_validation_version_check`): wersja reguł kontroli struktury
+(`DOCUMENT_VALIDATION_VERSION` w `src/documents.js`), którą serwer sprawdził
+plik przy przesłaniu. Podgląd w panelu nie przeszukuje ponownie pliku
+sprawdzonego bieżącą wersją reguł (przy zgodnym rozmiarze i SHA-256); lista
+`GET /api/documents?validation=outdated` pokazuje dokumenty sprawdzone
+starszymi regułami albo bez wersji. Skutki dla danych: istniejące wiersze
+dostają NULL = „wersja nieznana” (plik sprawdzony samą sygnaturą albo
+wcześniejszymi regułami) — nic nie jest uzupełniane wstecznie, takie pliki
+nadal są sprawdzane przy każdym podglądzie. Wiersz `documents` pozostaje
+niezmienny (0006), więc wersja nie jest podbijana po późniejszym sprawdzeniu.
+ADD COLUMN bez DEFAULT nie przepisuje tabeli. `documents` pozostaje poza
+eksportem rocznym. Wycofanie: DROP COLUMN (znika tylko ślad wersji; podgląd
+wraca do ponownej kontroli każdego pliku).

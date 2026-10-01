@@ -7,7 +7,7 @@ import { revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import {
   bodyLimitFor, DEFAULT_BODY_LIMIT_BYTES, DEFAULT_MAX_CONCURRENT_UPLOADS, detectType, maxUploadBytes,
-  activeUploadSlots, HARD_MAX_UPLOAD_BYTES, resetUploadSlotsForTests, tryAcquireUploadSlot,
+  activeUploadSlots, DOCUMENT_VALIDATION_VERSION, HARD_MAX_UPLOAD_BYTES, resetUploadSlotsForTests, tryAcquireUploadSlot,
 } from '../src/documents.js';
 import { createMemoryStorage, createS3Storage, sha256Hex, signRequest, storageFromEnv } from '../src/storage.js';
 import { resolveRuntime } from '../src/server.js';
@@ -1240,14 +1240,18 @@ function pdfWithHiddenScript() {
 
 // Dokument „sprzed kontroli struktury” (#301) albo sprzed jej zaostrzenia: wiersz i obiekt
 // zapisane z pominięciem trasy (tak jak przywrócone/zmigrowane dane), z poprawnym skrótem.
-async function insertLegacyDocument(db, storage, { bytes, mimeType = 'application/pdf', createdBy = 'u-treasurer' }) {
+// validationVersion: domyślnie NULL (wiersz sprzed 0161 — wersja reguł nieznana).
+async function insertLegacyDocument(db, storage, {
+  bytes, mimeType = 'application/pdf', createdBy = 'u-treasurer', validationVersion = null,
+}) {
   const id = crypto.randomUUID();
   const objectKey = `docs/${crypto.randomUUID()}`;
   await storage.putObject(objectKey, bytes, mimeType);
   await db.query(
-    `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key)
-     VALUES ($1, $2, $3, $4, 'financial', $5, $6, $7, $8)`,
-    [id, objectKey, mimeType, bytes.length, createdBy, YEAR, sha256Hex(bytes), `legacy-${id}`],
+    `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key,
+                            validation_version)
+     VALUES ($1, $2, $3, $4, 'financial', $5, $6, $7, $8, $9)`,
+    [id, objectKey, mimeType, bytes.length, createdBy, YEAR, sha256Hex(bytes), `legacy-${id}`, validationVersion],
   );
   return id;
 }
@@ -1439,6 +1443,100 @@ test('preview re-checks stored bytes with current rules: legacy file failing the
   // Odmowa roli przed kontrolą treści: przedstawiciel klasy dostaje 404, bez preview_blocked.
   assert.equal((await preview(env, hidden, await repA(db))).status, 404);
   assert.equal((await auditRows(db, 'document.preview_blocked')).length, 4);
+}));
+
+test('upload records the current validation_version; rows without it are reported as unknown (#89, 0161)', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const key = 'validation-version-key-1';
+  const { response, data } = await upload(env, { cookie, key });
+  assert.equal(response.status, 201);
+  assert.equal(data.document.validationVersion, DOCUMENT_VALIDATION_VERSION);
+  assert.equal(data.document.validationCurrent, true);
+  const [row] = (await db.query('SELECT validation_version FROM documents WHERE id = $1', [data.document.id])).rows;
+  assert.equal(row.validation_version, DOCUMENT_VALIDATION_VERSION);
+  // Wersji nie da się podbić ani wyzerować później (wiersz documents jest niezmienny, 0006).
+  await assert.rejects(db.query('UPDATE documents SET validation_version = NULL WHERE id = $1', [data.document.id]), /documents_are_immutable/);
+  // Ponowienie z tym samym kluczem (podwójne kliknięcie) zwraca ten sam dokument i tę samą wersję.
+  const replay = await upload(env, { cookie, key });
+  assert.equal(replay.response.status, 200);
+  assert.equal(replay.data.replayed, true);
+  assert.equal(replay.data.document.id, data.document.id);
+  assert.equal(replay.data.document.validationVersion, DOCUMENT_VALIDATION_VERSION);
+
+  const legacy = await insertLegacyDocument(db, storage, { bytes: PDF });
+  const meta = await (await get(env, `/api/documents/${legacy}`, cookie)).json();
+  assert.equal(meta.document.validationVersion, null);
+  assert.equal(meta.document.validationCurrent, false);
+  // Baza odrzuca wersję spoza zakresu (CHECK z 0161).
+  await assert.rejects(() => insertLegacyDocument(db, storage, { bytes: PDF, validationVersion: 0 }), /documents_validation_version_check/);
+}));
+
+test('preview skips the structure re-check only for files checked with the current rules and a matching SHA-256 (#89, 0161)', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  // Syntetyczny plik, którego bieżące reguły by nie przyjęły, zapisany jako „sprawdzony
+  // bieżącą wersją” — dowodzi, że podgląd polega na zapisanej wersji i skrócie, a nie
+  // przeszukuje bajtów ponownie (w praktyce taki wiersz powstaje wyłącznie przez trasę uploadu).
+  const current = await insertLegacyDocument(db, storage, { bytes: pdfWithHiddenScript(), validationVersion: DOCUMENT_VALIDATION_VERSION });
+  const unknown = await insertLegacyDocument(db, storage, { bytes: pdfWithHiddenScript() });
+  const wrongSignature = await insertLegacyDocument(db, storage, { bytes: PNG, validationVersion: DOCUMENT_VALIDATION_VERSION });
+
+  assert.equal((await preview(env, current, cookie)).status, 200);
+  for (const id of [unknown, wrongSignature]) {
+    const response = await preview(env, id, cookie);
+    assert.equal(response.status, 409, id);
+    assert.equal((await response.json()).error, 'document_preview_blocked');
+  }
+  const blocked = await auditRows(db, 'document.preview_blocked');
+  assert.deepEqual(blocked.map((event) => `${event.entity_id}:${event.metadata_json.reason}`).sort(), [
+    `${unknown}:document_active_content`, `${wrongSignature}:unsupported_media_type`,
+  ].sort());
+  assert.deepEqual((await auditRows(db, 'document.viewed')).map((event) => event.entity_id), [current]);
+
+  // Podmieniony obiekt w buckecie (inny skrót) nie korzysta z zapisanej wersji: błąd integralności przed podglądem.
+  const [row] = (await db.query('SELECT object_key FROM documents WHERE id = $1', [current])).rows;
+  await storage.putObject(row.object_key, pdfWithHiddenScript().map((byte, index) => (index === 20 ? byte ^ 1 : byte)), 'application/pdf');
+  const errors = [];
+  const original = console.error;
+  console.error = (line) => errors.push(line);
+  try {
+    assert.equal((await preview(env, current, cookie)).status, 503);
+  } finally { console.error = original; }
+  assert.match(errors.join('\n'), /"code":"document_integrity_mismatch"/);
+  assert.equal((await auditRows(db, 'document.viewed')).length, 1);
+}));
+
+test('list validation=outdated shows only documents checked with older rules or without a version, within role scope (#89, 0161)', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const fresh = (await upload(env, { cookie })).data.document.id;
+  const legacyA = await insertLegacyDocument(db, storage, { bytes: PDF });
+  const legacyB = await insertLegacyDocument(db, storage, { bytes: PNG, mimeType: 'image/png' });
+
+  const all = await (await get(env, `/api/documents?schoolYearId=${YEAR}`, cookie)).json();
+  assert.deepEqual(all.documents.map((doc) => doc.id).sort(), [fresh, legacyA, legacyB].sort());
+  const outdated = await (await get(env, `/api/documents?schoolYearId=${YEAR}&validation=outdated`, cookie)).json();
+  assert.deepEqual(outdated.documents.map((doc) => doc.id).sort(), [legacyA, legacyB].sort());
+  assertEvery(outdated.documents, (doc) => doc.validationCurrent === false && doc.validationVersion === null);
+
+  for (const bad of ['current', 'OUTDATED', '']) {
+    const response = await get(env, `/api/documents?schoolYearId=${YEAR}&validation=${bad}`, cookie);
+    assert.equal(response.status, 400, bad);
+    assert.equal((await response.json()).error, 'invalid_request');
+  }
+  // Kursor listy bez filtra nie działa w liście z filtrem (inny zakres kursora).
+  const firstPage = await (await get(env, `/api/documents?schoolYearId=${YEAR}&limit=1`, cookie)).json();
+  assert.ok(firstPage.nextCursor);
+  const crossed = await get(env, `/api/documents?schoolYearId=${YEAR}&validation=outdated&cursor=${firstPage.nextCursor}`, cookie);
+  assert.equal(crossed.status, 400);
+  assert.equal((await crossed.json()).error, 'invalid_cursor');
+  // Stronicowanie w obrębie filtra.
+  const page1 = await (await get(env, `/api/documents?schoolYearId=${YEAR}&validation=outdated&limit=1`, cookie)).json();
+  const page2 = await (await get(env, `/api/documents?schoolYearId=${YEAR}&validation=outdated&limit=1&cursor=${page1.nextCursor}`, cookie)).json();
+  assert.deepEqual([...page1.documents, ...page2.documents].map((doc) => doc.id).sort(), [legacyA, legacyB].sort());
+
+  // Przedstawiciel klasy nie widzi dokumentów finansowych także przez filtr.
+  const rep = await get(env, `/api/documents?schoolYearId=${YEAR}&validation=outdated`, await repA(db));
+  assert.equal(rep.status, 200);
+  assert.deepEqual((await rep.json()).documents, []);
 }));
 
 test('from/to filter by document date in SQL; undated documents fail the filter; sort=documentDate puts undated last', async () => withEnv(async (db, env) => {

@@ -2,12 +2,14 @@
 //
 //   POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]
 //        ciało = surowe bajty pliku, nagłówki Content-Type i Idempotency-Key
-//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&from=…][&to=…][&sort=documentDate|createdAt][&limit=…][&cursor=…]
+//   GET  /api/documents?schoolYearId=…[&kind=…][&classId=…][&status=active|all][&q=…][&category=…][&from=…][&to=…][&sort=documentDate|createdAt][&validation=outdated][&limit=…][&cursor=…]
+//        `validation=outdated` (#89, 0161): tylko dokumenty sprawdzone starszą wersją reguł struktury albo bez wersji
 //        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`; kursor działa tylko przy sort=createdAt
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
 //   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed;
-//        plik, który nie przechodzi BIEŻĄCEJ kontroli struktury, dostaje 409 document_preview_blocked
+//        plik, który nie przechodzi BIEŻĄCEJ kontroli struktury, dostaje 409 document_preview_blocked;
+//        plik sprawdzony bieżącą wersją reguł (validation_version, 0161) nie jest przeszukiwany ponownie
 //   POST /api/documents/{id}/supersede  { replacementDocumentId, reason } — issue #82
 //   POST /api/documents/{id}/void       { reason } — issue #82
 //   POST /api/documents/{id}/description  tytuł, kategoria, data dokumentu (issue #76)
@@ -29,8 +31,8 @@ import {
 } from '../list-cursor.js';
 import { sha256Hex } from '../../storage.js';
 import {
-  ALLOWED_TYPES, declaredType, detectType, downloadFilename, maxUploadBytes, newObjectKey, readLimited,
-  tryAcquireUploadSlot, UPLOAD_PATH, validateStructure,
+  ALLOWED_TYPES, declaredType, detectType, DOCUMENT_VALIDATION_VERSION, downloadFilename, maxUploadBytes, newObjectKey,
+  readLimited, tryAcquireUploadSlot, UPLOAD_PATH, validateStructure,
 } from '../../documents.js';
 
 const MAX_STATUS_BODY_BYTES = 4096;
@@ -124,6 +126,10 @@ function toDocument(row) {
     title: row.description_title ?? null,
     category: row.description_category ?? null,
     documentDate: row.description_document_date ?? null,
+    // Wersja reguł kontroli struktury przy przesłaniu (#89, 0161); null = nieznana
+    // (plik sprzed zapisu wersji). validationCurrent = sprawdzony bieżącymi regułami.
+    validationVersion: row.validation_version ?? null,
+    validationCurrent: row.validation_version === DOCUMENT_VALIDATION_VERSION,
   };
 }
 
@@ -142,6 +148,7 @@ function toDescription(row) {
 
 const SELECT_DOCUMENT = `SELECT d.id, d.object_key, d.kind, d.school_year_id, d.class_id, d.mime_type, d.byte_size,
        d.sha256, d.linked_entity_type, d.linked_entity_id, d.created_by, d.created_at, d.idempotency_key,
+       d.validation_version,
        COALESCE(s.action, 'active') AS status, s.replacement_document_id,
        dd.title AS description_title, dd.category AS description_category,
        to_char(dd.document_date, 'YYYY-MM-DD') AS description_document_date,
@@ -264,10 +271,16 @@ async function download(request, env, id, json, url) {
   // wprowadzeniem kontroli struktury (#301) albo przed jej zaostrzeniem (strumienie
   // obiektów PDF, /SubmitForm). Taki plik nie otworzy się w panelu; pobranie jako
   // załącznik (z CSP sandbox) zostaje, bo to dowód w archiwum — nie usuwamy go.
+  // Wyjątek (0161): plik sprawdzony przy przesłaniu BIEŻĄCĄ wersją reguł, którego
+  // SHA-256 zgodził się wyżej z zapisanym — te same bajty i te same reguły dają ten
+  // sam wynik, więc nie przeszukujemy go ponownie (duży PDF to do ~1 s CPU na podgląd).
+  // Sygnaturę sprawdzamy zawsze (tanio). Bez zapisanego SHA-256 — pełna kontrola.
   if (inline) {
-    const structure = detectType(object.body) === doc.mimeType
-      ? validateStructure(object.body, doc.mimeType)
-      : { ok: false, code: 'unsupported_media_type' };
+    const signatureOk = detectType(object.body) === doc.mimeType;
+    const checkedWithCurrentRules = doc.validationCurrent && Boolean(doc.sha256);
+    const structure = !signatureOk
+      ? { ok: false, code: 'unsupported_media_type' }
+      : checkedWithCurrentRules ? { ok: true } : validateStructure(object.body, doc.mimeType);
     if (!structure.ok) {
       await insertAuditEvent(env.db, {
         actorId: context.session.user.id, action: 'document.preview_blocked', entityType: 'document', entityId: doc.id,
@@ -327,6 +340,12 @@ async function list(request, env, url, json) {
   if (sort !== 'createdAt' && sort !== 'documentDate') return json({ error: 'invalid_request' }, 400);
   // Kursor keyset opiera się na created_at; przy sort=documentDate obowiązuje offset.
   if (sort === 'documentDate' && url.searchParams.get('cursor')) return json({ error: 'invalid_request' }, 400);
+  // #89 (0161): `validation=outdated` — dokumenty sprawdzone starszą wersją reguł
+  // kontroli struktury albo bez zapisanej wersji (NULL). Tylko zawężenie listy w
+  // granicach dotychczasowych uprawnień; inna wartość = 400.
+  const validationFilter = url.searchParams.get('validation');
+  if (validationFilter !== null && validationFilter !== 'outdated') return json({ error: 'invalid_request' }, 400);
+  const outdatedOnly = validationFilter === 'outdated';
   // #159: zły limit to 400 invalid_limit (wcześniej po cichu przycinany).
   const failList = (code) => { throw new ListError(code); };
   let limit;
@@ -334,7 +353,7 @@ async function list(request, env, url, json) {
   let cursorScope;
   try {
     limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: MAX_LIST_LIMIT }, failList);
-    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery, fromDate || null, toDate || null]);
+    cursorScope = JSON.stringify(['documents', schoolYearId, kindFilter, classFilter.value, statusFilter, categoryFilter, searchQuery, fromDate || null, toDate || null, outdatedOnly]);
     cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope: cursorScope }, failList);
   } catch (error) {
     if (error instanceof ListError) return json({ error: error.code }, 400);
@@ -363,7 +382,8 @@ async function list(request, env, url, json) {
   // Wyszukiwanie i filtr kategorii zawężają zapytanie w SQL, PRZED LIMIT
   // (issue #76 wprost pilnuje tego, by pełna strona znaczyła realne wyniki).
   const queryValues = [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value,
-    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null, fromDate || null, toDate || null, sort];
+    limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null, fromDate || null, toDate || null, sort,
+    outdatedOnly, DOCUMENT_VALIDATION_VERSION];
   const after = cursor ? `AND ${afterTimestampDescSql('d.created_at', 'd.id', cursor, queryValues)}` : '';
   const { rows } = await env.db.query(
     `${SELECT_DOCUMENT}
@@ -376,6 +396,7 @@ async function list(request, env, url, json) {
         AND ($11::text IS NULL OR dd.title ILIKE '%' || $11 || '%' OR dd.description ILIKE '%' || $11 || '%')
         AND ($12::date IS NULL OR dd.document_date >= $12::date)
         AND ($13::date IS NULL OR dd.document_date <= $13::date)
+        AND (NOT $15::boolean OR d.validation_version IS NULL OR d.validation_version < $16::integer)
         ${after}
       ORDER BY CASE WHEN $14::text = 'documentDate' THEN dd.document_date END DESC NULLS LAST, d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
@@ -501,12 +522,12 @@ async function uploadBody(request, env, url, json, {
     const row = await env.db.transaction(async (tx) => {
       const { rows } = await tx.query(
         `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, class_id,
-                                linked_entity_type, linked_entity_id, sha256, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                                linked_entity_type, linked_entity_id, sha256, idempotency_key, validation_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING id, kind, school_year_id, class_id, mime_type, byte_size, sha256,
-                   linked_entity_type, linked_entity_id, created_by, created_at`,
+                   linked_entity_type, linked_entity_id, created_by, created_at, validation_version`,
         [id, objectKey, detected, bytes.length, kind, actorId, schoolYearId, classId.value,
-          linkedEntityType, linkedEntityId.value, sha256, idempotencyKey],
+          linkedEntityType, linkedEntityId.value, sha256, idempotencyKey, DOCUMENT_VALIDATION_VERSION],
       );
       await tx.query(
         `UPDATE document_uploads SET state = 'committed', resolved_at = now(), resolution = 'committed'

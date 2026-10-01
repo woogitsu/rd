@@ -497,6 +497,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `retention_policy` | none | — | nie |
 | `school_year_id` | none | — | nie |
 | `sha256` | none | — | nie |
+| `validation_version` | none | — | nie |
 
 ### `email_campaign_exclusions`
 

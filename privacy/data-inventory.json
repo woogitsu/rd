@@ -1901,6 +1901,17 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
+    },
+    "validation_version": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "integer"
     }
   },
   "email_campaign_exclusions": {
