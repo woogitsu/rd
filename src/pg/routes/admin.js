@@ -110,7 +110,7 @@ import {
   freshMfaForbiddenCode, isAuthorizedScoped, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess,
 } from '../authorization.js';
 import { auditMetadataForView, insertAuditEvent } from '../audit.js';
-import { AUDIT_DOMAINS, auditActionDomain, auditDomainActions } from '../../../shared/audit-actions.js';
+import { AUDIT_DOMAINS, auditActionDomain, auditDomainActions, auditEventSource } from '../../../shared/audit-actions.js';
 import { auditYearByObjectSql } from '../export.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
@@ -403,7 +403,7 @@ async function mfaResetRoute(env, actorId, userId, request, json) {
 async function recoveryRequestsList(env, url, json) {
   const status = url.searchParams.get('status') || 'pending';
   try {
-    return json({ requests: await listRecoveryRequests(env, { status }) });
+    return json(await listRecoveryRequests(env, { status }));
   } catch (error) {
     if (error instanceof LoginError) throw new RequestError(error.code, error.status);
     throw error;
@@ -874,7 +874,7 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
 
 async function grantRequestsList(env, url, json) {
   try {
-    return json({ requests: await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }) });
+    return json(await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }));
   } catch (error) {
     if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
     throw error;
@@ -1075,6 +1075,8 @@ function auditEventForView(row, { withEntity = true } = {}) {
   const { metadata, redactedFields } = auditMetadataForView(row.metadata_json ?? {});
   const event = {
     id: row.id, actorId: row.actor_id ?? null, action: row.action, domain: auditActionDomain(row.action),
+    // #181 pkt 3: zdarzenia bez aktora rozróżnione pochodną z akcji (bez migracji).
+    ...auditEventSource(row.action, row.actor_id, row.metadata_json ?? {}),
   };
   if (withEntity) Object.assign(event, { entityType: row.entity_type, entityId: row.entity_id });
   // #184: `access.denied` — liczba odmów w oknie 5 minut od tego zdarzenia (0160).

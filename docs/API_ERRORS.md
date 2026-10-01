@@ -50,6 +50,9 @@ wpisów).
 | `anonymization_row_mismatch` | Liczba zmienionych wierszy nie zgadza się z planem — operację wycofano, nic nie zostało zanonimizowane. | Tak, po ponownym podglądzie (dane zmieniły się w międzyczasie). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `audit_review_closed` | Uwaga została już zamknięta przez Komisję Rewizyjną. Dodaj nową uwagę, jeśli sprawa wymaga dalszej kontroli. | Nie — dodaj nową uwagę. |
+| `audit_review_not_found` | Nie znaleziono uwagi Komisji Rewizyjnej. | Nie — popraw dane żądania. |
+| `audit_review_target_not_found` | Nie znaleziono wskazanego wpisu księgi, uzgodnienia ani roku w tym roku szkolnym. | Nie — popraw dane żądania. |
 | `authorization_superseded` | Kwota upoważnienia zmieniła się w międzyczasie. Odśwież widok i spróbuj ponownie. | Zależy od kontekstu (patrz moduł trasy). |
 | `backup_failed` | Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
 | `bank_import_not_configured` | Import wyciągu z pliku banku nie jest skonfigurowany. | Zależy od kontekstu (patrz moduł trasy). |
@@ -151,6 +154,7 @@ wpisów).
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
 | `invalid_audience` | Wybierz odbiorców. | Nie — popraw dane żądania. |
+| `invalid_audit_review_body` | Treść uwagi musi mieć od 3 do 2000 znaków. | Nie — popraw dane żądania. |
 | `invalid_author` | Niepoprawny autor. | Nie — popraw dane żądania. |
 | `invalid_bic` | Numer BIC jest niepoprawny (8 albo 11 znaków). | Nie — popraw dane żądania. |
 | `invalid_body_text` | Podaj treść informacji (1–20000 znaków). | Nie — popraw dane żądania. |

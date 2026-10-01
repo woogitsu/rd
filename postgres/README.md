@@ -1324,8 +1324,6 @@ jak dla `student_households.ended_reason`); trafia do eksportu rocznego razem
 z całym wierszem `guardian_households`, jak powody członkostwa ucznia.
 Wycofanie: na pustej bazie DROP CONSTRAINT i DROP COLUMN; na bazie z danymi
 tylko po kopii.
-<<<<<<< HEAD
-=======
 
 `0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
 przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
@@ -1389,6 +1387,7 @@ definicje funkcji z migracji 0003, 0007, 0014, 0017, 0023, 0038, 0055, 0087,
 0136, `DROP FUNCTION rd_anonymization_update_allowed, rd_anonymization_active`,
 `DROP TABLE anonymization_runs` (na bazie z danymi tylko po kopii zapasowej).
 
+<<<<<<< HEAD
 `0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
 przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
 (bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
@@ -1399,7 +1398,7 @@ zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie 
 zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
 przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
 odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
->>>>>>> origin/main
+
 
 `0177_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
 spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
@@ -1414,3 +1413,19 @@ Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSen
 pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
 SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
 Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
+=======
+`0176_audit_review_notes.sql` (#137, część niezależna od D-09) dodaje tabelę
+`audit_review_notes`: niezmienną (UPDATE/DELETE: `immutable_financial_record`,
+TRUNCATE: `deny_truncate`, `created_at` z zegara bazy) ścieżkę kontroli
+Komisji Rewizyjnej — pytanie lub ustalenie KR (`question`/`finding`) do wpisu
+księgi, uzgodnienia albo całego roku, odpowiedź zarządu/skarbnika (`answer`,
+inna osoba niż autor pytania), zamknięcie przez KR (`closed`, jedno na pytanie,
+po nim brak odpowiedzi) i wniosek końcowy roku (`conclusion`, najnowszy
+obowiązuje, poprzednie zostają). Zamknięty rok odrzuca nowe zapisy
+(`a0_year_freeze`; wariant zachowawczy, do decyzji D-09/D-21). Klucz
+idempotencji jest wymagany i unikalny. Skutki dla danych: tylko nowa tabela,
+funkcja `audit_review_notes_guard()` i triggery; żaden wiersz nie jest
+zmieniany. `body` to wolny tekst za bramką danych osobowych; w `audit_events`
+trafiają wyłącznie identyfikatory. Tabela jest w eksporcie rocznym.
+Wycofanie: DROP TABLE i DROP FUNCTION (na bazie z zapisami tylko po kopii).
+>>>>>>> origin/main

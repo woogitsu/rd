@@ -1,10 +1,17 @@
 // Testy czystych funkcji ekranu Komisji Rewizyjnej (issue #147): audit/core.js.
-// Ekran jest tylko do odczytu; dostęp egzekwuje serwer (GET /api/reports/audit).
+// Raport jest tylko do odczytu; zapisy dotyczą wyłącznie ścieżki kontroli (#137, /api/audit-reviews). Dostęp egzekwuje serwer.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   REPORT_ROLES,
+  buildReviewRows,
+  canAnswerReviews,
+  canWriteReviews,
+  newIdempotencyKey,
+  reviewReplyUrl,
+  reviewsUrl,
+  reviewSummary,
   buildSections,
   checkDetails,
   describeApiError,
@@ -117,10 +124,39 @@ test('checkDetails: nieznana kontrola daje pusty opis', () => {
   assert.equal(checkDetails({ id: 'nieznana' }), '');
 });
 
-test('ekran nie ma akcji zmieniających stan: tylko GET, brak POST/PATCH/DELETE w audit/main.js', () => {
+test('raport jest tylko do odczytu; jedyny zapis ekranu to ścieżka kontroli (#137): POST wyłącznie na /api/audit-reviews', () => {
   const main = readFileSync(new URL('../audit/main.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(main, /method:\s*["'](POST|PUT|PATCH|DELETE)["']/);
-  assert.doesNotMatch(main, /<button[^>]*type=["']submit["'][^>]*>\s*(Zatwierdź|Usuń|Zapisz)/);
+  assert.doesNotMatch(main, /method:\s*["'](PUT|PATCH|DELETE)["']/);
+  assert.equal([...main.matchAll(/method:\s*["']POST["']/g)].length, 1, 'jedno miejsce zapisu: submitReview');
+  assert.doesNotMatch(main, /\/api\/(ledger|payments|reconciliations|documents|exports)/, 'brak tras księgi, wpłat, uzgodnień i dokumentów (D-09)');
+  assert.match(main, /reviewsUrl|reviewReplyUrl/);
+});
+
+test('ścieżka kontroli: adresy, role formularzy i wiersze wątków', () => {
+  assert.equal(reviewsUrl('2026-2027'), '/api/audit-reviews/2026-2027');
+  assert.equal(reviewReplyUrl('2026-2027', 'arn-1', 'answers'), '/api/audit-reviews/2026-2027/notes/arn-1/answers');
+  assert.throws(() => reviewReplyUrl('2026-2027', 'arn-1', 'delete'));
+  assert.throws(() => reviewsUrl('../x'));
+  assert.equal(canWriteReviews([{ role: 'audit', schoolYearId: 'y1' }], 'y1'), true);
+  assert.equal(canWriteReviews([{ role: 'treasurer', schoolYearId: 'y1' }], 'y1'), false);
+  assert.equal(canWriteReviews([{ role: 'audit', classId: '1A', schoolYearId: 'y1' }], 'y1'), false);
+  assert.equal(canAnswerReviews([{ role: 'treasurer', schoolYearId: 'y1' }], 'y1'), true);
+  assert.equal(canAnswerReviews([{ role: 'audit', schoolYearId: 'y1' }], 'y1'), false);
+  const reviews = {
+    counts: { open: 0, answered: 1, closed: 0 },
+    currentConclusion: { createdAt: '2026-11-02T10:00:00.000Z', body: 'Wniosek' },
+    threads: [{
+      id: 'arn-1', kind: 'question', targetType: 'ledger_entry', targetId: 'le-1', body: 'Pytanie', status: 'answered',
+      createdAt: '2026-11-01T10:00:00.000Z', answers: [{ createdAt: '2026-11-01T11:00:00.000Z', body: 'Odpowiedź' }], closed: null,
+    }],
+  };
+  const [row] = buildReviewRows(reviews);
+  assert.equal(row.id, 'arn-1');
+  assert.equal(row.cells[1], 'pytanie');
+  assert.equal(row.cells[4], 'odpowiedź bez zamknięcia');
+  assert.equal(row.cells[6], '—');
+  assert.match(reviewSummary(reviews).conclusion, /Wniosek/);
+  assert.match(newIdempotencyKey(), /^ar-.{8,}$/);
 });
 
 test('idCell: skrót identyfikatora w treści, pełna wartość w podpowiedzi', () => {

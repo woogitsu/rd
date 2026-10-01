@@ -40,6 +40,7 @@ import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import "../shared/shell.css";
 import { formatPrintDate, mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
+import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
 let printedBy = null;
 mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
@@ -657,6 +658,10 @@ byId("open-entry").addEventListener("click", () => {
   entryDialog.form.elements.occurredOn.value = localDate();
   updateCategories(); updateResolutionField(); entryDialog.dialog.showModal();
 });
+// #181: zwijana „Historia” wpisu księgi; tylko gdy serwer zwróci 200 (UX, nie kontrola dostępu).
+const entryHistory = mountEntityHistory(correctionDialog.form, { api, idPrefix: "entry-history" });
+correctionDialog.form.insertBefore(entryHistory.element, correctionDialog.form.querySelector(".dialog-actions"));
+correctionDialog.dialog.addEventListener("close", () => entryHistory.reset());
 entriesBody.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-entry-id]");
   if (!button) return;
@@ -664,6 +669,7 @@ entriesBody.addEventListener("click", (event) => {
   if (!entry) return;
   correctionDialog.form.elements.entryId.value = entry.id;
   correctionDialog.form.querySelector(".context").textContent = `${entry.occurredOn} · ${entry.description} · netto ${formatCents(entry.netCents)}`;
+  entryHistory.load("ledger_entry", entry.id);
   correctionDialog.dialog.showModal();
 });
 
