@@ -43,7 +43,8 @@ import "../shared/print.css";
 import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
 let printedBy = null;
-mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
+const shellReady = mountShell();
+shellReady.then((result) => { printedBy = sessionDisplayName(result?.session); });
 
 const FILTER_KEYS = ["schoolYearId", "direction", "category", "dateFrom", "dateTo"];
 const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, opening: null, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
@@ -659,7 +660,7 @@ byId("open-entry").addEventListener("click", () => {
   updateCategories(); updateResolutionField(); entryDialog.dialog.showModal();
 });
 // #181: zwijana „Historia” wpisu księgi; tylko gdy serwer zwróci 200 (UX, nie kontrola dostępu).
-const entryHistory = mountEntityHistory(correctionDialog.form, { api, idPrefix: "entry-history" });
+const entryHistory = mountEntityHistory(correctionDialog.form, { api, grants: async () => (await shellReady)?.grants, idPrefix: "entry-history" });
 correctionDialog.form.insertBefore(entryHistory.element, correctionDialog.form.querySelector(".dialog-actions"));
 correctionDialog.dialog.addEventListener("close", () => entryHistory.reset());
 entriesBody.addEventListener("click", (event) => {

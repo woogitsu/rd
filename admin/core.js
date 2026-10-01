@@ -528,9 +528,22 @@ export const GRANT_REQUEST_KIND_LABELS = Object.freeze({
   invitation: "Zaproszenie z rolą",
 });
 
-export function grantRequestsPath(status = "pending") {
+export function grantRequestsPath(status = "pending", cursor = null) {
   const value = status === "all" || Object.hasOwn(GRANT_REQUEST_STATUS_LABELS, status) ? status : "pending";
-  return `/api/admin/grant-requests?${new URLSearchParams({ status: value })}`;
+  const params = new URLSearchParams({ status: value });
+  if (cursor) params.set("cursor", String(cursor)); // kursor jest nieprzezroczysty i związany ze statusem (#159)
+  return `/api/admin/grant-requests?${params}`;
+}
+
+// #159: kolejna strona wniosków tylko dla tego samego filtra, który wydał kursor,
+// i tylko gdy żadne pobranie nie trwa (blokada podwójnego kliknięcia).
+export function canLoadMoreRequests({ cursor, status, cursorStatus, busy }) {
+  return Boolean(cursor) && !busy && status === cursorStatus;
+}
+
+export function mergeRequestPages(current, page) {
+  const seen = new Set(current.map((item) => item.id));
+  return [...current, ...page.filter((item) => !seen.has(item.id))];
 }
 
 // Wiek wniosku słownie (od utworzenia do `now`); zaokrąglenie w dół.

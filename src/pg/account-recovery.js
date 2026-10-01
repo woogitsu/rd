@@ -12,6 +12,7 @@
 import crypto from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
 import { isoTimestamp } from './auth.js';
+import { afterTimestampDescSql, cursorTimestampSql, pageOf } from './list-cursor.js';
 import {
   adminResetMfaInTx, issuePasswordResetInTx, LoginError, PASSWORD_RESET_DEFAULT_TTL_SECONDS,
 } from './login.js';
@@ -94,15 +95,24 @@ export async function createRecoveryRequest(env, { actorId, userId, kind, ttlSec
   });
 }
 
-export async function listRecoveryRequests(env, { status = 'pending' } = {}) {
+export const RECOVERY_LIST_MAX = MAX_LIST;
+export const recoveryListScope = (status) => `recovery-requests:${status}`;
+
+/**
+ * Lista wniosków z kursorem keyset (created_at DESC, id) (#159).
+ * `cursor` to już zdekodowany kursor ({ key, id }) związany z `recoveryListScope(status)`.
+ */
+export async function listRecoveryRequests(env, { status = 'pending', limit = MAX_LIST, cursor = null } = {}) {
   if (!STATUSES.has(status)) throw new LoginError('invalid_status', 400);
+  const values = [status];
+  const after = cursor ? ` AND ${afterTimestampDescSql('created_at', 'id', cursor, values)}` : '';
   const { rows } = await database(env).query(
-    `SELECT ${COLUMNS} FROM account_recovery_requests
-      WHERE ($1 = 'all' OR status = $1) ORDER BY created_at DESC, id LIMIT ${MAX_LIST + 1}`,
-    [status],
+    `SELECT ${COLUMNS}, ${cursorTimestampSql('created_at')} AS cursor_ts FROM account_recovery_requests
+      WHERE ($1 = 'all' OR status = $1)${after} ORDER BY created_at DESC, id LIMIT ${limit + 1}`,
+    values,
   );
-  // #159: o jeden wiersz więcej = jawny sygnał obcięcia zamiast cichego LIMIT.
-  return { requests: rows.slice(0, MAX_LIST).map(present), truncated: rows.length > MAX_LIST };
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), recoveryListScope(status));
+  return { requests: page.items.map(present), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit };
 }
 
 async function lockRequest(tx, requestId) {

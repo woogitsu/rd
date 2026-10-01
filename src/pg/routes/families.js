@@ -28,7 +28,7 @@
 
 import { isSameOrigin } from '../../auth.js';
 import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
-import { resolveScope, scopeSqlFragment, scopeSqlParams } from '../scope.js';
+import { householdScope, resolveScope, scopeSqlFragment, scopeSqlParams, HOUSEHOLD_WIDE_ROLES } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { recordDataAccess } from '../data-access.js';
@@ -37,7 +37,6 @@ import { createJsonReader } from '../input.js';
 export const name = 'families';
 
 const READ_ROLES = ['admin', 'board', 'treasurer', 'representative'];
-const WIDE_ROLES = new Set(['admin', 'board', 'treasurer']);
 const EDIT_ROLES = ['admin', 'board'];
 const FINANCIAL_ROLES = ['admin', 'board', 'treasurer'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -95,14 +94,7 @@ function readReason(value) {
   return reason;
 }
 
-// Zakres z przydziałów o podanych rolach — wspólny resolver src/pg/scope.js
-// (#155). Przydział z class_id (obowiązkowy dla przedstawiciela) zawęża do tej
-// klasy; przydział szerokiej roli (WIDE_ROLES) bez class_id — do roku z
-// school_year_id albo do wszystkich lat.
-export function familiesScope(context, roles) {
-  return resolveScope(context, { roles, schoolWideRoles: WIDE_ROLES });
-}
-
+// Zakres liczy householdScope (src/pg/scope.js, #155).
 // Parametry zakresu zajmują zawsze $1–$4 (scopeSqlFragment z firstParam 1);
 // dalsze parametry zaczynają się od $5.
 const scopeParams = (scope) => scopeSqlParams(scope);
@@ -130,7 +122,7 @@ const STUDENT_IN_SCOPE = (studentExpr) => `($1::boolean OR EXISTS (
 async function requireReadContext(request, env, roles = READ_ROLES) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  const scope = familiesScope(context, roles);
+  const scope = householdScope(context, roles);
   if (!scope.any) {
     // #184: ślad odmowy 403 (przed transakcją żądania).
     await logAccessDenied(env, context, { roles }, request);
@@ -209,7 +201,7 @@ async function listClassStudents(request, env, classId, json) {
 
 function financialYears(context) {
   // Wyłącznie przydział bez klasy (SR-01): zakres szkolny z MFA.
-  const scope = resolveScope(context, { roles: FINANCIAL_ROLES, requireMfa: true, schoolWideRoles: WIDE_ROLES });
+  const scope = resolveScope(context, { roles: FINANCIAL_ROLES, requireMfa: true, schoolWideRoles: HOUSEHOLD_WIDE_ROLES });
   return scope.schoolWide ? scope : null;
 }
 

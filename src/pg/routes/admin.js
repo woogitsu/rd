@@ -134,14 +134,15 @@ import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
 import {
-  approveGrantRequest, grantApprovalMode, GrantRequestError, insertGrantRequest, isProtectedRole, listGrantRequests,
+  approveGrantRequest, grantApprovalMode, GrantRequestError, insertGrantRequest, isProtectedRole, listGrantRequests, GRANT_REQUEST_LIST_MAX, grantRequestListScope,
   recordFourEyesWaiver, rejectGrantRequest,
 } from '../grant-requests.js';
 import {
-  approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, rejectRecoveryRequest, requiresRecoveryApproval,
+  approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, RECOVERY_LIST_MAX, recoveryListScope, rejectRecoveryRequest, requiresRecoveryApproval,
 } from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
 import { promotionAllowedMethods, PromotionError, routePromotions } from '../promotions.js';
+import { mfaRequiredRoles } from '../mfa-policy.js';
 import { invitationBatchAllowedMethods, routeInvitationBatches } from '../invitation-batch.js';
 import {
   afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
@@ -422,7 +423,9 @@ async function mfaResetRoute(env, actorId, userId, request, json) {
 async function recoveryRequestsList(env, url, json) {
   const status = url.searchParams.get('status') || 'pending';
   try {
-    return json(await listRecoveryRequests(env, { status }));
+    const limit = listLimit(url, { defaultLimit: RECOVERY_LIST_MAX, maxLimit: RECOVERY_LIST_MAX });
+    const cursor = listCursor(url, 'timestamp', recoveryListScope(status));
+    return json(await listRecoveryRequests(env, { status, limit, cursor }));
   } catch (error) {
     if (error instanceof LoginError) throw new RequestError(error.code, error.status);
     throw error;
@@ -893,7 +896,10 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
 
 async function grantRequestsList(env, url, json) {
   try {
-    return json(await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }));
+    const status = url.searchParams.get('status') || 'pending';
+    const limit = listLimit(url, { defaultLimit: GRANT_REQUEST_LIST_MAX, maxLimit: GRANT_REQUEST_LIST_MAX });
+    const cursor = listCursor(url, 'timestamp', grantRequestListScope(status));
+    return json(await listGrantRequests(env, { status, limit, cursor }));
   } catch (error) {
     if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
     throw error;
@@ -1005,16 +1011,32 @@ async function classCoverage(env, url, json) {
             (SELECT to_char(max(s.created_at), 'YYYY-MM-DD') FROM sessions s
                JOIN role_grants g2 ON g2.user_id = s.user_id
               WHERE g2.class_id = c.id AND g2.role = 'representative'
-                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on
+                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on,
+            (SELECT count(DISTINCT g3.user_id) FROM role_grants g3
+               WHERE g3.class_id = c.id AND g3.role = 'representative'
+                 AND g3.revoked_at IS NULL AND (g3.expires_at IS NULL OR g3.expires_at > now())
+                 AND NOT EXISTS (SELECT 1 FROM sessions s3 WHERE s3.user_id = g3.user_id)) AS never_logged_in_count,
+            (SELECT count(DISTINCT g4.user_id) FROM role_grants g4
+               WHERE g4.class_id = c.id AND g4.role = 'representative'
+                 AND g4.revoked_at IS NULL AND (g4.expires_at IS NULL OR g4.expires_at > now())
+                 AND EXISTS (SELECT 1 FROM user_mfa_factors f4
+                              WHERE f4.user_id = g4.user_id AND f4.confirmed_at IS NOT NULL AND f4.disabled_at IS NULL)) AS mfa_enrolled_count
        FROM classes c WHERE c.school_year_id = $1
        ORDER BY c.name, c.id`,
     [schoolYearId],
   );
   return json({
     schoolYearId,
+    // Stan aktywacji (#108): czy rola przedstawiciela wymaga MFA wg polityki serwera
+    // (MFA_REQUIRED_ROLES) oraz — per klasa — ilu aktywnych przedstawicieli nigdy się
+    // nie zalogowało (brak sesji; stare sesje mogły zostać usunięte retencją) i ilu ma
+    // potwierdzone MFA. Wyłącznie liczby, bez identyfikatorów osób i e-maili.
+    representativeMfaRequired: mfaRequiredRoles(env).includes('representative'),
     classes: rows.map((row) => ({
       id: row.id,
       name: row.name,
+      neverLoggedInRepresentativeCount: toSafeInteger(row.never_logged_in_count),
+      mfaEnrolledRepresentativeCount: toSafeInteger(row.mfa_enrolled_count),
       activeRepresentativeCount: toSafeInteger(row.active_count),
       pendingInvitationCount: toSafeInteger(row.pending_count),
       nextInvitationExpiresAt: isoTimestamp(row.next_expires_at),
@@ -1090,7 +1112,7 @@ export async function requireAuditDomains(env, request, context, domains) {
   throw new RequestError('forbidden', 403);
 }
 
-function auditEventForView(row, { withEntity = true } = {}) {
+export function auditEventForView(row, { withEntity = true } = {}) {
   const { metadata, redactedFields } = auditMetadataForView(row.metadata_json ?? {});
   const event = {
     id: row.id, actorId: row.actor_id ?? null, action: row.action, domain: auditActionDomain(row.action),
@@ -1642,14 +1664,14 @@ async function anonymizationRoute(env, actorId, request, json) {
 // spoza /api/admin z ich autoryzacją. Etykieta roli aktora w chwili zdarzenia
 // (z issue) nie jest tu liczona — wymagałaby złączenia z historią przydziałów
 // ról po czasie; odłożone jako osobne rozszerzenie.
-const ENTITY_TABLES = {
+export const ENTITY_TABLES = {
   payment_entry: 'payment_entries',
   ledger_entry: 'ledger_entries',
   reconciliation: 'bank_reconciliations',
   email_campaign: 'email_campaigns',
 };
 // Domena, której odczyt jest wymagany do historii obiektu danego typu.
-const ENTITY_DOMAIN = {
+export const ENTITY_DOMAIN = {
   payment_entry: 'finance', ledger_entry: 'finance', reconciliation: 'finance', email_campaign: 'email',
 };
 // Zdarzenia uzgodnienia zapisują entity_type 'bank_reconciliation' (routes/
@@ -1667,19 +1689,26 @@ const RELATED_METADATA_KEY = {
   email_campaign: 'campaignId',
 };
 
-async function entityAudit(request, env, entityType, entityId, json, actorId, context) {
-  const table = ENTITY_TABLES[entityType];
-  if (!table) throw new RequestError('invalid_entity_type');
-  await requireAuditDomains(env, request, context, [ENTITY_DOMAIN[entityType]]);
-  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
-  if (!exists.length) throw new RequestError('not_found', 404);
-  const { rows } = await env.db.query(
+// Surowe zdarzenia obiektu (samego i powiązane przez metadane), od najstarszego.
+// Wspólne dla trasy admina i GET /api/audit/entity/... (routes/audit-history.js).
+export async function readEntityAuditRows(db, entityType, entityId) {
+  const { rows } = await db.query(
     `SELECT id, actor_id, action, occurred_at, metadata_json
        FROM audit_events
       WHERE (entity_type = ANY($1::text[]) AND entity_id = $2) OR metadata_json ->> $3 = $2
       ORDER BY occurred_at, id`,
     [[entityType, ENTITY_AUDIT_TYPE[entityType] ?? entityType], entityId, RELATED_METADATA_KEY[entityType]],
   );
+  return rows;
+}
+
+async function entityAudit(request, env, entityType, entityId, json, actorId, context) {
+  const table = ENTITY_TABLES[entityType];
+  if (!table) throw new RequestError('invalid_entity_type');
+  await requireAuditDomains(env, request, context, [ENTITY_DOMAIN[entityType]]);
+  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
+  if (!exists.length) throw new RequestError('not_found', 404);
+  const rows = await readEntityAuditRows(env.db, entityType, entityId);
   // Historia obiektu obejmuje zdarzenia różnych domen (np. `audit.viewed` z
   // domeny privacy) — pokazujemy tylko te, których domenę aktor może czytać.
   const visible = rows.filter((row) => canReadAuditDomain(context, auditActionDomain(row.action)));

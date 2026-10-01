@@ -113,6 +113,7 @@
             <tbody id="grant-requests-body"></tbody>
           </table>
         </div>
+        <p><button type="button" id="grant-requests-more" hidden>Pokaż więcej</button></p>
       </section>
 
       <section class="card" aria-labelledby="grants-title">
@@ -215,12 +216,12 @@
           <div><h2 id="coverage-title">Obsada klas</h2><p id="coverage-summary">Wybierz rok szkolny.</p></div>
           <button type="button" id="reload-coverage">Odśwież</button>
         </div>
-        <p class="hint">Dla każdej klasy roku: aktywni przedstawiciele, oczekujące zaproszenia (bez kodów) i data ostatniego logowania przedstawiciela. Bez adresów e-mail. Brak przedstawiciela nie jest oceną klasy — lista może być nieaktualna.</p>
+        <p class="hint">Dla każdej klasy roku: aktywni przedstawiciele z liczbą osób bez logowania i z MFA, oczekujące zaproszenia (bez kodów) i data ostatniego logowania przedstawiciela. Bez adresów e-mail. Brak przedstawiciela nie jest oceną klasy — lista może być nieaktualna.</p>
         <p><label>Rok szkolny <select id="coverage-year" data-years="pick"></select></label></p>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Obsada klas</caption>
-            <thead><tr><th scope="col">Klasa</th><th scope="col">Stan</th><th scope="col" class="num">Przedstawiciele</th><th scope="col" class="num">Zaproszenia oczekujące</th><th scope="col">Najbliższe wygaśnięcie zaproszenia</th><th scope="col">Ostatnie logowanie</th></tr></thead>
+            <thead><tr><th scope="col">Klasa</th><th scope="col">Stan</th><th scope="col" class="num">Przedstawiciele</th><th scope="col">Aktywacja</th><th scope="col" class="num">Zaproszenia oczekujące</th><th scope="col">Najbliższe wygaśnięcie zaproszenia</th><th scope="col">Ostatnie logowanie</th></tr></thead>
             <tbody id="coverage-body"></tbody>
           </table>
         </div>

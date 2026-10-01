@@ -44,6 +44,8 @@ describe('tabela obsady klas (#108)', () => {
       ('g-2', 'u-rep-1a-2', 'representative', 'c-1a', $1, 'u-admin'),
       ('g-3', 'u-rep-both', 'representative', 'c-1a', $1, 'u-admin'),
       ('g-4', 'u-rep-both', 'representative', 'c-1b', $1, 'u-admin')`, [Y]);
+    await db.query(`INSERT INTO user_mfa_factors (id, user_id, method, secret_ciphertext, secret_iv, secret_tag, confirmed_at)
+      VALUES ('f-1', 'u-rep-both', 'totp', 'abc', repeat('a', 16), repeat('b', 22), now())`);
     // Logowanie: sesja u-rep-1a-1 z datą ustaloną (created_at w przeszłości).
     await db.query(`INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at)
       VALUES ('s-1', 'u-rep-1a-1', repeat('a', 64), '2026-09-10T08:00:00Z', now() + interval '1 hour')`);
@@ -59,6 +61,12 @@ describe('tabela obsady klas (#108)', () => {
     assert.equal(byId['c-1b'].activeRepresentativeCount, 1);
     assert.equal(byId['c-1b'].pendingInvitationCount, 1);
     assert.equal(byId['c-1b'].lastRepresentativeLoginOn, null, 'przedstawiciel 1B (u-rep-both) jeszcze się nie logował');
+    // Stan aktywacji: u-rep-1a-1 zalogowany, pozostali dwaj nie; MFA ma tylko u-rep-both (przedstawiciel obu klas).
+    assert.equal(byId['c-1a'].neverLoggedInRepresentativeCount, 2);
+    assert.equal(byId['c-1a'].mfaEnrolledRepresentativeCount, 1);
+    assert.equal(byId['c-1b'].neverLoggedInRepresentativeCount, 1);
+    assert.equal(byId['c-1b'].mfaEnrolledRepresentativeCount, 1);
+    assert.equal(coverage.data.representativeMfaRequired, false, 'domyślnie MFA wymagają admin, zarząd, skarbnik');
     assert.doesNotMatch(JSON.stringify(coverage.data), /example\.invalid|token/i);
 
     assert.equal((await call(env, '/api/admin/class-coverage?schoolYearId=y-nope', { cookie: admin })).status, 404);
