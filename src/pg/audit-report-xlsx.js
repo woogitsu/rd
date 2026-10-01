@@ -26,7 +26,7 @@ import { BUDGET_CSV_COLUMNS, budgetCsvValues } from './routes/ledger-budget.js';
 export const AUDIT_REPORT_SHEETS = Object.freeze([
   'Informacje', 'Bilans', 'Kontrole', 'Kategorie', 'Preliminarz', 'Wydatki > 3000 EUR', 'Uchwały', 'Weryfikacja wydatków',
   'Możliwe podziały', 'Wydarzenia', 'Korekty', 'Przeksięgowania', 'Uzgodnienia', 'Dowody', 'Możliwe duplikaty dowodu',
-  'Operacje na kontach',
+  'Operacje na kontach', 'Uwagi KR',
 ]);
 
 const cols = (list) => list.map(([header, type]) => ({ header, type }));
@@ -261,12 +261,33 @@ function accountOperationsSheets(report) {
   }];
 }
 
+// #137: ścieżka kontroli KR — jeden wiersz na zapis (pytanie, odpowiedź, zamknięcie, wniosek).
+// Raporty sprzed tej zmiany (archiwum) nie mają arkusza.
+const NOTE_KIND = { question: 'pytanie', finding: 'ustalenie', answer: 'odpowiedź', closed: 'zamknięcie', conclusion: 'wniosek końcowy' };
+const NOTE_TARGET = { ledger_entry: 'wpis księgi', reconciliation: 'uzgodnienie', year: 'rok szkolny' };
+function reviewNotesSheets(report) {
+  const notes = report.reviewNotes;
+  if (!notes) return [];
+  const flat = [];
+  for (const thread of notes.threads) flat.push(thread, ...thread.answers, ...(thread.closed ? [thread.closed] : []));
+  flat.push(...notes.conclusions);
+  flat.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+  return [{
+    name: 'Uwagi KR',
+    columns: cols([['Zapisano', 'datetime'], ['Rodzaj', 'text'], ['Dotyczy', 'text'], ['Identyfikator celu', 'text'],
+      ['Treść', 'text'], ['Autor (id)', 'text'], ['Identyfikator zapisu', 'text'], ['Dotyczy zapisu', 'text']]),
+    rows: flat.map((item) => [item.createdAt, NOTE_KIND[item.kind] ?? item.kind, NOTE_TARGET[item.targetType] ?? item.targetType,
+      item.targetId, item.body ?? '', item.createdBy ?? '', item.id, item.parentId ?? '']),
+    trailer: ['', `Otwarte: ${notes.counts.open}; z odpowiedzią, bez zamknięcia: ${notes.counts.answered}; zamknięte: ${notes.counts.closed}. Zapisy są niezmienne — korekta to nowy zapis.`],
+  }];
+}
+
 export function buildAuditReportXlsx(report, { contentSha256 }) {
   const sheets = [
     infoSheet(report, contentSha256), balanceSheet(report), checksSheet(report), categoriesSheet(report), budgetSheet(report),
     largeExpensesSheet(report), resolutionsSheet(report), reviewsSheet(report), splitsSheet(report), eventsSheet(report),
     correctionsSheet(report), reclassificationsSheet(report), reconciliationsSheet(report), ...evidenceSheets(report),
-    ...accountOperationsSheets(report),
+    ...accountOperationsSheets(report), ...reviewNotesSheets(report),
   ];
   return toXlsxWorkbook(sheets);
 }

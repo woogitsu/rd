@@ -1,6 +1,7 @@
 // Logika czysta ekranu Komisji Rewizyjnej (issue #147 — src/pg/routes/reconciliation.js,
 // GET /api/reports/audit). Bez sieci, bez DOM: testy w tests/audit-panel-core.test.js.
-// Ekran jest WYŁĄCZNIE do odczytu: nie ma tu żadnej akcji zmieniającej stan.
+// Raport jest tylko do odczytu. Jedyne zapisy ekranu to ścieżka kontroli (uwagi, odpowiedzi, wniosek — #137,
+// /api/audit-reviews); księgi, wpłat ani dowodów ekran nie dotyka (D-09).
 
 import { formatEur } from '../panel/money.js';
 import { shortId } from '../shared/short-id.js';
@@ -231,4 +232,71 @@ export function buildSections(report) {
     });
   }
   return sections;
+}
+
+// --- Ścieżka kontroli: uwagi, odpowiedzi, zamknięcia i wniosek (#137) ---------
+// Serwer (src/pg/routes/audit-reviews.js) sprawdza rolę przy każdym żądaniu;
+// poniższe funkcje tylko przybliżają widoczność formularzy.
+
+export const REVIEW_READ_ROLES = Object.freeze(['audit', 'board', 'treasurer']);
+export const REVIEW_WRITE_ROLES = Object.freeze(['audit']);
+export const REVIEW_ANSWER_ROLES = Object.freeze(['board', 'treasurer']);
+
+const KIND_LABEL = Object.freeze({ question: 'pytanie', finding: 'ustalenie' });
+const TARGET_LABEL = Object.freeze({ ledger_entry: 'wpis księgi', reconciliation: 'uzgodnienie', year: 'rok szkolny' });
+const STATUS_LABEL = Object.freeze({ open: 'otwarta', answered: 'odpowiedź bez zamknięcia', closed: 'zamknięta' });
+
+function hasRole(grants, roles, schoolYearId = '') {
+  return (Array.isArray(grants) ? grants : []).some((grant) => roles.includes(grant?.role)
+    && !grant.classId
+    && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === String(schoolYearId).trim()));
+}
+
+export const canWriteReviews = (grants, schoolYearId) => hasRole(grants, REVIEW_WRITE_ROLES, schoolYearId);
+export const canAnswerReviews = (grants, schoolYearId) => hasRole(grants, REVIEW_ANSWER_ROLES, schoolYearId);
+
+export function reviewsUrl(schoolYearId, path = '') {
+  if (!isValidId(schoolYearId)) throw new Error('Podaj poprawny identyfikator roku szkolnego.');
+  return `/api/audit-reviews/${encodeURIComponent(schoolYearId.trim())}${path}`;
+}
+
+export function reviewReplyUrl(schoolYearId, noteId, action) {
+  if (!isValidId(noteId) || !['answers', 'closure'].includes(action)) throw new Error('Niepoprawna uwaga.');
+  return reviewsUrl(schoolYearId, `/notes/${encodeURIComponent(noteId)}/${action}`);
+}
+
+export function reviewStatusLabel(status) {
+  return STATUS_LABEL[status] ?? text(status);
+}
+
+/** Wiersze tabeli wątków: [zapisano, rodzaj, dotyczy, treść, stan, odpowiedzi, zamknięcie]. */
+export function buildReviewRows(reviews) {
+  return (reviews?.threads ?? []).map((thread) => ({
+    id: thread.id,
+    status: thread.status,
+    cells: [
+      formatDate(thread.createdAt),
+      KIND_LABEL[thread.kind] ?? text(thread.kind),
+      { text: `${TARGET_LABEL[thread.targetType] ?? text(thread.targetType)} ${shortId(thread.targetId)}`, title: thread.targetId },
+      text(thread.body),
+      reviewStatusLabel(thread.status),
+      thread.answers.length ? thread.answers.map((answer) => `${formatDate(answer.createdAt)}: ${text(answer.body)}`).join('\n') : '—',
+      thread.closed ? `${formatDate(thread.closed.createdAt)}${thread.closed.body ? `: ${thread.closed.body}` : ''}` : '—',
+    ],
+  }));
+}
+
+export function reviewSummary(reviews) {
+  const counts = reviews?.counts ?? { open: 0, answered: 0, closed: 0 };
+  const conclusion = reviews?.currentConclusion;
+  return {
+    counts: `Otwarte: ${counts.open}; z odpowiedzią, bez zamknięcia: ${counts.answered}; zamknięte: ${counts.closed}.`,
+    conclusion: conclusion ? `Wniosek końcowy (${formatDate(conclusion.createdAt)}): ${text(conclusion.body)}` : 'Brak wniosku końcowego w systemie.',
+  };
+}
+
+/** Klucz idempotencji jednego zamiaru zapisu; ponowne kliknięcie tego samego formularza używa go ponownie. */
+export function newIdempotencyKey(prefix = 'ar') {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${random}`;
 }

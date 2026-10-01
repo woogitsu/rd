@@ -1,5 +1,9 @@
 import {
   buildContactPatch,
+  buildEndRequest,
+  canEndGuardianHousehold,
+  END_KINDS,
+  endResultMessages,
   canEditFamilies,
   hasRepresentativeGrant,
   classHref,
@@ -16,6 +20,7 @@ import {
   parseRoute,
   sortStudentsByName,
 } from "./core.js";
+import { renderGuardianUpdates } from "./guardian-updates.js";
 import { api as apiRequest } from "../shared/api.js";
 import { formatSchoolYear } from "../shared/school-year.js";
 import { mountShell, sessionDisplayName } from "../shared/shell.js";
@@ -27,12 +32,13 @@ let printedBy = null;
 mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
 
 const byId = (id) => document.getElementById(id);
-const state = { classes: null, canEdit: false, isRepresentative: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
-const views = { classes: byId("classes-view"), overview: byId("overview-view"), class: byId("class-view"), household: byId("household-view") };
+const state = { classes: null, canEdit: false, canEndGuardianMembership: false, isRepresentative: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
+const views = { classes: byId("classes-view"), overview: byId("overview-view"), class: byId("class-view"), household: byId("household-view"), guardianUpdates: byId("guardian-updates-view") };
 const message = byId("message");
 const breadcrumbs = byId("breadcrumbs");
 const contactDialog = byId("contact-dialog");
 const enrollmentDialog = byId("enrollment-dialog");
+const endDialog = byId("end-dialog");
 
 // Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
 const api = (url, options = {}) => apiRequest(url, { ...options, messages: ERROR_MESSAGES });
@@ -111,6 +117,7 @@ async function renderClasses() {
   }));
   byId("classes-empty").hidden = classes.length > 0;
   byId("overview-link").hidden = !state.canEdit || classes.length === 0;
+  byId("guardian-updates-link").hidden = !state.canEdit; // tylko podpowiedź; serwer: admin i zarząd bez klasy
   showView("classes");
   await renderOverview(groupClassesByYear(classes));
 }
@@ -286,18 +293,46 @@ async function renderHousehold(householdId) {
       if (index) classes.append(", ");
       classes.append(link(item.className, classHref(item.classId)));
     });
+    const actions = cell("", "row-actions");
+    if (state.canEdit) {
+      const name = fullName(student);
+      for (const item of student.classes) {
+        if (item.enrollmentId) {
+          actions.append(endButton(`Zakończ naukę (${item.className})`, `Zakończ naukę w szkole: ${name}, klasa ${item.className}`,
+            { kind: "enrollment", studentId: student.id, enrollmentId: item.enrollmentId }, name));
+        }
+      }
+      if (student.membershipId) {
+        actions.append(endButton("Zakończ członkostwo", `Zakończ członkostwo w gospodarstwie: ${name}`,
+          { kind: "studentHousehold", studentId: student.id, membershipId: student.membershipId }, name));
+      }
+    }
     row.append(
       cell(fullName(student)),
       cell(classes),
       cell(student.isPrimaryHousehold === undefined ? "—" : student.isPrimaryHousehold ? "główne" : "dodatkowe"),
       cell(student.otherHouseholds.length ? householdLinks(student.otherHouseholds) : "—"),
+      actions,
     );
     return row;
   }));
   byId("household-guardians").replaceChildren(...data.guardians.map((guardian) => {
     const row = document.createElement("tr");
     const actions = cell("", "row-actions");
-    if (state.canEdit) actions.append(button("Edytuj kontakt", () => openContact(guardian)));
+    if (state.canEdit) {
+      actions.append(button("Edytuj kontakt", () => openContact(guardian)));
+      const guardianName = fullName(guardian);
+      for (const relation of guardian.relations ?? []) {
+        const child = data.students.find((item) => item.id === relation.studentId);
+        if (!child) continue;
+        actions.append(endButton("Zakończ opiekę", `Zakończ opiekę: ${guardianName} nad ${fullName(child)}`,
+          { kind: "relation", guardianId: guardian.id, studentId: child.id }, `${guardianName} — dziecko: ${fullName(child)}`));
+      }
+      if (state.canEndGuardianMembership && guardian.membershipId) {
+        actions.append(endButton("Zakończ członkostwo", `Zakończ członkostwo w gospodarstwie: ${guardianName}`,
+          { kind: "guardianHousehold", guardianId: guardian.id, membershipId: guardian.membershipId }, guardianName));
+      }
+    }
     row.append(
       cell(fullName(guardian)),
       cell(guardian.email ?? (guardian.contactAllowed ? "—" : "ukryty")),
@@ -318,6 +353,25 @@ async function renderHousehold(householdId) {
     byId("payments-empty").hidden = data.paymentTotals.length > 0;
   }
   showView("household");
+}
+
+function endButton(text, label, target, context) {
+  const element = button(text, () => openEnd(target, context));
+  element.setAttribute("aria-label", label);
+  return element;
+}
+
+function openEnd(target, context) {
+  const spec = END_KINDS[target.kind];
+  const form = endDialog.querySelector("form");
+  form.reset();
+  form.elements.date.value = localDate();
+  byId("end-dialog-title").textContent = spec.label;
+  byId("end-date-label").textContent = spec.dateLabel;
+  form.querySelector(".context").textContent = context;
+  form.querySelector(".form-error").textContent = "";
+  endDialog.target = target;
+  endDialog.showModal();
 }
 
 function openContact(guardian) {
@@ -348,6 +402,24 @@ async function openEnrollment(student, currentClass) {
   const classes = (await loadClasses()).filter((item) => item.schoolYearId === currentClass.schoolYearId && item.id !== currentClass.id);
   form.elements.classId.replaceChildren(...classes.map((item) => new Option(item.name, item.id)));
   enrollmentDialog.showModal();
+}
+
+async function sendEnd(form) {
+  const target = endDialog.target;
+  const request = buildEndRequest(target, { date: form.elements.date.value, reason: form.elements.reason.value });
+  if (request.error) throw new Error(request.error);
+  let response;
+  try {
+    // 422 possible_personal_data: wspólny klient pyta o potwierdzenie i ponawia z confirmPersonalData: true.
+    response = await api(request.url, { method: request.method, body: JSON.stringify(request.body) });
+  } catch (failure) {
+    if (target.kind === "guardianHousehold" && failure.status === 403) {
+      throw new Error("Członkostwo opiekuna w gospodarstwie może zakończyć tylko administrator lub zarząd z dostępem do wszystkich klas.");
+    }
+    throw failure;
+  }
+  state.classes = null;
+  showMessage(endResultMessages(target.kind, response).join(" "));
 }
 
 async function submitDialog(dialog, event, send) {
@@ -382,6 +454,8 @@ contactDialog.querySelector("form").addEventListener("submit", (event) => submit
   showMessage("Zapisano zmianę kontaktu.");
 }));
 
+endDialog.querySelector("form").addEventListener("submit", (event) => submitDialog(endDialog, event, sendEnd));
+
 enrollmentDialog.querySelector("form").addEventListener("submit", (event) => submitDialog(enrollmentDialog, event, async (form) => {
   if (!form.elements.classId.value) throw new Error("Brak innej klasy w tym roku.");
   await api(`/api/students/${encodeURIComponent(form.elements.studentId.value)}/enrollments`, {
@@ -401,6 +475,7 @@ async function route() {
   const target = parseRoute(location.hash);
   try {
     if (target.view === "overview") await renderBoardOverview();
+    else if (target.view === "guardianUpdates") await renderGuardianUpdates({ api, showView, setBreadcrumbs, showMessage });
     else if (target.view === "class") await renderClass(target.id);
     else if (target.view === "household") await renderHousehold(target.id);
     else await renderClasses();
@@ -417,9 +492,11 @@ window.addEventListener("hashchange", () => { showMessage(""); route(); });
     const grants = (await api("/api/access")).grants;
     state.canEdit = canEditFamilies(grants);
     state.isRepresentative = hasRepresentativeGrant(grants);
+    state.canEndGuardianMembership = canEndGuardianHousehold(grants);
   } catch {
     state.canEdit = false;
     state.isRepresentative = false;
+    state.canEndGuardianMembership = false;
   }
   await route();
 })();

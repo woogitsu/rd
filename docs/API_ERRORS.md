@@ -50,6 +50,9 @@ wpisów).
 | `anonymization_row_mismatch` | Liczba zmienionych wierszy nie zgadza się z planem — operację wycofano, nic nie zostało zanonimizowane. | Tak, po ponownym podglądzie (dane zmieniły się w międzyczasie). |
 | `approval_required` | Operacja wymaga wcześniejszego zatwierdzenia. | Nie — popraw dane żądania. |
 | `approval_stale` | Zatwierdzenie jest nieaktualne, bo dane zmieniły się po nim. Zatwierdź ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `audit_review_closed` | Uwaga została już zamknięta przez Komisję Rewizyjną. Dodaj nową uwagę, jeśli sprawa wymaga dalszej kontroli. | Nie — dodaj nową uwagę. |
+| `audit_review_not_found` | Nie znaleziono uwagi Komisji Rewizyjnej. | Nie — popraw dane żądania. |
+| `audit_review_target_not_found` | Nie znaleziono wskazanego wpisu księgi, uzgodnienia ani roku w tym roku szkolnym. | Nie — popraw dane żądania. |
 | `authorization_superseded` | Kwota upoważnienia zmieniła się w międzyczasie. Odśwież widok i spróbuj ponownie. | Zależy od kontekstu (patrz moduł trasy). |
 | `backup_failed` | Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
 | `bank_import_not_configured` | Import wyciągu z pliku banku nie jest skonfigurowany. | Zależy od kontekstu (patrz moduł trasy). |
@@ -151,6 +154,7 @@ wpisów).
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
 | `invalid_amount` | Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00. | Nie — popraw dane żądania. |
 | `invalid_audience` | Wybierz odbiorców. | Nie — popraw dane żądania. |
+| `invalid_audit_review_body` | Treść uwagi musi mieć od 3 do 2000 znaków. | Nie — popraw dane żądania. |
 | `invalid_author` | Niepoprawny autor. | Nie — popraw dane żądania. |
 | `invalid_bic` | Numer BIC jest niepoprawny (8 albo 11 znaków). | Nie — popraw dane żądania. |
 | `invalid_body_text` | Podaj treść informacji (1–20000 znaków). | Nie — popraw dane żądania. |
@@ -244,6 +248,9 @@ wpisów).
 | `invalid_plan_sha256` | Podaj skrót planu (planSha256) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_provider_pause_id` | Niepoprawny identyfikator wstrzymania wysyłki. | Nie — popraw dane żądania. |
+| `invalid_quota_count` | Niepoprawna liczba wiadomości: od 1 do 10000; korekta jest liczbą ujemną. | Nie — popraw dane żądania. |
+| `invalid_quota_day` | Niepoprawna doba limitu: wpis dotyczy dzisiejszej doby (UTC lub strefy konta), korekta — doby korygowanego wpisu. | Nie — popraw dane żądania. |
+| `invalid_quota_reason` | Niepoprawny kod powodu wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
 | `invalid_reason_code` | Podaj powód przebiegu: retention_policy albo data_subject_request. | Nie — popraw dane żądania. |
@@ -393,6 +400,8 @@ wpisów).
 | `privacy_notice_not_found` | Nie znaleziono tej wersji informacji. | Nie — popraw dane żądania. |
 | `production_requires_flag` | Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `production_restore_requires_allow_production` | Odtworzenie na produkcji wymaga osobnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
+| `quota_correction_exceeds` | Korekty nie mogą łącznie przekroczyć liczby z korygowanego wpisu. | Nie — popraw dane żądania. |
+| `quota_correction_target_not_found` | Nie znaleziono wpisu do skorygowania. | Nie — popraw dane żądania. |
 | `provider_pause_not_found` | Nie znaleziono tego wstrzymania wysyłki. Odśwież widok. | Nie — popraw dane żądania. |
 | `public_copy_requires_license` | Publiczna kopia wymaga zapisanej licencji lub zgody. | Zależy od kontekstu (patrz moduł trasy). |
 | `quorum_rule_source_required` | Podaj źródło reguły quorum (np. regulamin). | Nie — popraw dane żądania. |

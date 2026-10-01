@@ -19,6 +19,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`anonymization_runs`|`data_subject_request_id`|Opiekun|pseudonymous|identyfikacja|powiązanie przebiegu z żądaniem osoby|nieustalona (D-04)|nie|nie|
 |`anonymization_runs`|`executed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie przebiegu z administratorem, który go wykonał|nieustalona (D-04)|nie|nie|
 |`anonymization_runs`|`household_id`|Opiekun|pseudonymous|identyfikacja|wskazanie zanonimizowanego gospodarstwa (bez danych osobowych)|nieustalona (D-04)|nie|nie|
+|`audit_review_notes`|`body`|Osoba trzecia|direct|wolny tekst|treść uwagi, odpowiedzi, zamknięcia lub wniosku końcowego Komisji Rewizyjnej|document_financial|tak|tak|
+|`audit_review_notes`|`created_by`|Członek Rady|pseudonymous|identyfikacja|autor uwagi, odpowiedzi lub wniosku w ścieżce kontroli Komisji Rewizyjnej|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_group_match_revocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_group_match_revocations`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania zbiorczego|document_financial|tak|tak|
 |`bank_reconciliation_group_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -62,6 +64,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_preview_sends`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie wysyłki testowej z osobą|nieustalona (D-04)|nie|nie|
 |`email_preview_sends`|`recipient_hash`|Członek Rady|pseudonymous|kontakt|limit wysyłek testowych na adres techniczny Rady|nieustalona (D-04)|nie|nie|
 |`email_provider_pauses`|`lifted_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_send_ledger`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`email_suppression_release_requests`|`consumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_suppression_release_requests`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`email_suppression_release_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -225,7 +228,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **212**, w tym wolnego tekstu: **59** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **215**, w tym wolnego tekstu: **60** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -282,6 +285,21 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `id` | none | — | tak |
 | `metadata_json` | none | — | tak |
 | `occurred_at` | none | — | tak |
+
+### `audit_review_notes`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `body` | direct | third_party | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `kind` | none | — | tak |
+| `parent_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `target_id` | none | — | tak |
+| `target_type` | none | — | tak |
 
 ### `backup_runs`
 
@@ -671,12 +689,16 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
+| `actor_id` | pseudonymous | board_member | tak |
 | `attempt` | none | — | nie |
 | `campaign_id` | none | — | nie |
+| `corrects_id` | none | — | tak |
 | `day` | none | — | nie |
 | `id` | none | — | nie |
+| `idempotency_key` | none | — | tak |
 | `message_count` | none | — | nie |
 | `outbox_id` | none | — | nie |
+| `reason_code` | none | — | tak |
 | `recorded_at` | none | — | nie |
 | `source` | none | — | nie |
 

@@ -29,6 +29,7 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 | import | import | ✓ | ✓ | ✓ | n/d (import nie zapisuje kwot) | ✓ | ✓ | ✓ | ~ (#98) |
 | wplaty | payments, payment-references, payment-instructions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (wpłata nie ma adresu; powód korekty z adresem: #152) | ✓ |
 | ksiega | ledger, ledger-cash, ledger-budget, ledger-cost-centers, financial-reports | ✓ | n/d (księga nie zna rodzin) | n/d (księga nie zna rodzin) | ~ (powiązana wpłata księgowana raz, bez wpłat częściowych rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
+| kontrola KR | audit-reviews | ✓ | n/d (moduł nie zna opiekunów) | n/d (moduł nie zna rodzin) | n/d (brak kwot) | ✓ | ✓ | ✓ | ✓ |
 | uzgodnienia | reconciliation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | zamkniecie | year-close | ✓ | n/d (bilans księgi, nie rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | email | email | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -89,6 +90,10 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | ksiega | Podw. kliknięcie | tests/pg-ledger-api.test.js | double click with the same Idempotency-Key creates one entry |
 | ksiega | Ponowienie | tests/pg-ledger-api.test.js | audit events are atomic with the write and carry no amounts, descriptions or documents |
 | ksiega | Korekty | tests/pg-real-double-click.test.js | dwie korekty wpisu księgi 70 + 70 € przy 100 € |
+| kontrola KR | Podw. kliknięcie | tests/pg-audit-reviews.test.js | podwójne kliknięcie i ponowienie: jeden zapis i jedno zdarzenie; ten sam klucz z inną treścią to 409 |
+| kontrola KR | Ponowienie | tests/pg-audit-reviews.test.js | podwójne kliknięcie odpowiedzi i zamknięcia: jeden zapis każdego rodzaju |
+| kontrola KR | Błędny e-mail | tests/pg-audit-reviews.test.js | bramka danych osobowych: e-mail odrzucony, telefon wymaga potwierdzenia; audyt bez treści |
+| kontrola KR | Korekty | tests/pg-audit-reviews.test.js | wątek: pytanie KR → odpowiedź skarbnika → zamknięcie; wniosek końcowy; lista i raport KR |
 | uzgodnienia | 2 opiekunów | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Rodzeństwo | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Wpł. częściowe | tests/pg-reconciliation.test.js | a correction after matching blocks confirmation with a list of inconsistent matches |
@@ -196,6 +201,17 @@ realne ryzyka wdrożenia na Railway. Pełny przebieg trwa kilkanaście minut.
 
 ### Testy wyścigów
 
+`tests/pg-real-domain-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera jak w
+`pg-real-double-click` dla modułów domenowych — dwa zapisy na ostatnie miejsce zadania
+wydarzenia (`409 task_full`), dwie edycje szkicu wydarzenia z tej samej rewizji, wycofanie
+wpisu aktualności kontra zatwierdzenie (`409 post_withdrawn`), dwie zmiany terminu zebrania
+z tej samej rewizji, zastąpienie dokumentu dwoma różnymi dokumentami i dwie identyczne zmiany
+kontaktu opiekuna (druga: `changed: false`, jeden wpis historii i audytu). Test sprawdza w
+`pg_stat_activity`, że drugie żądanie czeka na blokadę wiersza z kodu trasy (tekst zapytania
+jest obcinany do 1024 znaków, więc wzorce opisują jego początek). Usunięcie blokady w
+`lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` i `updateGuardianContact` czerwieni
+odpowiedni test (`npm run test:pg-mutations`).
+
 `tests/pg-real-concurrency.test.js` (pomijany bez `RD_TEST_PG_URL`): podwójne kliknięcie
 zapisu wpłaty (aż do wykonania gałęzi 23505), dwoje opiekunów płacących równolegle,
 trzy równoległe korekty 40/40/40 €, dwa i pięć równoległych wydatków na jedną uchwałę
@@ -264,9 +280,12 @@ jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
 Obecnie lista obejmuje: korektę i przypisanie wpłaty, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
-`rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit` i `rd_year_close`.
-Poza listą (brak testu z barierą, #208): `FOR UPDATE` w `families.js`, `events.js`,
-`news.js`, `meetings.js`, `documents.js`, pozostałe w `payments.js`/`ledger.js`
+`rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit`, `rd_year_close`
+oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` (dokumenty)
+i `updateGuardianContact`.
+Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
+zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
+porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
 (zwroty, przeksięgowania, części wpłat, autoryzacje) oraz blokady w triggerach migracji.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
@@ -274,6 +293,14 @@ Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js
 „truly parallel”, „are serialized” i „bez zakleszczenia”. Testy z `Promise.all` na
 PGlite mają w nazwie „sequential on PGlite” / „PGlite: po kolei”. „Podwójne
 kliknięcie” na PGlite oznacza ponowienie po kolei (odtworzenie zapisu), a nie wyścig.
+Reguła `pglite-parallel-unlabeled` wymaga w plikach używających `tests/helpers/pg.js`
+(bez `RD_TEST_PG_URL`), by nazwa z „parallel/simultaneous/concurrent/równoległe/naraz”
+zawierała „PGlite”, „po kolei” albo „sequential”; prawdziwy wyścig i odpowiedniki z barierą
+są w `tests/pg-real-*.test.js`. Reguła `every-without-nonempty` obejmuje każdą asercję
+`assert*(…every(…)` we wszystkich `tests/*.test.js` (niepustość w tej samej linii albo `assertEvery`).
+Pułapka sieci (`tests/helpers/network-guard.js`) przepuszcza `fetch` tylko do serwerów
+nasłuchujących na pętli zwrotnej, które uruchomił ten sam proces testowy (śledzone porty
+`net.Server#listen`); inne porty i hosty oblewają przebieg.
 
 `tests/pg-year-close-race.test.js` (#212, pomijany bez `RD_TEST_PG_URL`): równoległe
 „Zamknij rok” — dwie osoby z zarządu, podwójne kliknięcie tej samej osoby (i ponowienie

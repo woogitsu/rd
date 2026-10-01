@@ -1250,6 +1250,21 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/email/worker-status?schoolYearId=${target.schoolYearId}` }),
   },
   {
+    // Stan dziennego limitu Brevo (#84): odczyt jak worker-status; same liczby.
+    id: 'email.quota.get', module: 'email', method: 'GET', path: '/api/email/quota?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/quota?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Ewidencja wiadomości spoza kolejki (#84): dziennik tylko do dopisywania, Idempotency-Key.
+    id: 'email.quota.otherSends', module: 'email', method: 'POST', path: '/api/email/quota/other-sends',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/email/quota/other-sends', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, day: new Date().toISOString().slice(0, 10), count: 1, reasonCode: 'invitation' },
+    }),
+  },
+  {
     // Zdjęcie pauzy wznawia wysyłkę do rodzin: wyłącznie zarząd z (świeżym) MFA,
     // jak zatwierdzenie kampanii. Fixture 'fresh' zwraca aktywną pauzę albo ją
     // tworzy (najwyżej jedna aktywna); skarbnik, admin i przedstawiciel: 403.
@@ -1595,6 +1610,50 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=xlsx` }),
+  },
+
+  // ---------- ścieżka kontroli Komisji Rewizyjnej (#137, 0176) ----------
+  // Odczyt: audit, zarząd, skarbnik (przydział bez klasy, rok 1, MFA). Pytanie, zamknięcie i wniosek: tylko audit;
+  // odpowiedź: zarząd i skarbnik. Admin, dyrekcja, przedstawiciel i przydział klasowy: 403 (D-09, wariant zachowawczy).
+  {
+    id: 'auditReviews.list', module: 'audit-reviews', method: 'GET', path: '/api/audit-reviews/:year',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    fixture: null,
+    build: ({ target }) => ({ path: `/api/audit-reviews/${target.schoolYearId}` }),
+  },
+  {
+    id: 'auditReviews.noteCreate', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/notes',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: null,
+    build: ({ target, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/notes`, headers: withKey(key),
+      body: { kind: 'question', targetType: 'year', targetId: target.schoolYearId, body: 'Pytanie syntetyczne do roku.' },
+    }),
+  },
+  {
+    id: 'auditReviews.answer', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/notes/:id/answers',
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'auditNote' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/notes/${obj.noteId}/answers`, headers: withKey(key),
+      body: { body: 'Odpowiedź syntetyczna.' },
+    }),
+  },
+  {
+    id: 'auditReviews.close', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/notes/:id/closure',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: 'fresh', object: { kind: 'auditNote' },
+    build: ({ target, obj, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/notes/${obj.noteId}/closure`, headers: withKey(key), body: {},
+    }),
+  },
+  {
+    id: 'auditReviews.conclusion', module: 'audit-reviews', method: 'POST', path: '/api/audit-reviews/:year/conclusion',
+    targets: YEAR_TARGETS, allow: { audit: SCHOOL_Y1 }, mfa: true, ok: 201, deny: 403,
+    fixture: null,
+    build: ({ target, key }) => ({
+      path: `/api/audit-reviews/${target.schoolYearId}/conclusion`, headers: withKey(key), body: { body: 'Wniosek syntetyczny.' },
+    }),
   },
 
   // ---------- sprawozdanie roczne i przepływy (#125) ----------

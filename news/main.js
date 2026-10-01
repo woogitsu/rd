@@ -164,13 +164,17 @@ async function loadPhotos() {
   try {
     const data = await api("/api/news-photos");
     state.photos = Array.isArray(data.photos) ? data.photos : [];
+    state.photosTruncated = data.truncated === true;
   } catch {
     state.photos = [];
+    state.photosTruncated = false;
   }
   byId("register-body").replaceChildren(...state.photos.map((photo) => photoRow(photo, { withConsents: true })));
   byId("register-section").hidden = false;
   byId("register-empty").hidden = state.photos.length !== 0;
-  byId("register-count").textContent = `${state.photos.length} zdjęć`;
+  byId("register-count").textContent = state.photosTruncated
+    ? `${state.photos.length} najnowszych zdjęć (rejestr jest dłuższy, starsze nie są pokazane)`
+    : `${state.photos.length} zdjęć`;
 }
 
 // Odczyt statusu zgód jednego zdjęcia (GET /api/news-photos/:id) — bez żadnej zmiany.

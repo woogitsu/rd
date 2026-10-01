@@ -19,6 +19,10 @@ export const BUG_STATE_CODES = new Set(['year_freeze_unknown_table']);
 
 export const BUSINESS_STATE_CODES = new Set([
   'active_bank_match',
+  'audit_review_closed',
+  'audit_review_four_eyes',
+  'audit_review_parent_invalid',
+  'audit_review_target_not_found',
   'bank_group_match_direction_mismatch',
   'bank_group_match_line_taken',
   'bank_group_match_sum_mismatch',

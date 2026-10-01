@@ -244,7 +244,7 @@ test('granice ról: zdjęcie pauzy tylko zarząd ze świeżym MFA; skarbnik, prz
   } finally { await t.close(); }
 });
 
-test('równoległy przebieg zapisał już pauzę: druga odmowa nie tworzy drugiej pauzy ani drugiego zdarzenia', async () => {
+test('równoległy przebieg zapisał już pauzę: druga odmowa nie tworzy drugiej pauzy ani drugiego zdarzenia (PGlite: po kolei, nie wyścig)', async () => {
   const t = await setup();
   try {
     await family(t.db, 'h1');

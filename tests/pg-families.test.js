@@ -133,6 +133,14 @@ describe('katalog rodzin (osobna baza na test)', () => {
       ['s-1', ['c-1a']], ['s-2', ['c-2b']],
     ]);
     assert.equal(household.body.guardians[0].email, 'opiekun1@example.invalid');
+    // #535: identyfikatory zapisów potrzebne trasom „zakończ …” (same identyfikatory, bez danych osobowych).
+    const ids = (sql) => db.query(sql).then((r) => r.rows.map((row) => row.id).sort());
+    assert.deepEqual(household.body.students.map((s) => s.membershipId).sort(),
+      await ids(`SELECT id FROM student_households WHERE household_id = 'h-1' AND ends_on IS NULL`));
+    assert.deepEqual(household.body.students.flatMap((s) => s.classes.map((c) => c.enrollmentId)).sort(),
+      await ids(`SELECT id FROM enrollments WHERE student_id IN ('s-1','s-2') AND ended_on IS NULL AND class_id IN ('c-1a','c-2b')`));
+    assert.deepEqual(household.body.guardians.map((g) => g.membershipId).sort(),
+      await ids(`SELECT id FROM guardian_households WHERE household_id = 'h-1' AND ends_on IS NULL`));
     // Brak danych o wpłatach bez MFA: sesja zarządu bez MFA nie przechodzi już bramki
     // MFA routera (sprawdzane niżej dla skarbnika); przedstawiciel nie widzi ich nigdy.
 
@@ -248,7 +256,7 @@ describe('katalog rodzin (osobna baza na test)', () => {
   // FAMILIES.md nie istnieje, brak decyzji zarządu): „ostatni zapis wygrywa”,
   // obie zmiany zostają w historii — nic nie ginie bezpowrotnie, tylko
   // bieżąca wartość gospodarstwa. Test dokumentuje dzisiejsze zachowanie.
-  test('zmiana kontaktu: dwie osoby edytują ten sam kontakt jednocześnie — ostatni zapis wygrywa, obie zmiany w historii (#211, brak decyzji zarządu)', async (t) => {
+  test('zmiana kontaktu: dwie osoby edytują ten sam kontakt jednocześnie — ostatni zapis wygrywa, obie zmiany w historii (#211, brak decyzji zarządu) (PGlite: po kolei, nie wyścig)', async (t) => {
     const { db, call, cookies } = await setup(t);
     const path = '/api/guardians/g-2/contact';
     // Druga osoba z zarządu (inne konto, ten sam poziom uprawnień) edytuje
