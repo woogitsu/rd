@@ -1,7 +1,8 @@
-// Sekcja „Historia” obiektu w panelach (#181). Czyste funkcje bez DOM: ścieżka
-// trasy, wiersze tabeli i opis autora. To wyłącznie UX — o dostępie do trasy
-// `GET /api/admin/audit/entity/{typ}/{id}` rozstrzyga serwer (dziś tylko admin
-// z MFA, D-08/D-09); panel pokazuje sekcję tylko po odpowiedzi 200.
+// Sekcja „Historia” obiektu w panelach (#181). Czyste funkcje bez DOM: wybór
+// trasy wg roli, ścieżka, wiersze tabeli i opis autora. To wyłącznie UX — o
+// dostępie rozstrzyga serwer: admin z MFA → `GET /api/admin/audit/entity/{typ}/{id}`,
+// zarząd i skarbnik z MFA → `GET /api/audit/entity/{typ}/{id}` (D-08/D-09,
+// założenie do zatwierdzenia). Inne role nie mają trasy, więc sekcja się nie pojawia.
 
 import { auditActionLabel } from "./audit-actions.js";
 import { shortId } from "./short-id.js";
@@ -19,10 +20,23 @@ export const HISTORY_SOURCE_LABELS = Object.freeze({
   login: "Logowanie",
 });
 
-export function entityHistoryPath(entityType, entityId) {
+// Trasa wg przydziałów (GET /api/access → grants): admin ma pierwszeństwo,
+// zarząd i skarbnik używają trasy wspólnej, pozostałe role (Komisja Rewizyjna,
+// dyrekcja, przedstawiciel klasy, brak przydziałów) → null (sekcja ukryta).
+export function historyRoute(grants) {
+  const roles = new Set((Array.isArray(grants) ? grants : []).map((grant) => grant?.role));
+  if (roles.has("admin")) return "admin";
+  if (roles.has("board") || roles.has("treasurer")) return "board";
+  return null;
+}
+
+const ROUTE_PREFIX = Object.freeze({ admin: "/api/admin/audit/entity", board: "/api/audit/entity" });
+
+export function entityHistoryPath(entityType, entityId, route = "admin") {
+  if (!Object.hasOwn(ROUTE_PREFIX, route)) throw new Error("Brak trasy historii dla tej roli.");
   if (!HISTORY_ENTITY_TYPES.includes(entityType)) throw new Error("Nieobsługiwany typ obiektu historii.");
   if (typeof entityId !== "string" || !ID_PATTERN.test(entityId.trim())) throw new Error("Niepoprawny identyfikator obiektu.");
-  return `/api/admin/audit/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId.trim())}`;
+  return `${ROUTE_PREFIX[route]}/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId.trim())}`;
 }
 
 // Autor albo źródło. `actorKind` (`user`/`system`/`anonymous`) i `source` są
@@ -60,9 +74,11 @@ export function historyRows(events) {
     }));
 }
 
-// 200 → tabela; 403/404 → sekcja ukryta bez komunikatu; inne błędy (sieć, 5xx)
-// → neutralny napis, bez szczegółów.
+// 200 → tabela; 404 → sekcja ukryta bez komunikatu (obiekt nieistniejący albo
+// poza zakresem — nieodróżnialne); 403 → komunikat o braku uprawnień (np. brak
+// MFA lub przydział spoza roku obiektu); inne błędy (sieć, 5xx) → neutralny napis.
 export function historyOutcome(error) {
   if (!error) return "shown";
-  return error.status === 403 || error.status === 404 ? "hidden" : "unavailable";
+  if (error.status === 404) return "hidden";
+  return error.status === 403 ? "forbidden" : "unavailable";
 }

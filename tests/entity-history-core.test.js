@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  HISTORY_ENTITY_TYPES, entityHistoryPath, historyActorText, historyOutcome, historyRows, historyTimeText,
+  HISTORY_ENTITY_TYPES, entityHistoryPath, historyRoute, historyActorText, historyOutcome, historyRows, historyTimeText,
 } from '../shared/entity-history-core.js';
 import { auditActionLabel } from '../shared/audit-actions.js';
 
@@ -56,9 +56,26 @@ test('#181: wiersze od najstarszego, etykieta z katalogu, nieznana akcja pod naz
   assert.deepEqual(historyRows([]), []);
 });
 
-test('#181: 403 i 404 ukrywają sekcję bez komunikatu, inne błędy dają neutralny napis', () => {
+test('#181: trasa wg roli — admin, zarząd/skarbnik, reszta bez trasy', () => {
+  const g = (...roles) => roles.map((role) => ({ role }));
+  assert.equal(historyRoute(g('admin')), 'admin');
+  assert.equal(historyRoute(g('board', 'admin')), 'admin');
+  assert.equal(historyRoute(g('board')), 'board');
+  assert.equal(historyRoute(g('treasurer')), 'board');
+  assert.equal(historyRoute(g('representative', 'treasurer')), 'board');
+  for (const role of ['audit', 'principal', 'representative']) assert.equal(historyRoute(g(role)), null);
+  assert.equal(historyRoute([]), null);
+  assert.equal(historyRoute(undefined), null);
+  assert.equal(historyRoute([null, {}]), null);
+  assert.equal(entityHistoryPath('payment_entry', ID, 'board'), `/api/audit/entity/payment_entry/${ID}`);
+  assert.equal(entityHistoryPath('ledger_entry', ID, 'admin'), `/api/admin/audit/entity/ledger_entry/${ID}`);
+  assert.throws(() => entityHistoryPath('ledger_entry', ID, null), /trasy/);
+  assert.throws(() => entityHistoryPath('ledger_entry', ID, 'constructor'), /trasy/);
+});
+
+test('#181: 404 ukrywa sekcję, 403 daje komunikat, inne błędy neutralny napis', () => {
   assert.equal(historyOutcome(null), 'shown');
-  assert.equal(historyOutcome({ status: 403 }), 'hidden');
+  assert.equal(historyOutcome({ status: 403 }), 'forbidden');
   assert.equal(historyOutcome({ status: 404 }), 'hidden');
   assert.equal(historyOutcome({ status: 500 }), 'unavailable');
   assert.equal(historyOutcome({ status: 0, network: true }), 'unavailable');

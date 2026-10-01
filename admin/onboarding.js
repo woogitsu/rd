@@ -97,10 +97,26 @@ export function printCardModel(invitation, { origin, schoolYearLabel, formatDate
 // Obsada klasy (GET /api/admin/class-coverage): stan słowny bez kolorów jako jedynego nośnika.
 export function coverageState(row) {
   if ((row?.activeRepresentativeCount ?? 0) > 0) {
+    if (row.neverLoggedInRepresentativeCount > 0 && row.neverLoggedInRepresentativeCount >= row.activeRepresentativeCount) {
+      return { key: "pending", label: "Konto bez logowania" };
+    }
     return row.lastRepresentativeLoginOn ? { key: "active", label: "Przedstawiciel aktywny" } : { key: "pending", label: "Konto bez logowania" };
   }
   if ((row?.pendingInvitationCount ?? 0) > 0) return { key: "pending", label: "Zaproszenie oczekuje" };
   return { key: "revoked", label: "Brak przedstawiciela" };
+}
+
+// Stan aktywacji przedstawicieli klasy (#108): ilu nigdy się nie zalogowało i ilu ma
+// MFA. Wyłącznie liczby z serwera; „wymagane” pochodzi z polityki serwera.
+export function coverageActivation(row, mfaRequired) {
+  const active = row?.activeRepresentativeCount ?? 0;
+  if (!(active > 0)) return "—";
+  const parts = [];
+  const never = row.neverLoggedInRepresentativeCount ?? 0;
+  parts.push(never > 0 ? `bez logowania: ${never}` : "wszyscy zalogowani");
+  const mfa = row.mfaEnrolledRepresentativeCount ?? 0;
+  parts.push(`MFA ${mfa}/${active}${mfaRequired ? " (wymagane)" : ""}`);
+  return parts.join(" · ");
 }
 
 export function coverageSummary(rows) {

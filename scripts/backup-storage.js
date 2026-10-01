@@ -5,6 +5,7 @@
 //   DATABASE_URL=…               tylko odczyt tabeli documents
 //   BUCKET_*                     magazyn źródłowy (dokumenty, src/storage.js)
 //   STORAGE_BACKUP_S3_*          magazyn docelowy (drugi dostawca/region)
+//   --verify-target              (opcjonalnie) pobiera też istniejące kopie i sprawdza ich SHA-256
 //   APP_ENV=production wymaga --allow-production
 //
 // Raport (liczby, bez nazw plików i adresów) trafia na stdout i, jeśli
@@ -64,9 +65,11 @@ async function main() {
   const db = createPgDatabase({ connectionString: env.DATABASE_URL, application_name: 'rd-storage-backup', max: 2 });
   const startedAt = new Date();
   try {
-    const report = await runStorageBackup({ db, sourceStorage, targetStorage });
+    const report = await runStorageBackup({
+      db, sourceStorage, targetStorage, verifyTarget: process.argv.includes('--verify-target'),
+    });
     console.log(JSON.stringify(report));
-    const result = report.hashMismatches > 0 || report.missingInSource > 0 ? 'failure' : 'success';
+    const result = report.hashMismatches > 0 || report.missingInSource > 0 || report.targetHashMismatches > 0 ? 'failure' : 'success';
     await recordStorageBackupRun(db, {
       environment: appEnvLabel(env.APP_ENV), result, report, startedAt, finishedAt: new Date(),
       errorCode: result === 'failure' ? 'storage_backup_report_has_issues' : null,

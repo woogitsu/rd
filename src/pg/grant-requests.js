@@ -24,6 +24,7 @@
 import crypto from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
 import { isoTimestamp } from './auth.js';
+import { afterTimestampDescSql, cursorTimestampSql, pageOf } from './list-cursor.js';
 import { PROTECTED_ACCOUNT_ROLES } from './account-recovery.js';
 import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
 
@@ -161,15 +162,24 @@ export async function insertGrantRequest(tx, {
   return { request: presentGrantRequest(rows[0]), created: true };
 }
 
-export async function listGrantRequests(env, { status = 'pending' } = {}) {
+export const GRANT_REQUEST_LIST_MAX = MAX_LIST;
+export const grantRequestListScope = (status) => `grant-requests:${status}`;
+
+/**
+ * Lista wniosków z kursorem keyset (created_at DESC, id) (#159).
+ * `cursor` to już zdekodowany kursor ({ key, id }) związany z `grantRequestListScope(status)`.
+ */
+export async function listGrantRequests(env, { status = 'pending', limit = MAX_LIST, cursor = null } = {}) {
   if (!STATUSES.has(status)) throw new GrantRequestError('invalid_status');
+  const values = [status];
+  const after = cursor ? ` AND ${afterTimestampDescSql('created_at', 'id', cursor, values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT ${COLUMNS} FROM role_grant_requests
-      WHERE ($1 = 'all' OR status = $1) ORDER BY created_at DESC, id LIMIT ${MAX_LIST + 1}`,
-    [status],
+    `SELECT ${COLUMNS}, ${cursorTimestampSql('created_at')} AS cursor_ts FROM role_grant_requests
+      WHERE ($1 = 'all' OR status = $1)${after} ORDER BY created_at DESC, id LIMIT ${limit + 1}`,
+    values,
   );
-  // #159: o jeden wiersz więcej = jawny sygnał obcięcia zamiast cichego LIMIT.
-  return { requests: rows.slice(0, MAX_LIST).map(presentGrantRequest), truncated: rows.length > MAX_LIST };
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), grantRequestListScope(status));
+  return { requests: page.items.map(presentGrantRequest), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit };
 }
 
 // Blokada wiersza wniosku: podwójne kliknięcie „Zatwierdź” albo „Zatwierdź”
