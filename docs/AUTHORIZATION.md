@@ -10,7 +10,7 @@ Każda chroniona trasa najpierw ładuje aktywną sesję, a następnie aktywne wp
 - Przydziały po expires_at nie są ładowane.
 - Polityka operacji finansowej może wymagać sesji z potwierdzonym MFA.
 
-Przedstawiciel klasy ma w schemacie obowiązkowy class_id, dlatego nie może przejść kontroli dla innej klasy. Które role widzą które dane w poszczególnych modułach nadal wymaga zatwierdzenia szkoły (D-08/D-09, docs/DECISIONS.md) — ten dokument opisuje wyłącznie mechanizm sprawdzenia sesji/roli/zakresu, nie listę uprawnień. Same stałe ról (`FINANCIAL_ROLES`, `WIDE_ROLES`, `EDITOR_ROLES`…) są dziś wpisane na stałe w 13 modułach tras (`src/pg/routes/*.js`) jako założenie prototypu — do zatwierdzenia lub odrzucenia wierszami w `docs/PRODUCT.md` i `docs/DECISIONS.md` (#163). Do tego czasu obowiązują te założenia, a nie brak dostępu.
+Przedstawiciel klasy ma w schemacie obowiązkowy class_id, dlatego nie może przejść kontroli dla innej klasy. Które role widzą które dane w poszczególnych modułach nadal wymaga zatwierdzenia szkoły (D-08/D-09, docs/DECISIONS.md) — ten dokument opisuje wyłącznie mechanizm sprawdzenia sesji/roli/zakresu, nie listę uprawnień. Same stałe ról (`FINANCIAL_ROLES`, `HOUSEHOLD_WIDE_ROLES`, `EDITOR_ROLES`…) są dziś wpisane na stałe w 13 modułach tras (`src/pg/routes/*.js`) jako założenie prototypu — do zatwierdzenia lub odrzucenia wierszami w `docs/PRODUCT.md` i `docs/DECISIONS.md` (#163). Do tego czasu obowiązują te założenia, a nie brak dostępu.
 
 GET /api/access zwraca zalogowanemu użytkownikowi wyłącznie jego własne aktywne przydziały. Nie zwraca danych innych użytkowników.
 
@@ -33,6 +33,7 @@ Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i 
 | Funkcja | Pytanie | Typowe użycie |
 | --- | --- | --- |
 | `resolveScope(context, { roles, schoolYearId, requireMfa })` | Czy jest zakres szkolny (i na które lata), a jeśli nie — które pary (klasa, rok)? | Zapytania listy z zakresem (rodziny, import) |
+| `householdScope(context, roles)` | `resolveScope` z tabelą ról szerokich `HOUSEHOLD_WIDE_ROLES` (`admin`, `board`, `treasurer`): przydział bez klasy innej roli nie daje zakresu szkolnego | Rodziny i pulpit zarządu (`families.js`, `board.js`) |
 | `isAuthorizedScoped(context, requirement)` | Bramka: z `classId` — przydział szkolny albo tej klasy; bez `classId` — wyłącznie przydział bez klasy | `requireAccess`, trasy ogólnoszkolne |
 | `authorizedClassIds(context, requirement)` | Klasy z przydziałów klasowych spełniających rolę, rok i MFA | Lista przedstawiciela (wydarzenia, aktualności, dokumenty, wydruk, pulpit) |
 | `isAuthorizedForOwnClass(context, requirement)` | Wyłącznie przydział tej klasy (bez szkolnego) | Szkic własnej klasy |
@@ -40,7 +41,7 @@ Import uczniów (`/api/import/*`, #36) dopuszcza role `admin` i `board` z MFA i 
 | `scopeSqlFragment` / `scopeSqlParams` / `scopeSql` | Warunek SQL „klasa w zakresie” od podanego `firstParam` | `families.js` (dziś `firstParam` 1) |
 | `scopeCoversYear`, `scopeClassIds`, `actorContext` | Pomocnicze: rok w zakresie szkolnym, klasy roku, kontekst z aktora modułów domenowych | `board.js`, `events.js`, `news.js`, `meetings.js` |
 
-Refaktor #155 nie zmienia polityki: listy ról (kto ma zakres szkolny, czy `audit`/`principal` widzą dane rodzin — D-08/D-09) zostają przy trasach, bo różnią się między modułami; resolver ujednolica tylko to, **jak** z przydziałów wynika zakres. Zgodność z dawnymi lokalnymi implementacjami sprawdzają testy własności w `tests/pg-scope.test.js` (losowe przydziały: rola × klasa/brak × rok/brak × MFA). Jedyna różnica między dawnymi implementacjami — `families.js` pomijało przydział bez klasy roli spoza `WIDE_ROLES` (przedstawiciel bez klasy), pozostałe moduły liczyły go jak szkolny — jest zachowana opcją `schoolWideRoles` i dziś nieosiągalna (ograniczenie `representative_requires_class`, migracja 0001).
+Refaktor #155 nie zmienia polityki: listy ról (kto ma zakres szkolny, czy `audit`/`principal` widzą dane rodzin — D-08/D-09) zostają przy trasach, bo różnią się między modułami; resolver ujednolica tylko to, **jak** z przydziałów wynika zakres. Zgodność z dawnymi lokalnymi implementacjami sprawdzają testy własności w `tests/pg-scope.test.js` (losowe przydziały: rola × klasa/brak × rok/brak × MFA). Jedyna różnica między dawnymi implementacjami — `families.js` pomijało przydział bez klasy roli spoza ról szerokich (dziś `HOUSEHOLD_WIDE_ROLES` w `scope.js`) (przedstawiciel bez klasy), pozostałe moduły liczyły go jak szkolny — jest zachowana opcją `schoolWideRoles` i dziś nieosiągalna (ograniczenie `representative_requires_class`, migracja 0001).
 
 ## Stan roli i konto bez funkcji (#176)
 
