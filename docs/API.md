@@ -29,6 +29,7 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/meetings/public-notices?schoolYearId=` (publiczna) | `scheduled_at`, `id` rosnąco | 200 / 200 | rok szkolny |
 | `GET /api/news-photos` | `uploaded_at` malejąco, `id` | 200 / 200 | `status` |
 | `GET /api/public/events` (publiczna) | `begins_at`, `id` rosnąco | 100 / 200 | rok szkolny, `from` |
+| `GET /api/ledger/reviews?schoolYearId=` | `occurred_on` malejąco, `id` malejąco | 500 / 500 | rok szkolny, `reviewStatus` |
 
 Uprawnienia tras nie zmieniły się: kursor niczego nie odblokowuje, a każde
 żądanie przechodzi to samo sprawdzenie sesji, roli, MFA i zakresu po stronie
@@ -39,7 +40,7 @@ e-mail nie trafia do URL-a ani do logów dostępu).
 ## Odpowiedź
 
 Dotychczasowe pola (`users`, `grants`, `invitations`, `events`, `campaigns`,
-`documents`) pozostają bez zmian. Doszły pola:
+`documents`, `reviews`) pozostają bez zmian. Doszły pola:
 
 - `nextCursor` — nieprzezroczysty tekst albo `null`, gdy to ostatnia strona;
 - `truncated` — `true` wtedy i tylko wtedy, gdy `nextCursor` nie jest `null`
@@ -133,6 +134,11 @@ niepełna; panel wtedy pokazuje komunikat o obcięciu:
 Kanał `GET /api/public/events.ics` nie ma kursora (format iCal nie niesie sygnału
 obcięcia): zwraca najwyżej `limit` (domyślnie 200) najbliższych wydarzeń. Pełną
 listę daje `GET /api/public/events` z kursorem.
+
+`GET /api/ledger/reviews` (#159) miał wcześniej `LIMIT 20000` bez sygnału; domyślna
+strona to teraz 500 wierszy, a klient czytający tylko `reviews` ma sprawdzić
+`truncated`. Żaden panel w repozytorium nie woła tej trasy (tylko API), więc
+przycisku „Pokaż więcej” nie ma.
 
 Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCursor`.
 

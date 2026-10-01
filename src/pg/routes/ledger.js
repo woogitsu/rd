@@ -16,7 +16,7 @@
 //   POST /api/ledger/{id}/replacement       (Idempotency-Key)
 // Nowe trasy (#97, #93): weryfikacja wydatku przez drugą osobę i uchwała jako
 // upoważnienie do wydatku (migracja 0072).
-//   GET  /api/ledger/reviews?schoolYearId=…[&reviewStatus=unverified|verified|questioned]
+//   GET  /api/ledger/reviews?schoolYearId=…[&reviewStatus=unverified|verified|questioned][&limit=…&cursor=…]
 //   POST /api/ledger/{id}/reviews           (Idempotency-Key)
 //   GET  /api/ledger/resolutions?schoolYearId=…
 //   POST /api/ledger/resolutions/{id}/authorizations (Idempotency-Key; admin/zarząd)
@@ -45,6 +45,7 @@ import { toSafeInteger } from './payments.js';
 import { csvCell, csvResponse, csvRow, formatEuro, safeFileSegment, toCsv } from '../csv.js';
 import { toXlsx, xlsxResponse } from '../xlsx.js';
 import { documentStatuses } from '../document-chain.js';
+import { parseListLimit } from '../list-cursor.js';
 import {
   createIdempotencyKeyReader, createJsonReader, decodeDateIdCursor, encodeDateIdCursor, isUniqueError,
 } from '../input.js';
@@ -64,6 +65,9 @@ const MAX_EXPORT_ROWS = 20_000;
 // skarbnik — osoba księgująca wydatki nie ustala sobie limitu (D-08, D-15).
 const AUTHORIZATION_ROLES = ['admin', 'board'];
 const REVIEW_DECISIONS = new Set(['verified', 'questioned']);
+// #159: lista weryfikacji ma kursor keyset (wspólny kontrakt list, docs/API.md).
+const REVIEWS_DEFAULT_LIMIT = 500;
+const REVIEWS_MAX_LIMIT = 500;
 const REVIEW_STATUSES = new Set(['unverified', 'verified', 'questioned']);
 
 const ENTRY_COLUMNS = `id, school_year_id, direction, amount_cents, category_id,
@@ -1353,19 +1357,37 @@ async function listReviews(request, env, url, json) {
   if (!validId(schoolYearId) || (reviewStatus && !REVIEW_STATUSES.has(reviewStatus))) {
     throw new RequestError('invalid_request');
   }
+  const limit = parseListLimit(url.searchParams.get('limit'),
+    { defaultLimit: REVIEWS_DEFAULT_LIMIT, maxLimit: REVIEWS_MAX_LIMIT },
+    (code) => { throw new RequestError(code); });
+  // Kursor wiąże rok i filtr; przedrostek odróżnia go od kursora GET /api/ledger.
+  const cursorScope = { schoolYearId, filter: `reviews:${reviewStatus || ''}` };
+  const cursor = decodeDateIdCursor(url.searchParams.get('cursor'), cursorScope, cursorError);
   await requireFinancialContext(request, env, schoolYearId);
-  const { rows } = await env.db.query(
+  const values = [schoolYearId, reviewStatus || null];
+  let after = '';
+  if (cursor) {
+    values.push(cursor.date, cursor.id);
+    // COLLATE "C": porządek bajtowy identyfikatorów, jak w GET /api/ledger.
+    after = `AND (e.occurred_on < $3::date OR (e.occurred_on = $3::date AND e.id COLLATE "C" < $4))`;
+  }
+  values.push(limit + 1);
+  const { rows: fetched } = await env.db.query(
     `SELECT s.ledger_entry_id, s.review_status, s.last_reviewed_by, s.last_reviewed_at, s.review_count,
             to_char(e.occurred_on, 'YYYY-MM-DD') AS occurred_on, e.description, e.net_amount_cents,
             e.created_by, c.name AS category_name
        FROM ledger_entry_review_status s
        JOIN ledger_entry_net e ON e.id = s.ledger_entry_id
        JOIN ledger_categories c ON c.id = e.category_id
-      WHERE s.school_year_id = $1 AND ($2::text IS NULL OR s.review_status = $2)
+      WHERE s.school_year_id = $1 AND ($2::text IS NULL OR s.review_status = $2) ${after}
       ORDER BY e.occurred_on DESC, e.id COLLATE "C" DESC
-      LIMIT $3`,
-    [schoolYearId, reviewStatus || null, MAX_EXPORT_ROWS],
+      LIMIT $${values.length}`,
+    values,
   );
+  const hasMore = fetched.length > limit;
+  const rows = hasMore ? fetched.slice(0, limit) : fetched;
+  const last = rows[rows.length - 1];
+  const nextCursor = hasMore ? encodeDateIdCursor(last.occurred_on, last.ledger_entry_id, cursorScope) : null;
   const items = rows.map((row) => ({
     ledgerEntryId: row.ledger_entry_id,
     reviewStatus: row.review_status,
@@ -1378,7 +1400,7 @@ async function listReviews(request, env, url, json) {
     netAmountCents: toSafeInteger(row.net_amount_cents),
     createdBy: row.created_by,
   }));
-  return json({ reviews: items });
+  return json({ reviews: items, nextCursor, truncated: hasMore, limit });
 }
 
 // --- Uchwały jako upoważnienie do wydatku (#93) -----------------------------
