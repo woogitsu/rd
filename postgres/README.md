@@ -1387,18 +1387,6 @@ definicje funkcji z migracji 0003, 0007, 0014, 0017, 0023, 0038, 0055, 0087,
 0136, `DROP FUNCTION rd_anonymization_update_allowed, rd_anonymization_active`,
 `DROP TABLE anonymization_runs` (na bazie z danymi tylko po kopii zapasowej).
 
-`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
-przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
-(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
-przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
-przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
-`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
-zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
-zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
-przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
-odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
-
-
 `0176_audit_review_notes.sql` (#137, część niezależna od D-09) dodaje tabelę
 `audit_review_notes`: niezmienną (UPDATE/DELETE: `immutable_financial_record`,
 TRUNCATE: `deny_truncate`, `created_at` z zegara bazy) ścieżkę kontroli
