@@ -174,6 +174,7 @@ i gałęzie `23505 → odtworzenie zapisu` wymagają serwera PostgreSQL 16.
 npm run test:pg-real                       # pliki czytające RD_TEST_PG_URL (wyścigi)
 npm run test:pg-real -- tests/pg-x.test.js # wskazane pliki
 npm run test:pg-real -- --all              # CAŁY zestaw na PostgreSQL zamiast PGlite
+RD_TEST_PG_APP_ROLE=rd_app npm run test:pg-real -- --all  # jw., ale połączenia testów rolą rd_app (SR-05, #101)
 ```
 
 `scripts/test-pg-real.js`: `initdb` w katalogu tymczasowym → serwer na losowym porcie
@@ -212,6 +213,8 @@ a zdjęcie blokady kampanii w `cancel` (`loadCampaign(..., { lock: true })`) —
 bariery anulowania. Wpłaty mają kilka warstw blokad (API i triggery 0002/0038/0039/
 0104): po zdjęciu `FOR UPDATE` z API korekty i z triggerów 0002 test bariery korekt
 nadal przechodzi, bo pozostałe warstwy trzymają blokadę.
+
+`tests/pg-real-app-role.test.js` (SR-05, #101, pomijany bez `RD_TEST_PG_URL`): rola `rd_app` z migracji 0170 — `TRUNCATE`, DDL, `DISABLE TRIGGER`, `session_replication_role` i `DELETE` na tabelach z historią kończą się `42501`; meta-test każdej tabeli i nowej tabeli (domyślne uprawnienia); wpłata i korekta przez `handlePgRequest` działają, nadpisanie wpłaty odrzuca trigger.
 
 `tests/pg-real-tx-conflict.test.js` (#156, pomijany bez `RD_TEST_PG_URL`): dwie transakcje
 `REPEATABLE READ` czytają ten sam wiersz z migawki i obie go zwiększają; serwer zgłasza
