@@ -17,6 +17,8 @@ export const COUNT_LABELS = Object.freeze({
   guardians: "Opiekunowie (imię, nazwisko, e-mail)",
   students: "Uczniowie (imię, nazwisko)",
   guardian_contact_changes: "Historia zmian kontaktu opiekunów",
+  identity_changes_guardians: "Historia sprostowań imion opiekunów",
+  identity_changes_students: "Historia sprostowań imion uczniów",
   guardian_households: "Powody w członkostwach opiekunów",
   guardian_update_requests: "Prośby o aktualizację danych",
   campaign_recipients: "E-maile w migawkach kampanii",

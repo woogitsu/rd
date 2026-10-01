@@ -32,7 +32,6 @@ const CLOSED_YEAR_SHORTCUT = 'zamknięcie roku na skróty (INSERT do school_year
 // Upływ czasu przez przestawienie niezmiennego terminu z wyłączonym strażnikiem.
 // Docelowo: wstrzykiwany zegar (`now`) w funkcji produkcyjnej, jak
 // acceptInvitation w tests/pg-auth.test.js — wymaga zmiany kodu aplikacji (follow-up #214).
-const CLOCK_FOLLOW_UP = 'upływ ważności przez zmianę niezmiennego terminu z wyłączonym strażnikiem — funkcja produkcyjna liczy czas przez now() w SQL i nie przyjmuje zegara; follow-up #214: wstrzykiwany `now`';
 export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
   // SR-05 (#101): test dowodzi, że rola aplikacji NIE może wyłączyć triggerów (42501); właściciel w kontroli pozytywnej.
   'pg-real-app-role.test.js': 'próby DISABLE TRIGGER rolą rd_app muszą kończyć się błędem uprawnień (42501); kontrola pozytywna na roli właściciela',
@@ -51,8 +50,6 @@ export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
   'pg-list-cursor-email-requests.test.js': 'fixture 225 wiadomości failed w kolejce bez zatwierdzania kampanii — test stronicowania listy „do sprawdzenia”',
   'pg-audit-reviews.test.js': `${CLOSED_YEAR_SHORTCUT}; sprawdza odrzucenie nowych uwag KR w zamkniętym roku (0176)`,
   'pg-ledger-cost-centers.test.js': `${CLOSED_YEAR_SHORTCUT}; odwołanie wydarzenia bez procedury, by sprawdzić sekcję „Wynik wydarzeń” raportu KR`,
-  // Upływ czasu (follow-up: wstrzykiwany zegar).
-  'pg-bootstrap-admin.test.js': CLOCK_FOLLOW_UP,
   // Zamknięty rok na skróty.
   ...Object.fromEntries([
     'security-scope-api.test.js', 'pg-ledger-budget.test.js', 'pg-ledger-categories-api.test.js', 'pg-events-ics.test.js',
@@ -66,7 +63,7 @@ export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
 // Limity (#214): lista jest sufitem, który może tylko maleć. Nowy plik albo
 // kolejne użycie obejścia ponad limit oblewa meta-test; przy usunięciu obejścia
 // obniż limit do stanu faktycznego (meta-test wymaga równości, nie nierówności).
-export const TRIGGER_BYPASS_LIMITS = Object.freeze({ files: 35, lines: 50 });
+export const TRIGGER_BYPASS_LIMITS = Object.freeze({ files: 34, lines: 47 });
 const TRIGGER_BYPASS = /DISABLE\s+TRIGGER|session_replication_role\s*=\s*replica/i;
 
 // Negatywna asercja na KRÓTKIM podciągu cyfr (`!meta.includes('470')`) jest

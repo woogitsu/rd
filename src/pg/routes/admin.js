@@ -36,6 +36,8 @@
 //   POST /api/admin/school-years/{id}/classes    { names: [...] } — nowe klasy roku (#78); bez usuwania
 //   POST /api/admin/promotions/classes/preview|apply   kopiowanie klas roku wg jawnej mapy (#78); patrz src/pg/promotions.js
 //   POST /api/admin/promotions/preview|apply           promocja uczniów z podglądem, planDigest i Idempotency-Key (#78)
+//   POST /api/admin/promotions/representatives/preview|apply  przedłużenie przydziałów przedstawicieli na klasy nowego roku
+//                                                 (#78); zapis: planDigest + confirm = id roku docelowego, krok w górę MFA
 //   GET  /api/admin/class-coverage?schoolYearId= obsada klas roku: przydziały, oczekujące zaproszenia, ostatnie logowanie (#108)
 //   GET  /api/admin/audit?limit=&cursor=&domain=&actorId=&from=&to=&schoolYearId=
 //        dziennik zdarzeń; bez `domain` — jak dotąd (zmiany kont i ról).
@@ -1886,7 +1888,13 @@ async function route(request, env, url, json, actorId, context) {
       return createClasses(env, actorId, decodeId(rawId), request, json);
     }
   }
-  if (section === 'promotions') return routePromotions(env, actorId, request, path, json);
+  if (section === 'promotions') {
+    // Przedłużenie przedstawicieli nadaje role: jak POST /grants wymaga świeżego MFA.
+    if (path[1] === 'representatives' && path[2] === 'apply' && method === 'POST') requireFreshMfa(context);
+    return routePromotions(env, actorId, request, path, json, {
+      lockChanges: lockGrantChanges, lockTarget: lockGrantTarget, insert: insertGrantInTx,
+    });
+  }
   // Zaproszenia zbiorcze (#108): jak pojedyncze zaproszenie — krok w górę MFA
   // także dla podglądu (podgląd ujawnia, które adresy mają już konto).
   if (section === 'invitation-batches' && path.length === 2 && method === 'POST') {

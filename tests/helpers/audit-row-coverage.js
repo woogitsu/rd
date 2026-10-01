@@ -68,6 +68,10 @@ export const AUDIT_ROW_PARENTS = new Map([
     keys: (row) => [row.guardian_id],
     why: 'historia zmian kontaktu opiekuna (trigger, powód tylko w tabeli); guardian.contact.updated wskazuje opiekuna',
   }],
+  ['identity_changes', {
+    keys: (row) => [row.student_id ?? row.guardian_id],
+    why: 'historia sprostowań imienia i nazwiska (trigger, imiona i powód tylko w tabeli); student.identity.updated / guardian.identity.updated wskazuje ucznia lub opiekuna',
+  }],
   ['student_guardian_changes', {
     keys: (row) => [composite(row.student_id, row.guardian_id)],
     why: 'historia relacji uczeń–opiekun (trigger); student_guardian.* wskazuje parę uczeń:opiekun',
