@@ -16,6 +16,8 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`account_recovery_requests`|`decided_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`account_recovery_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`account_recovery_requests`|`target_user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`audit_review_notes`|`body`|Osoba trzecia|direct|wolny tekst|treść uwagi, odpowiedzi, zamknięcia lub wniosku końcowego Komisji Rewizyjnej|document_financial|tak|tak|
+|`audit_review_notes`|`created_by`|Członek Rady|pseudonymous|identyfikacja|autor uwagi, odpowiedzi lub wniosku w ścieżce kontroli Komisji Rewizyjnej|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_group_match_revocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_group_match_revocations`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie cofnięcia dopasowania zbiorczego|document_financial|tak|tak|
 |`bank_reconciliation_group_matches`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -222,7 +224,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **209**, w tym wolnego tekstu: **59** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **211**, w tym wolnego tekstu: **60** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -265,6 +267,21 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `id` | none | — | tak |
 | `metadata_json` | none | — | tak |
 | `occurred_at` | none | — | tak |
+
+### `audit_review_notes`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `body` | direct | third_party | tak |
+| `created_at` | none | — | tak |
+| `created_by` | pseudonymous | board_member | tak |
+| `id` | none | — | tak |
+| `idempotency_key` | none | — | tak |
+| `kind` | none | — | tak |
+| `parent_id` | none | — | tak |
+| `school_year_id` | none | — | tak |
+| `target_id` | none | — | tak |
+| `target_type` | none | — | tak |
 
 ### `backup_runs`
 

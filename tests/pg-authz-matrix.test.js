@@ -800,6 +800,16 @@ const MAKERS = {
     }, withKey(nextKey('fx-ledger')));
     return { ledgerEntryId: json.entry.id };
   },
+  // #137: pytanie KR zapisane wprost w bazie przez konto pomocnicze (autor inny niż każdy aktor macierzy).
+  auditNote: async (ctx, target) => {
+    const noteId = nextKey('fx-arn-id');
+    await ctx.db.query(
+      `INSERT INTO audit_review_notes (id, school_year_id, kind, target_type, target_id, body, created_by, idempotency_key)
+       VALUES ($1, $2, 'question', 'year', $2, 'Pytanie pomocnicze (syntetyczne)', 'u-fx-admin', $3)`,
+      [noteId, target.schoolYearId, nextKey('fx-arn-key')],
+    );
+    return { noteId };
+  },
   // #125: przygotowanie do utworzenia migawki — zmiana księgi (nowa treść) i bieżąca migawka roku.
   reportSnapshotPrep: async (ctx, target) => {
     await MAKERS.ledgerEntry(ctx, target);
@@ -1432,6 +1442,7 @@ const MODULE_SOURCES = {
   admin: ['../src/pg/routes/admin.js'],
   reconciliation: ['../src/pg/routes/reconciliation.js'],
   'financial-reports': ['../src/pg/routes/financial-reports.js'],
+  'audit-reviews': ['../src/pg/routes/audit-reviews.js'],
   exports: ['../src/pg/routes/exports.js'],
   families: ['../src/pg/routes/families.js'],
   print: ['../src/pg/routes/print.js'],

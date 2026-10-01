@@ -47,6 +47,7 @@ export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
   'pg-reconciliation.test.js': 'korekty wpłat/księgi w stanie, który dziś blokuje active_bank_match (dane sprzed blokady) — widok uzgodnienia musi go pokazać',
   'pg-primary-household.test.js': 'stan po dniu D zaplanowanej zmiany gospodarstwa bez przepisania kolumny zgodności — zegara SQL (current_date) nie da się wstrzyknąć',
   'pg-list-cursor-email-requests.test.js': 'fixture 225 wiadomości failed w kolejce bez zatwierdzania kampanii — test stronicowania listy „do sprawdzenia”',
+  'pg-audit-reviews.test.js': `${CLOSED_YEAR_SHORTCUT}; sprawdza odrzucenie nowych uwag KR w zamkniętym roku (0172)`,
   'pg-ledger-cost-centers.test.js': `${CLOSED_YEAR_SHORTCUT}; odwołanie wydarzenia bez procedury, by sprawdzić sekcję „Wynik wydarzeń” raportu KR`,
   // Upływ czasu (follow-up: wstrzykiwany zegar).
   'pg-bootstrap-admin.test.js': CLOCK_FOLLOW_UP,

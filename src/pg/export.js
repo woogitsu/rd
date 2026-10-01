@@ -345,6 +345,10 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'financial_report_snapshots', where: () => 'school_year_id = $1' },
   { table: 'financial_report_snapshot_approvals', requires: ['financial_report_snapshots'], where: () => 'school_year_id = $1' },
 
+  // 0172 (#137): niezmienne uwagi, odpowiedzi, zamknięcia i wnioski Komisji Rewizyjnej (wolny tekst za
+  // bramką PII). Cel wskazuje wpis księgi/uzgodnienie roku (po odtworzeniu klucze obce są wyłączone).
+  { table: 'audit_review_notes', requires: ['ledger_entries', 'bank_reconciliations'], where: () => 'school_year_id = $1' },
+
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },
   { table: 'school_year_closure_checklist', requires: ['school_year_closures'],

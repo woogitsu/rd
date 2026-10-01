@@ -1326,3 +1326,18 @@ jak dla `student_households.ended_reason`); trafia do eksportu rocznego razem
 z całym wierszem `guardian_households`, jak powody członkostwa ucznia.
 Wycofanie: na pustej bazie DROP CONSTRAINT i DROP COLUMN; na bazie z danymi
 tylko po kopii.
+
+`0172_audit_review_notes.sql` (#137, część niezależna od D-09) dodaje tabelę
+`audit_review_notes`: niezmienną (UPDATE/DELETE: `immutable_financial_record`,
+TRUNCATE: `deny_truncate`, `created_at` z zegara bazy) ścieżkę kontroli
+Komisji Rewizyjnej — pytanie lub ustalenie KR (`question`/`finding`) do wpisu
+księgi, uzgodnienia albo całego roku, odpowiedź zarządu/skarbnika (`answer`,
+inna osoba niż autor pytania), zamknięcie przez KR (`closed`, jedno na pytanie,
+po nim brak odpowiedzi) i wniosek końcowy roku (`conclusion`, najnowszy
+obowiązuje, poprzednie zostają). Zamknięty rok odrzuca nowe zapisy
+(`a0_year_freeze`; wariant zachowawczy, do decyzji D-09/D-21). Klucz
+idempotencji jest wymagany i unikalny. Skutki dla danych: tylko nowa tabela,
+funkcja `audit_review_notes_guard()` i triggery; żaden wiersz nie jest
+zmieniany. `body` to wolny tekst za bramką danych osobowych; w `audit_events`
+trafiają wyłącznie identyfikatory. Tabela jest w eksporcie rocznym.
+Wycofanie: DROP TABLE i DROP FUNCTION (na bazie z zapisami tylko po kopii).
