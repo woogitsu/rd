@@ -35,7 +35,7 @@
 
       <section class="card" aria-labelledby="users-title">
         <div class="section-heading">
-          <div><h2 id="users-title">Konta</h2><p id="users-summary">Wczytywanie…</p></div>
+          <div><h2 id="users-title">Konta</h2><p id="users-summary" role="status" aria-live="polite">Wczytywanie…</p></div>
         </div>
         <div class="token-box" id="reset-token-box" hidden>
           <p class="token-warning"><strong>Link i kod są widoczne tylko teraz.</strong> Przekaż je osobie osobnym, zaufanym kanałem. Po zamknięciu tej ramki nie da się ich odzyskać — w razie utraty wydaj nowy kod.</p>
@@ -54,6 +54,16 @@
           <p class="hint" id="reset-token-meta"></p>
           <p><button type="button" id="hide-reset-token">Zamknij</button></p>
         </div>
+        <form id="user-filters" class="filters" role="search" aria-label="Filtr kont">
+          <label>Szukaj (e-mail lub nazwa) <input type="search" name="q" autocomplete="off" maxlength="100" /></label>
+          <label>Stan
+            <select name="state">
+              <option value="">Wszystkie</option>
+              <option value="active">Aktywne</option>
+              <option value="disabled">Wyłączone</option>
+            </select>
+          </label>
+        </form>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Konta</caption>
@@ -103,6 +113,7 @@
             <tbody id="grant-requests-body"></tbody>
           </table>
         </div>
+        <p><button type="button" id="grant-requests-more" hidden>Pokaż więcej</button></p>
       </section>
 
       <section class="card" aria-labelledby="grants-title">
@@ -205,12 +216,12 @@
           <div><h2 id="coverage-title">Obsada klas</h2><p id="coverage-summary">Wybierz rok szkolny.</p></div>
           <button type="button" id="reload-coverage">Odśwież</button>
         </div>
-        <p class="hint">Dla każdej klasy roku: aktywni przedstawiciele, oczekujące zaproszenia (bez kodów) i data ostatniego logowania przedstawiciela. Bez adresów e-mail. Brak przedstawiciela nie jest oceną klasy — lista może być nieaktualna.</p>
+        <p class="hint">Dla każdej klasy roku: aktywni przedstawiciele z liczbą osób bez logowania i z MFA, oczekujące zaproszenia (bez kodów) i data ostatniego logowania przedstawiciela. Bez adresów e-mail. Brak przedstawiciela nie jest oceną klasy — lista może być nieaktualna.</p>
         <p><label>Rok szkolny <select id="coverage-year" data-years="pick"></select></label></p>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Obsada klas</caption>
-            <thead><tr><th scope="col">Klasa</th><th scope="col">Stan</th><th scope="col" class="num">Przedstawiciele</th><th scope="col" class="num">Zaproszenia oczekujące</th><th scope="col">Najbliższe wygaśnięcie zaproszenia</th><th scope="col">Ostatnie logowanie</th></tr></thead>
+            <thead><tr><th scope="col">Klasa</th><th scope="col">Stan</th><th scope="col" class="num">Przedstawiciele</th><th scope="col">Aktywacja</th><th scope="col" class="num">Zaproszenia oczekujące</th><th scope="col">Najbliższe wygaśnięcie zaproszenia</th><th scope="col">Ostatnie logowanie</th></tr></thead>
             <tbody id="coverage-body"></tbody>
           </table>
         </div>
@@ -382,6 +393,45 @@
           <p class="hint" id="dr-ref-hint">Numer pisma lub pozycji w teczce administratora danych. Nie wpisuj danych osobowych.</p>
           <p class="form-error" id="dr-status-error" role="alert"></p>
         </form>
+      </section>
+
+      <section class="card" aria-labelledby="anon-title">
+        <div class="section-heading">
+          <div><h2 id="anon-title">Anonimizacja</h2><p id="anon-summary">Wybierz gospodarstwo i powód, aby zobaczyć plan.</p></div>
+          <button type="button" id="reload-anon">Odśwież historię</button>
+        </div>
+        <p class="hint">Anonimizacja usuwa dane osobowe jednego gospodarstwa (imiona, nazwiska, e-maile, tytuły przelewów, powody w historii), zostawiając kwoty, daty i księgę. Jest nieodwracalna z poziomu panelu. Najpierw podgląd: pokazuje wyłącznie liczniki. Powód „okres retencji” działa dopiero po zatwierdzeniu polityk (D-04) — dziś serwer go odrzuci. Dostęp: administrator z potwierdzonym MFA; serwer sprawdza uprawnienia przy każdym żądaniu. Szczegóły: docs/RETENTION.md.</p>
+        <form id="anon-form" class="grid-form">
+          <label>Powód <select name="reasonCode" id="anon-reason" required></select></label>
+          <label>Identyfikator gospodarstwa <input name="householdId" autocomplete="off" required spellcheck="false" /></label>
+          <label>Identyfikator żądania usunięcia <input name="dataRequestId" id="anon-request" autocomplete="off" spellcheck="false" aria-describedby="anon-hint" /></label>
+          <button class="primary" type="submit" id="anon-preview">Pokaż podgląd</button>
+          <p class="hint" id="anon-hint">Identyfikatory skopiuj z panelu Rodziny i rejestru „Żądania osób”. Identyfikator żądania jest wymagany tylko dla powodu „żądanie usunięcia”. Nie wpisuj imion ani e-maili.</p>
+          <p class="form-error" id="anon-error" role="alert"></p>
+        </form>
+        <div id="anon-plan" hidden>
+          <h3>Plan przebiegu</h3>
+          <p id="anon-plan-meta" role="status"></p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Liczba pozycji do zanonimizowania według kategorii</caption>
+              <thead><tr><th scope="col">Kategoria</th><th scope="col" class="num">Pozycji</th></tr></thead>
+              <tbody id="anon-plan-body"></tbody>
+            </table>
+          </div>
+          <p class="hint" id="anon-retained"></p>
+          <p><button class="danger" type="button" id="anon-execute">Anonimizuj…</button></p>
+        </div>
+        <h3>Historia przebiegów</h3>
+        <p id="anon-history-summary">Wczytywanie…</p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Historia przebiegów anonimizacji</caption>
+            <thead><tr><th scope="col">Czas</th><th scope="col">Przebieg</th><th scope="col">Gospodarstwo</th><th scope="col">Powód</th><th scope="col" class="num">Pozycji</th><th scope="col">Skrót planu</th><th scope="col">Wykonał</th></tr></thead>
+            <tbody id="anon-history-body"></tbody>
+          </table>
+        </div>
+        <p><button type="button" id="anon-more" hidden>Pokaż więcej</button></p>
       </section>
 
       <section class="card" aria-labelledby="audit-title">

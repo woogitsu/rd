@@ -392,13 +392,22 @@ export function paymentVersionLabel(paymentInstructions, { bankAccount = "" } = 
   return bankAccount ? "Dane do wpłaty wpisane ręcznie, niezatwierdzone na rok — kartka bez kodu QR." : "";
 }
 
+// Odnośnik do opublikowanej informacji o przetwarzaniu danych (D-06, #145) w
+// stopce kartki: numer wersji i adres, jeśli serwer go zna. Treść informacji
+// pochodzi od zarządu — kartka tylko wskazuje wersję.
+export function privacyNoticeLabel(privacyNotice) {
+  if (!privacyNotice || !Number.isSafeInteger(privacyNotice.version)) return "";
+  const url = clean(privacyNotice.url ?? "");
+  return `Informacja o przetwarzaniu danych osobowych (wersja ${privacyNotice.version})${url ? `: ${url}` : ""}.`;
+}
+
 // Model kartki: wyłącznie dane jednej rodziny i zatwierdzone parametry konfiguracji.
 // `paymentInstructions` (opcjonalnie): { id, iban, bic, payeeName, approvedAt } — zatwierdzona
 // na rok konfiguracja z GET /api/print/cards (#92). Gdy podana, ZASTĘPUJE ręcznie
 // wpisane pola rachunku/odbiorcy (formularz tylko je pokazuje) i uruchamia
 // generator kodu QR EPC. Bez niej kartka nie ma kodu QR (jest szkicem danych
 // do wpłaty) — QR powstaje wyłącznie z zatwierdzonej wersji.
-export function buildCard(household, config, paymentInstructions = null) {
+export function buildCard(household, config, paymentInstructions = null, privacyNotice = null) {
   const paragraphs = [
     "Składka na Radę Rodziców jest dobrowolna. Decyzja o wpłacie i jej wysokości należy do rodziny.",
   ];
@@ -454,6 +463,7 @@ export function buildCard(household, config, paymentInstructions = null) {
     payment,
     epcSvg,
     paymentVersion: paymentVersionLabel(paymentInstructions, { bankAccount }),
+    privacyNotice: privacyNoticeLabel(privacyNotice),
     closing,
     contact: config.contact,
   };
@@ -466,7 +476,7 @@ export function buildCard(household, config, paymentInstructions = null) {
 export function cardText(card) {
   return [
     card.councilName, card.schoolName, card.schoolYear, card.title,
-    ...card.paragraphs, ...card.payment.flat(), card.paymentVersion ?? "", card.closing, card.contact,
+    ...card.paragraphs, ...card.payment.flat(), card.paymentVersion ?? "", card.privacyNotice ?? "", card.closing, card.contact,
   ].join("\n");
 }
 
@@ -498,15 +508,16 @@ export function renderCardHtml(card) {
     `<p class="card-contact">Kontakt: ${e(card.contact)}</p>`,
     `<p class="card-ref">Nr rodziny: ${e(card.householdId)}</p>`,
     card.paymentVersion ? `<p class="card-ref card-payment-version">${e(card.paymentVersion)}</p>` : "",
+    card.privacyNotice ? `<p class="card-ref card-privacy-notice">${e(card.privacyNotice)}</p>` : "",
     `</article>`,
   ].join("");
 }
 
-export function renderCardsHtml(households, selectedIds, rawConfig, paymentInstructions = null) {
+export function renderCardsHtml(households, selectedIds, rawConfig, paymentInstructions = null, privacyNotice = null) {
   const { config, errors } = normalizeConfig(rawConfig);
   if (errors.length) throw new Error(errors.join(" "));
   const chosen = selectHouseholds(households, selectedIds);
-  const cards = chosen.map((household) => buildCard(household, config, paymentInstructions));
+  const cards = chosen.map((household) => buildCard(household, config, paymentInstructions, privacyNotice));
   return {
     count: cards.length,
     layout: config.layout,

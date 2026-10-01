@@ -10,6 +10,9 @@
       "name": "admin"
     },
     {
+      "name": "audit-history"
+    },
+    {
       "name": "audit-reviews"
     },
     {
@@ -179,6 +182,58 @@
         ],
         "x-rd-matrix-ids": [
           "admin.accessLog"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/access-review": {
+      "get": {
+        "operationId": "admin_accessReview",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.accessReview",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.accessReview"
         ],
         "x-rd-mfa": true,
         "x-rd-ok-status": [
@@ -367,6 +422,56 @@
       }
     },
     "/api/admin/anonymizations": {
+      "get": {
+        "operationId": "admin_anonymizations",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.anonymizations",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.anonymizations"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      },
       "post": {
         "operationId": "admin_anonymizationPreview",
         "responses": {
@@ -685,6 +790,192 @@
         ],
         "x-rd-matrix-ids": [
           "admin.dataRequestExport"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/data-requests/{requestId}/lift-restriction": {
+      "post": {
+        "operationId": "admin_dataRequestLiftRestriction",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.dataRequestLiftRestriction",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.dataRequestLiftRestriction"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/data-requests/{requestId}/restrict": {
+      "post": {
+        "operationId": "admin_dataRequestRestrict",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.dataRequestRestrict",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.dataRequestRestrict"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/data-requests/{requestId}/restrictions": {
+      "get": {
+        "operationId": "admin_dataRequestRestrictions",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.dataRequestRestrictions",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.dataRequestRestrictions"
         ],
         "x-rd-mfa": true,
         "x-rd-ok-status": [
@@ -3148,6 +3439,314 @@
         ],
         "x-rd-roles": [
           "audit"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/email_campaign/{id}": {
+      "get": {
+        "operationId": "auditHistory_email_campaign",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.email_campaign",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.email_campaign"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/ledger_entry/{id}": {
+      "get": {
+        "operationId": "auditHistory_ledger_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.ledger_entry",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.ledger_entry"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/payment_entry/{id}": {
+      "get": {
+        "operationId": "auditHistory_payment_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.payment_entry",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.payment_entry"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/reconciliation/{id}": {
+      "get": {
+        "operationId": "auditHistory_reconciliation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.reconciliation",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.reconciliation"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -6730,6 +7329,70 @@
       }
     },
     "/api/email/quota/other-sends": {
+      "get": {
+        "operationId": "email_quota_otherSends_list",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.quota.otherSends.list",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.quota.otherSends.list"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      },
       "post": {
         "operationId": "email_quota_otherSends",
         "responses": {
@@ -18464,9 +19127,11 @@
           "data_request_identity_not_verified",
           "data_request_kind_not_erasable",
           "data_request_kind_not_exportable",
+          "data_request_kind_not_restrictable",
           "data_request_not_found",
           "data_request_status_cannot_go_back",
           "data_request_subject_mismatch",
+          "data_request_subject_not_restrictable",
           "date_outside_school_year",
           "difference_requires_note",
           "document_active_content",
@@ -19203,6 +19868,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "data_request_kind_not_restrictable",
+        "meaning": "Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "data_request_not_found",
         "meaning": "Nie znaleziono żądania.",
         "retry": "Nie — popraw dane żądania."
@@ -19215,6 +19885,11 @@
       {
         "code": "data_request_subject_mismatch",
         "meaning": "Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "data_request_subject_not_restrictable",
+        "meaning": "Żądanie nie wskazuje gospodarstwa ani opiekuna, więc nie można nałożyć ograniczenia. Popraw wpis w rejestrze.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -20694,7 +21369,7 @@
       },
       {
         "code": "privacy_notice_missing",
-        "meaning": "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import.",
+        "meaning": "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {

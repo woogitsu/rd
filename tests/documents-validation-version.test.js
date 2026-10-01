@@ -15,6 +15,7 @@ import { DOCUMENT_VALIDATION_VERSION } from '../src/documents.js';
 
 const RULE_FINGERPRINTS = Object.freeze({
   1: 'bc6c3505a62ce28323b0fb298015f68ff51ca80d62000f0a8fe174dc2005222f',
+  2: 'e84e7c48dedc1d0846e70b0e06cb9b2f3567ef357a7c77714dbfffddeacbee32',
 });
 
 const START = '// --- reguły kontroli struktury: początek';

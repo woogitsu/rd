@@ -32,10 +32,11 @@ import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountSuppressions } from "./suppressions.js";
 import { mountResolutions } from "./resolutions.js";
+import { mountQuota } from "./quota.js";
 import { reportCsvUrl } from "./resolutions-core.js";
 import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
-mountShell();
+const shellReady = mountShell();
 
 const api = apiRequest;
 const byId = (id) => document.getElementById(id);
@@ -57,6 +58,8 @@ const state = {
   loading: false,
   providerPause: null,
 };
+
+const quota = mountQuota({ api, canEdit: () => hasEditorAccess(state.grants, state.schoolYearId) });
 
 const resolutions = mountResolutions({
   api,
@@ -80,7 +83,7 @@ const message = byId("message");
 const listBody = byId("campaigns-body");
 const detailSection = byId("detail");
 // #181: zwijana „Historia” kampanii; tylko gdy serwer zwróci 200 (UX, nie kontrola dostępu).
-const campaignHistory = mountEntityHistory(detailSection, { api, idPrefix: "campaign-history" });
+const campaignHistory = mountEntityHistory(detailSection, { api, grants: async () => (await shellReady)?.grants, idPrefix: "campaign-history" });
 
 function setMessage(text, isError = false) {
   message.textContent = text;
@@ -227,6 +230,7 @@ async function showYear(value) {
     detailSection.hidden = true;
     state.selectedId = null;
     await suppressions.load(value);
+    await quota.load(value);
     await loadProviderPause().catch(() => { state.providerPause = null; renderProviderPause(); });
     await loadWorkerStatus().catch(() => renderWorkerStatus(null));
   } catch (error) {

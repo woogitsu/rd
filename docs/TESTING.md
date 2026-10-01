@@ -30,6 +30,7 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 | wplaty | payments, payment-references, payment-instructions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (wpłata nie ma adresu; powód korekty z adresem: #152) | ✓ |
 | ksiega | ledger, ledger-cash, ledger-budget, ledger-cost-centers, financial-reports | ✓ | n/d (księga nie zna rodzin) | n/d (księga nie zna rodzin) | ~ (powiązana wpłata księgowana raz, bez wpłat częściowych rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | kontrola KR | audit-reviews | ✓ | n/d (moduł nie zna opiekunów) | n/d (moduł nie zna rodzin) | n/d (brak kwot) | ✓ | ✓ | ✓ | ✓ |
+| historia | audit-history | ✓ | ✓ | n/d (odczyt historii jednego obiektu, nie listy rodzin) | n/d (odczyt dziennika, bez kwot w odpowiedzi) | ✓ | n/d (trasa tylko do odczytu) | n/d (brak adresów w odpowiedzi) | ✓ |
 | uzgodnienia | reconciliation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | zamkniecie | year-close | ✓ | n/d (bilans księgi, nie rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | email | email | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -94,6 +95,9 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | kontrola KR | Ponowienie | tests/pg-audit-reviews.test.js | podwójne kliknięcie odpowiedzi i zamknięcia: jeden zapis każdego rodzaju |
 | kontrola KR | Błędny e-mail | tests/pg-audit-reviews.test.js | bramka danych osobowych: e-mail odrzucony, telefon wymaga potwierdzenia; audyt bez treści |
 | kontrola KR | Korekty | tests/pg-audit-reviews.test.js | wątek: pytanie KR → odpowiedź skarbnika → zamknięcie; wniosek końcowy; lista i raport KR |
+| historia | 2 opiekunów | tests/pg-audit-history-board.test.js | historia wpłaty nieprzypisanej: przypisanie do gospodarstwa dopisuje zdarzenie bez opiekunów |
+| historia | Podw. kliknięcie | tests/pg-audit-history-board.test.js | podwójne kliknięcie (ten sam klucz) zostawia w historii jedno zdarzenie utworzenia |
+| historia | Korekty | tests/pg-audit-history-board.test.js | skarbnik widzi historię wpłaty: utworzenie, korekty po kolei |
 | uzgodnienia | 2 opiekunów | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Rodzeństwo | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Wpł. częściowe | tests/pg-reconciliation.test.js | a correction after matching blocks confirmation with a list of inconsistent matches |
@@ -144,7 +148,10 @@ Każda reguła ma kontrolę pozytywną (kod, który reguła musi wykryć):
 - Obejście triggerów (`ALTER TABLE … DISABLE TRIGGER`, `SET
   session_replication_role = replica`) jest dozwolone tylko w plikach z
   `TRIGGER_BYPASS_ALLOWED`, każdy z uzasadnieniem. Do cofania czasu służy
-  wstrzykiwany zegar (`now`), nie wyłączony strażnik. Wpis `pg-bootstrap-admin`
+  wstrzykiwany zegar (`now`), nie wyłączony strażnik.
+  Lista ma sufit `TRIGGER_BYPASS_LIMITS` (liczba plików i linii z obejściem,
+  dziś 35 i 50): meta-test wymaga równości, więc nowe obejście oblewa test, a
+  usunięcie jednego wymaga obniżenia limitu — lista może tylko maleć (#214). Wpis `pg-bootstrap-admin`
   czeka na taki zegar w kodzie aplikacji; `pg-guardian-updates` używa już
   `env.now` przy wygasaniu linków opiekunów (#140).
 - Negatywna asercja na krótkim podciągu cyfr (`!meta.includes('470')`) jest

@@ -17,7 +17,9 @@ const READ_ONLY_EXCEPTIONS = new Map([
   // #107: wydruk/eksport wykonania preliminarza (format != json) — dziennik odczytu, bez zmiany stanu.
   ['src/pg/routes/ledger-budget.js', ['ledger.budget_execution.exported']],
   // #181: odczyt dziennika audytu sam zapisuje zdarzenie (bez parametrów zapytania).
-  ['src/pg/routes/admin.js', ['audit.viewed', 'access_log.viewed']],
+  ['src/pg/routes/admin.js', ['audit.viewed', 'access_log.viewed', 'access_review.viewed']],
+  // #181: historia obiektu dla zarządu/skarbnika — ten sam ślad odczytu co w trasie admina.
+  ['src/pg/routes/audit-history.js', ['audit.viewed']],
   // #133: odczyt listy próśb opiekunów i zgłoszeń opiekunów do zadań — ślad odczytu.
   ['src/pg/routes/guardian-updates.js', ['guardian_update_request.list_viewed']],
   ['src/pg/events.js', ['event.task_signups_viewed']],

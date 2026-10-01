@@ -13,7 +13,7 @@ import {
 } from '../src/email/content.js';
 import { MESSAGES } from '../shared/messages.js';
 import { WARNING_LABELS } from '../email/core.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -37,6 +37,7 @@ function fakeTransport() {
 
 async function setup() {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const treasurer = await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const board = await seedUserSession(db, { userId: 'u-bd', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });

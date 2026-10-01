@@ -7,11 +7,11 @@
 //   POST /api/admin/privacy-notices/{id}/publish          wymaga zatwierdzenia; idempotentne (druga publikacja = replayed)
 //
 // Treść (`bodyText`) i `decisionRef` wpisuje zarząd/administrator — moduł nie
-// dostarcza żadnej wartości domyślnej. Bramki dla importu (`privacy_notice_missing`,
-// 409) są w src/pg/routes/import.js. Bramki dla kampanii e-mail i wydruku kartek
-// są ŚWIADOMIE poza zakresem tego PR — patrz docs/PRIVACY_NOTICE.md i opis w PR
-// (kolizja z równoległymi PR-ami #303/#306/#309 na src/pg/routes/email.js i
-// print/core.js).
+// dostarcza żadnej wartości domyślnej. Bramki `privacy_notice_missing` (409):
+// import (src/pg/routes/import.js), zatwierdzenie kampanii e-mail
+// (src/pg/routes/email.js, email_campaigns.privacy_notice_id, 0179) i wydruk
+// kartek (src/pg/routes/print.js). Wspólne odczyty: loadPublishedNotice,
+// loadNoticeById i noticeReference poniżej.
 
 import { createHash, randomUUID } from 'node:crypto';
 import { requireAccess } from '../authorization.js';
@@ -31,6 +31,42 @@ class RequestError extends Error {
     this.code = code;
     this.status = status;
   }
+}
+
+// Obowiązująca (opublikowana) wersja albo null — wspólna dla bramek (#145).
+export async function loadPublishedNotice(executor) {
+  const { rows } = await executor.query(
+    "SELECT id, version FROM privacy_notices WHERE status = 'published' ORDER BY version DESC LIMIT 1",
+  );
+  return rows[0] ?? null;
+}
+
+// Wersja po identyfikatorze (także zastąpiona): kampania używa wersji
+// zapamiętanej przy zatwierdzeniu, nie „bieżącej”.
+export async function loadNoticeById(executor, id) {
+  if (!id) return null;
+  const { rows } = await executor.query('SELECT id, version FROM privacy_notices WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}
+
+// Odwołanie do informacji w stopce e-maila i kartki: numer wersji i adres
+// publicznej trasy GET /api/public/privacy-notice (pokazuje wyłącznie wersję
+// OBOWIĄZUJĄCĄ — starsza, zapamiętana w kampanii, jest rozpoznawalna po
+// numerze). Bez PUBLIC_BASE_URL zostaje sam numer. Treści nie dotyka.
+export function noticeReference(notice, publicBaseUrl = null) {
+  if (!notice) return null;
+  const base = String(publicBaseUrl ?? '').trim().replace(/\/+$/, '');
+  return { id: notice.id, version: notice.version, url: base ? `${base}/api/public/privacy-notice` : null };
+}
+
+// Wersja informacji dla kampanii e-mail (#145, 0179): w szkicu (i anulowanym
+// bez zatwierdzenia) bieżąca opublikowana — tę zatwierdzający zapisze; po
+// zatwierdzeniu wersja zapamiętana w kampanii (privacy_notice_id), nie „bieżąca”.
+// null = brak (szkic bez publikacji albo kampania zatwierdzona przed 0179).
+export async function campaignPrivacyNotice(executor, campaign, publicBaseUrl = null) {
+  const draftLike = campaign.status === 'draft' || (campaign.status === 'cancelled' && !campaign.approved_at);
+  const notice = draftLike ? await loadPublishedNotice(executor) : await loadNoticeById(executor, campaign.privacy_notice_id);
+  return noticeReference(notice, publicBaseUrl);
 }
 
 function noticeHash({ schoolYearId, bodyText }) {

@@ -49,7 +49,7 @@ test('sonda ustawia SET LOCAL statement_timeout równy pozostałemu budżetowi p
   const result = await checkReadiness({ db }, { logger, timeoutMs: 2000, ...noMigrations });
   assert.equal(result.ready, true); // brak schema_migrations, ale lista oczekiwanych migracji pusta
   assert.equal(state.connects, 1);
-  assert.equal(state.timeouts.length, 2); // SELECT 1 + sprawdzenie schema_migrations
+  assert.equal(state.timeouts.length, 2); // odczyt transaction_read_only + sprawdzenie schema_migrations
   for (const ms of state.timeouts) assert.ok(ms >= 1 && ms <= 2000, `budżet ${ms}`);
   assert.ok(state.timeouts[1] <= state.timeouts[0]);
   assert.equal(state.queries[0], 'BEGIN');

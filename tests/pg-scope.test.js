@@ -356,7 +356,7 @@ test('documents.js#canAccessDocument (na scope.js) = dawna implementacja z ręcz
 // Aktorzy z komentarza do #155 (audyt #200/#201): przypadki mieszane, których
 // macierz tras z jednym przydziałem nie obejmuje.
 test('aktorzy mieszani (#200/#201): repNoYear, repTwoYears, boardY2+repA, boardNoYear', async () => {
-  const { familiesScope } = await import('../src/pg/routes/families.js');
+  const { householdScope: familiesScope } = await import('../src/pg/scope.js');
   const READ = ['admin', 'board', 'treasurer', 'representative'];
 
   const repNoYear = familiesScope(ctx([{ role: 'representative', classId: 'c-1a', schoolYearId: null }]), READ);
@@ -386,4 +386,33 @@ test('aktorzy mieszani (#200/#201): repNoYear, repTwoYears, boardY2+repA, boardN
   const boardNoYear = familiesScope(ctx([{ role: 'board', classId: null, schoolYearId: null }]), READ);
   assert.equal(boardNoYear.years, 'all');
   assert.deepEqual(scopeSqlParams(boardNoYear), [true, [], [], []]);
+});
+
+// #155: zakres modułu rodzin/zarządu (role szerokie: admin, board, treasurer).
+// Test charakteryzujący — ten sam wynik przed i po przeniesieniu polityki do scope.js.
+test('zakres rodzin: granice ról, zarząd z class_id, przydział bez roku', async () => {
+  const { householdScope: familiesScope } = await import('../src/pg/scope.js');
+  const READ = ['admin', 'board', 'treasurer', 'representative'];
+  const cases = [
+    { label: 'przedstawiciel 1A', grants: [{ role: 'representative', classId: 'c-1a', schoolYearId: 'y-1' }],
+      schoolWide: false, classIds: { 'y-1': ['c-1a'], 'y-2': [] } },
+    { label: 'zarząd z class_id (SR-01) nie ma zakresu szkolnego', grants: [{ role: 'board', classId: 'c-1b', schoolYearId: 'y-1' }],
+      schoolWide: false, classIds: { 'y-1': ['c-1b'], 'y-2': [] } },
+    { label: 'przydział bez klasy dla przedstawiciela jest pomijany', grants: [{ role: 'representative', classId: null, schoolYearId: 'y-1' }],
+      schoolWide: false, classIds: { 'y-1': [], 'y-2': [] }, any: false },
+    { label: 'skarbnik tylko rok 2', grants: [{ role: 'treasurer', classId: null, schoolYearId: 'y-2' }],
+      schoolWide: true, covers: { 'y-1': false, 'y-2': true }, classIds: { 'y-1': [], 'y-2': [] } },
+    { label: 'admin bez roku obejmuje wszystkie lata', grants: [{ role: 'admin', classId: null, schoolYearId: null }],
+      schoolWide: true, covers: { 'y-1': true, 'y-2': true }, classIds: { 'y-1': [], 'y-2': [] } },
+    { label: 'rola spoza listy (audit)', grants: [{ role: 'audit', classId: null, schoolYearId: null }],
+      schoolWide: false, classIds: { 'y-1': [], 'y-2': [] }, any: false },
+  ];
+  assert.ok(cases.length > 0);
+  for (const { label, grants, schoolWide, classIds, covers, any } of cases) {
+    const scope = familiesScope(ctx(grants), READ);
+    assert.equal(scope.schoolWide, schoolWide, label);
+    assert.equal(scope.any, any ?? true, label);
+    for (const [year, ids] of Object.entries(classIds)) assert.deepEqual(scopeClassIds(scope, year), ids, `${label} ${year}`);
+    for (const [year, expected] of Object.entries(covers ?? {})) assert.equal(scopeCoversYear(scope, year), expected, `${label} ${year}`);
+  }
 });
