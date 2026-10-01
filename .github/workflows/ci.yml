@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Testy bez potrzeby prawdziwego PostgreSQL, shardowane na 4 równoległe
+  # Testy bez potrzeby prawdziwego PostgreSQL, shardowane na 6 równoległych
   # joby (node --test --test-shard=i/N). Każdy shard uruchamia cały zestaw
   # tests/*.test.js z --test-concurrency=2, żeby ograniczyć liczbę
   # równoległych instancji PGlite (każda ~550 MB, #111). Runner hostowany ma

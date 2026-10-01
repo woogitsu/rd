@@ -30,6 +30,7 @@ const CONCURRENCY = 'tests/pg-real-concurrency.test.js';
 const DOMAIN = 'tests/pg-real-domain-locks.test.js';
 const YEAR_CLOSE = 'tests/pg-year-close-race.test.js';
 const COST_CENTERS = 'tests/pg-real-cost-center-locks.test.js';
+const BUDGET_LOCKS = 'tests/pg-real-budget-locks.test.js';
 
 // kind: 'for-update' usuwa każde `FOR UPDATE [OF x]` w funkcji `fn`;
 // 'advisory' zamienia `pg_advisory_xact_lock(` na `(` (zapytanie zostaje
@@ -59,6 +60,9 @@ export const MUTANTS = [
   { id: 'families-contact', file: 'src/pg/routes/families.js', fn: 'updateGuardianContact', kind: 'for-update', test: DOMAIN },
   { id: 'year-close', file: 'src/pg/routes/year-close.js', fn: 'closeYear', kind: 'advisory', test: YEAR_CLOSE },
   { id: 'cost-center-allocation', file: 'src/pg/routes/ledger-cost-centers.js', fn: 'loadEntry', kind: 'for-update', test: COST_CENTERS },
+  { id: 'budget-category', file: 'src/pg/routes/ledger-budget.js', fn: 'deactivateCategory', kind: 'for-update', test: BUDGET_LOCKS },
+  { id: 'budget-revision', file: 'src/pg/routes/ledger-budget.js', fn: 'reviseLine', kind: 'for-update', test: BUDGET_LOCKS },
+  { id: 'opening-adjustment', file: 'src/pg/routes/ledger-cash.js', fn: 'createAdjustment', kind: 'for-update', test: BUDGET_LOCKS },
 ];
 
 // Zwraca [początek, koniec) ciała funkcji najwyższego poziomu `fn` w `source`.
