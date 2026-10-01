@@ -71,7 +71,7 @@ export function assertNoPii(metadata) {
   visit(metadata, 'metadata');
 }
 
-export async function insertAuditEvent(executor, { actorId = null, action, entityType, entityId, metadata = {} }) {
+export async function insertAuditEvent(executor, { actorId = null, action, entityType, entityId, metadata = /** @type {Record<string, any>} */ ({}) }) {
   if (!action || !entityType || !entityId) throw new Error('audit_event_incomplete');
   if (requiresSchoolYearId(action) && !metadata?.schoolYearId) {
     // Błąd programisty (brak roku w metadanych zdarzenia finansowego/uzgodnienia)
