@@ -160,11 +160,15 @@ export async function appendNote(db, input) {
       });
     });
   } catch (error) {
-    if (error?.code === '23505') {
-      // Równoległe podwójne kliknięcie albo zamknięcie wątku, które wygrało wyścig.
+    // Równoległe podwójne kliknięcie: przegrany wyścig kończy się albo naruszeniem
+    // unikalności (23505, klucz lub indeks jednego zamknięcia), albo — gdy trigger
+    // po zwolnieniu blokady rodzica widzi już zamknięcie zwycięzcy — kodem
+    // audit_review_closed (409). W obu przypadkach, jeśli zapis o TYM kluczu już
+    // istnieje (zwycięzca z tą samą treścią), odpowiedzią jest odtworzenie (200).
+    if (error?.code === '23505' || error?.code === 'audit_review_closed') {
       const winner = await load(db);
       if (winner) return replay(winner);
-      if (input.kind === 'closed') throw new AuditReviewError('audit_review_closed', 409);
+      if (input.kind === 'closed' && error?.code === '23505') throw new AuditReviewError('audit_review_closed', 409);
     }
     throw error;
   }

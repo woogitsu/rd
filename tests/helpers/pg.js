@@ -10,6 +10,7 @@
 // db.transaction(async (tx) => …). Można go podać bezpośrednio jako env.db.
 
 import { fileURLToPath } from 'node:url';
+import { after } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { createPgDatabase, poolConfig } from '../../src/db.js';
@@ -33,6 +34,12 @@ const migrationsDirectory = fileURLToPath(new URL('../../postgres/migrations/', 
 const realBackend = process.env.RD_TEST_PG_BACKEND === 'real' && Boolean(process.env.RD_TEST_PG_URL);
 let realTemplate;
 let realSeq = 0;
+// Znacznik przebiegu (ustawia go scripts/test-pg-real.js): prefiks nazw baz
+// pozwala skryptowi usunąć porzucone bazy tego przebiegu bez dotykania cudzych.
+const runTag = /^[a-z0-9]{1,16}$/.test(process.env.RD_TEST_PG_RUN_TAG ?? '') ? `${process.env.RD_TEST_PG_RUN_TAG}_` : '';
+// Bazy utworzone w tym procesie i jeszcze niezamknięte (testy, które nie wołają
+// db.close(), albo przerwane wyjątkiem). Sprząta je after() na końcu pliku testowego.
+const liveRealDbs = new Map();
 
 function withDatabaseName(url, name) {
   const next = new URL(url);
@@ -48,7 +55,7 @@ async function adminQuery(sql) {
 
 async function ensureRealTemplate() {
   realTemplate ??= (async () => {
-    const name = `rd_tpl_${process.pid}_${Date.now()}`;
+    const name = `rd_tpl_${runTag}${process.pid}_${Date.now()}`;
     await adminQuery(`CREATE DATABASE ${name}`);
     const client = new pg.Client({ connectionString: withDatabaseName(process.env.RD_TEST_PG_URL, name) });
     await client.connect();
@@ -58,19 +65,38 @@ async function ensureRealTemplate() {
   return realTemplate;
 }
 
+// Koniec pliku testowego: zamyka niezamknięte bazy (pula + DROP) i usuwa szablon.
+// Błędy sprzątania nie psują testów (skrypt i tak robi końcowe zamiatanie).
+async function cleanupRealDatabases() {
+  for (const db of [...liveRealDbs.values()]) await db.close().catch(() => {});
+  if (realTemplate) {
+    const name = await realTemplate.catch(() => null);
+    realTemplate = undefined;
+    if (name) await adminQuery(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`).catch(() => {});
+  }
+}
+
+// Rejestracja na poziomie modułu (import w pliku testowym dzieje się przed testami):
+// hook należy do całego pliku. Wywołany z wnętrza testu przypisałby się do tego testu.
+if (process.env.RD_TEST_PG_URL) after(cleanupRealDatabases);
+
 export async function createRealTestDb() {
   const template = await ensureRealTemplate();
-  const name = `rd_t_${process.pid}_${++realSeq}_${Date.now()}`;
+  const name = `rd_t_${runTag}${process.pid}_${++realSeq}_${Date.now()}`;
   await adminQuery(`CREATE DATABASE ${name} TEMPLATE ${template}`);
   const url = withDatabaseName(process.env.RD_TEST_PG_URL, name);
   // SR-05 (#101): RD_TEST_PG_APP_ROLE=rd_app uruchamia CAŁĄ aplikację i dane testowe
   // rolą bez własności tabel (parametr startowy `-c role=…`); migracje szablonu
   // nadal idą rolą właściciela. Dowód braku ukrytych zależności od uprawnień właściciela.
   const appRole = process.env.RD_TEST_PG_APP_ROLE;
-  const pool = new pg.Pool(poolConfig({ connectionString: url, max: 10, statement_timeout: 30_000, ...(appRole ? { options: `-c role=${appRole}` } : {}) }));
+  // Strefa sesji przypięta do UTC (domyślna na Railway) niezależnie od TZ serwera
+  // testowego: wynik zapytań z ::date/to_char na timestamptz nie zależy od maszyny.
+  // To ustawienie testów, nie decyzja o strefie aplikacji.
+  const options = `-c timezone=UTC${appRole ? ` -c role=${appRole}` : ''}`;
+  const pool = new pg.Pool(poolConfig({ connectionString: url, max: 10, statement_timeout: 30_000, options }));
   const db = createPgDatabase(pool);
   const closePool = db.close.bind(db);
-  return {
+  const handle = {
     url,
     query: db.query.bind(db),
     transaction: db.transaction.bind(db),
@@ -78,10 +104,13 @@ export async function createRealTestDb() {
     // Odpowiednik PGlite.exec: kilka instrukcji w jednym tekście (protokół prosty).
     async exec(sql) { await pool.query(sql); },
     async close() {
-      await closePool();
+      liveRealDbs.delete(name);
+      await closePool().catch(() => {});
       await adminQuery(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
     },
   };
+  liveRealDbs.set(name, handle);
+  return handle;
 }
 
 export async function createTestDb() {

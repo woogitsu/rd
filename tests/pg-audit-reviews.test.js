@@ -147,6 +147,74 @@ test('podwójne kliknięcie odpowiedzi i zamknięcia: jeden zapis każdego rodza
   } finally { await db.close(); }
 });
 
+// Backend-niezależnie: PGlite szereguje żądania (drugie widzi zapis pierwszego i dostaje
+// odtworzenie 200), prawdziwy PG naprawdę je przeplata — przegrany wyścig o zamknięcie
+// widzi w triggerze już zamknięcie zwycięzcy. Z TYM SAMYM kluczem i treścią ma dostać
+// odtworzenie (200), nie 409; z INNYM kluczem — 409 audit_review_closed. Zawsze jeden zapis.
+test('równoległe zamknięcie tego samego wątku: ten sam klucz = odtworzenie 200, inny klucz = 409 audit_review_closed (PGlite: po kolei, nie wyścig)', async () => {
+  const { db, cookies, post, ask } = await setup();
+  try {
+    const note = (await (await ask()).json()).note;
+    const closePath = `/api/audit-reviews/${YEAR}/notes/${note.id}/closure`;
+    assert.equal((await post(cookies.board, `/api/audit-reviews/${YEAR}/notes/${note.id}/answers`, { body: 'Wyjaśnienie zarządu.' })).status, 201);
+    const sameKey = { 'Idempotency-Key': 'ar137-close-race-same-0001' };
+    const same = await Promise.all([1, 2, 3].map(() => post(cookies.audit, closePath, {}, sameKey)));
+    const statuses = same.map((r) => r.status).sort();
+    assert.equal(statuses.filter((s) => s === 201).length, 1, 'dokładnie jeden zapis');
+    assert.deepEqual(statuses.filter((s) => s !== 201), [200, 200], 'pozostałe to odtworzenia');
+    const ids = new Set(await Promise.all(same.map(async (r) => (await r.json()).note.id)));
+    assert.equal(ids.size, 1);
+    assert.equal(await count(db), 3);
+
+    const other = await ask(cookies.audit, { targetId: 'le-ar-1', body: 'Drugie pytanie do wydatku.' });
+    const otherNote = (await other.json()).note;
+    const otherPath = `/api/audit-reviews/${YEAR}/notes/${otherNote.id}/closure`;
+    const differentKeys = await Promise.all([1, 2].map((n) => post(cookies.audit, otherPath, {}, { 'Idempotency-Key': `ar137-close-race-diff-000${n}` })));
+    const results = differentKeys.map((r) => r.status).sort();
+    assert.deepEqual(results, [201, 409]);
+    const loser = differentKeys.find((r) => r.status === 409);
+    assert.equal((await loser.json()).error, 'audit_review_closed');
+    const closures = Number((await db.query("SELECT count(*) AS n FROM audit_review_notes WHERE kind = 'closed'")).rows[0].n);
+    assert.equal(closures, 2);
+    assert.equal(await count(db), 5, 'pytanie + odpowiedź + zamknięcie + drugie pytanie + jedno zamknięcie');
+
+    // Prawdziwy PG, deterministycznie: dwa żądania z tym samym kluczem przechodzą wstępne
+    // sprawdzenie i czekają w triggerze na blokadzie wątku; „zwycięzca” zapisuje zamknięcie z
+    // tym kluczem i zwalnia blokadę. Oba żądania mają dostać odtworzenie (200) tego zapisu.
+    // (PGlite ma jedno połączenie — tam wyścig nie istnieje, więc ta część nie ma sensu.)
+    if (db.url) {
+      const third = (await (await ask(cookies.audit, { body: 'Trzecie pytanie do wydatku.' })).json()).note;
+      const thirdPath = `/api/audit-reviews/${YEAR}/notes/${third.id}/closure`;
+      const headers = { 'Idempotency-Key': 'ar137-close-race-held-0001' };
+      const winnerId = 'arn-held-winner-0001';
+      const pending = await db.transaction(async (tx) => {
+        await tx.query('SELECT id FROM audit_review_notes WHERE id = $1 FOR UPDATE', [third.id]);
+        const requests = [1, 2].map(() => post(cookies.audit, thirdPath, {}, headers));
+        let waiting = 0;
+        for (let i = 0; i < 100 && waiting < 2; i += 1) {
+          waiting = Number((await db.query(
+            "SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+          )).rows[0].n);
+          if (waiting < 2) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        assert.equal(waiting, 2, 'oba żądania czekają na blokadzie wątku');
+        await tx.query(
+          `INSERT INTO audit_review_notes (id, school_year_id, kind, target_type, target_id, parent_id, created_by, idempotency_key)
+           VALUES ($1, $2, 'closed', $3, $4, $5, 'u-ar-audit', $6)`,
+          [winnerId, YEAR, third.targetType, third.targetId, third.id, headers['Idempotency-Key']],
+        );
+        return requests;
+      });
+      const responses = await Promise.all(pending);
+      assert.deepEqual(responses.map((r) => r.status), [200, 200]);
+      const bodies = await Promise.all(responses.map((r) => r.json()));
+      assert.ok(bodies.length === 2 && bodies.every((b) => b.replayed === true && b.note.id === winnerId));
+      const closed = Number((await db.query("SELECT count(*) AS n FROM audit_review_notes WHERE kind = 'closed' AND parent_id = $1", [third.id])).rows[0].n);
+      assert.equal(closed, 1);
+    }
+  } finally { await db.close(); }
+});
+
 test('granice ról: odczyt audit/zarząd/skarbnik; pytanie i zamknięcie tylko audit; odpowiedź tylko zarząd i skarbnik', async () => {
   const { db, cookies, call, post, ask } = await setup();
   try {
