@@ -4488,13 +4488,13 @@
       "data_type": "timestamp with time zone"
     },
     "cancellation_reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "powód odwołania wydarzenia",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -9011,13 +9011,13 @@
       "data_type": "text"
     },
     "withdrawal_reason": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "powód wycofania aktualności",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },

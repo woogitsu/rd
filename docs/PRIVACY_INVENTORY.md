@@ -90,6 +90,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`event_tasks`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`event_tasks`|`title`|Osoba trzecia|direct|wolny tekst|tytuł zadania wolontariackiego|audit_event|tak|tak|
 |`events`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`events`|`cancellation_reason`|Osoba trzecia|direct|wolny tekst|powód odwołania wydarzenia|audit_event|tak|tak|
 |`events`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`financial_report_snapshot_approvals`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia sprawozdania z osobą|nieustalona (D-04)|nie|tak|
 |`financial_report_snapshots`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie migawki sprawozdania z autorem (zasada dwóch osób)|nieustalona (D-04)|nie|tak|
@@ -171,6 +172,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`news_post_revisions`|`title`|Osoba trzecia|direct|wolny tekst|tytuł rewizji aktualności|audit_event|tak|nie|
 |`news_posts`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`news_posts`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`news_posts`|`withdrawal_reason`|Osoba trzecia|direct|wolny tekst|powód wycofania aktualności|audit_event|tak|nie|
 |`password_reset_tokens`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`password_reset_tokens`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`payment_allocation_reversals`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -235,7 +237,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **222**, w tym wolnego tekstu: **64** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **224**, w tym wolnego tekstu: **66** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -868,7 +870,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `approved_revision_no` | none | — | tak |
 | `audience` | none | — | tak |
 | `begins_at` | none | — | tak |
-| `cancellation_reason` | none | — | tak |
+| `cancellation_reason` | direct | third_party | tak |
 | `cancelled_at` | none | — | tak |
 | `cancelled_by` | none | — | tak |
 | `class_id` | none | — | tak |
@@ -1551,7 +1553,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `title` | none | — | nie |
 | `updated_at` | none | — | nie |
 | `updated_by` | none | — | nie |
-| `withdrawal_reason` | none | — | nie |
+| `withdrawal_reason` | direct | third_party | nie |
 | `withdrawn_at` | none | — | nie |
 | `withdrawn_by` | none | — | nie |
 

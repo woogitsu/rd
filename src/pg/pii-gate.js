@@ -62,6 +62,8 @@ export const GATED_FIELDS = Object.freeze([
   'meeting_minutes_publications.reason',
   'resolutions.body',
   'resolutions.correction_reason',
+  'events.cancellation_reason',
+  'news_posts.withdrawal_reason',
   'news_post_revisions.title',
   'news_post_revisions.body',
   'event_revisions.title',

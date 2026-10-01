@@ -463,12 +463,14 @@ async function transition(db, actor, input, spec) {
     if (row.revision_no !== expected) throw new EventError('revision_conflict', 409);
     if (!spec.from.includes(row.status)) throw new EventError('invalid_transition', 409);
     spec.validate?.(actor, row);
+    // #152: powód odwołania trafia do niezmiennego wiersza — bramka przed zapisem.
+    const gate = spec.gate ? await spec.gate(tx, row) : null;
     const { sql, params } = spec.update(row, actor);
     const { rows } = await tx.query(
       `UPDATE events SET ${sql} WHERE id = $1 RETURNING ${EVENT_COLUMNS}`, [row.id, ...params],
     );
     await audit(tx, actor.userId, spec.action, row.id,
-      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status });
+      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status, ...piiAuditMetadata(gate) });
     return { event: internalEvent(rows[0]), replayed: false };
   });
 }
@@ -531,6 +533,10 @@ export async function cancel(db, actor, input) {
     // one also by whoever may edit it (e.g. withdrawing a class proposal).
     allowed: (a, row) => canReview(a, row) || (row.published_revision_no === null && canEdit(a, row)),
     alreadyDone: (row) => row.status === 'cancelled',
+    gate: async (tx, row) => gateFreeText([['events.cancellation_reason', reason]], {
+      confirm: input?.confirmPersonalData === true, fail: piiFail,
+      knownNames: await loadKnownNames(tx, row.school_year_id),
+    }),
     update: (_row, actor) => ({
       sql: `status = 'cancelled', cancelled_by = $2, cancelled_at = now(), cancellation_reason = $3`,
       params: [actor.userId, reason],
@@ -1230,7 +1236,7 @@ export async function handle(request, env, url, json) {
     }
     const operations = { submit, approve, publish, cancel };
     const result = await operations[actionMatch[2]](env.db, actor, {
-      ...pick(data, ['revision', 'reason']), eventId: decodeId(actionMatch[1]),
+      ...pick(data, ['revision', 'reason', 'confirmPersonalData']), eventId: decodeId(actionMatch[1]),
     });
     return json({ event: result.event, replayed: result.replayed }, 200, noStore);
   } catch (error) {
