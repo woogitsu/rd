@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  COUNT_LABELS, HISTORY_ACTION, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows,
+  COUNT_LABELS, HISTORY_PATH, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows,
   historySummary, planRows, previewBody, previewSummary, resultMessage, retainedNote, totalCount,
 } from '../admin/anonymization.js';
 
@@ -96,24 +96,27 @@ test('resultMessage: zastosowano, powtórzenie, podgląd', () => {
   assert.match(resultMessage({ status: 'dry_run' }), /nie zostały zmienione/);
 });
 
-test('historyRows: tylko przebiegi, tylko identyfikatory i liczniki', () => {
-  const events = [
-    { id: 'e1', action: HISTORY_ACTION, entityId: 'run-1', occurredAt: '2026-10-01T10:00:00Z', actorId: 'u-1',
-      metadata: { householdId: 'h-1', reasonCode: 'data_subject_request', planSha256: DIGEST, counts: { guardians: 2, students: 1 } } },
-    { id: 'e2', action: 'household.anonymization_previewed', entityId: 'h-1', metadata: { counts: { guardians: 9 } } },
-    { id: 'e3', action: HISTORY_ACTION, entityId: 'run-2', actorId: null, metadata: {} },
+test('historyRows: kształt GET /api/admin/anonymizations, tylko identyfikatory i liczniki', () => {
+  const runs = [
+    { id: 'run-1', householdId: 'h-1', reasonCode: 'data_subject_request', dataSubjectRequestId: 'r-1', retentionPolicyIds: [],
+      planSha256: DIGEST, counts: { guardians: 2, students: 1 }, totalChanged: 3, executedBy: 'u-1', executedAt: '2026-10-01T10:00:00Z' },
+    { id: 'run-2', householdId: null, reasonCode: null, counts: { guardians: 4 }, executedBy: null },
+    { id: 'run-3' },
   ];
-  const rows = historyRows(events);
-  assert.equal(rows.length, 2);
+  const rows = historyRows(runs);
+  assert.equal(rows.length, 3);
   assert.deepEqual(rows[0], {
-    id: 'e1', runId: 'run-1', occurredAt: '2026-10-01T10:00:00Z', actorId: 'u-1', householdId: 'h-1',
-    reasonCode: 'data_subject_request', total: 3, planSha256: DIGEST,
+    id: 'run-1', occurredAt: '2026-10-01T10:00:00Z', actorId: 'u-1', householdId: 'h-1',
+    reasonCode: 'data_subject_request', dataSubjectRequestId: 'r-1', total: 3, planSha256: DIGEST,
   });
-  assert.equal(rows[1].total, null);
-  assert.equal(rows[1].householdId, null);
+  assert.equal(rows[1].total, 4);
+  assert.equal(rows[1].actorId, null);
+  assert.equal(rows[2].total, null);
+  assert.equal(rows[2].planSha256, null);
   assert.deepEqual(historyRows(undefined), []);
   assert.match(historySummary(0, false), /Brak/);
   assert.match(historySummary(2, true), /Pokaż więcej/);
+  assert.match(HISTORY_PATH, /^\/api\/admin\/anonymizations\?limit=\d+$/);
 });
 
 test('ekran: sekcja w panelu, wywołanie podglądu i wykonania, blokada podwójnego kliknięcia', () => {
@@ -121,6 +124,7 @@ test('ekran: sekcja w panelu, wywołanie podglądu i wykonania, blokada podwójn
   const main = readFileSync(new URL('../admin/main.js', import.meta.url), 'utf8');
   for (const id of ['anon-form', 'anon-plan-body', 'anon-execute', 'anon-history-body']) assert.ok(html.includes(`id="${id}"`), id);
   assert.match(main, /\/api\/admin\/anonymizations/);
+  assert.doesNotMatch(main, /household\.anonymized|domain=privacy|auditListPath\("privacy"\)/);
   assert.match(main, /promptAction\(executeConfirmation/);
   assert.match(main, /if \(anon\.busy/);
   assert.doesNotMatch(main, /localStorage|sessionStorage/);

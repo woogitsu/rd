@@ -34,6 +34,7 @@ export const EXCLUSION_REASON_LABELS = Object.freeze({
   suppressed: 'adres wykluczony (odbicie lub rezygnacja)',
   duplicate_address: 'adres już użyty w innej rodzinie tej kampanii',
   no_payment_reference: 'brak aktywnej komunikacji strukturalnej w roku (treść zawiera {komunikat})',
+  processing_restricted: 'ograniczenie przetwarzania danych (art. 18 RODO)',
 });
 
 export function isValidId(value) {

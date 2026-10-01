@@ -197,6 +197,8 @@ export const MESSAGES = Object.freeze({
   data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",
   data_request_identity_not_verified: "Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy.",
   data_request_kind_not_exportable: "Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych.",
+  data_request_kind_not_restrictable: "Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw.",
+  data_request_subject_not_restrictable: "Żądanie nie wskazuje gospodarstwa ani opiekuna, więc nie można nałożyć ograniczenia. Popraw wpis w rejestrze.",
   data_request_closed: "Żądanie jest już zamknięte (udzielono odpowiedzi albo odrzucono).",
   data_request_subject_mismatch: "Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze.",
   data_request_export_in_progress: "Eksport dla tego żądania już trwa. Poczekaj na jego zakończenie.",

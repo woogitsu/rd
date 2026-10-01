@@ -390,6 +390,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   data_access_log: 'dziennik odczytu danych rodzin — rozliczalność dostępu, nie dane Rady do odtworzenia; retencja do decyzji D-04 (0067)',
   access_denial_windows: 'liczniki powtórzeń odmów 403 w oknie 5 minut (0160, #184) — dane bezpieczeństwa, nie dane Rady do odtworzenia; samo zdarzenie access.denied jest w audit_events; retencja do decyzji D-04',
   data_subject_requests: 'rejestr żądań osób RODO (dostęp/sprostowanie/usunięcie/...) — rozliczalność wobec osób, nie dane Rady do odtworzenia; kto ma dostęp do rejestru i retencja do decyzji D-07/D-08/D-09 (0068, #100)',
+  processing_restrictions: 'ślad ograniczeń przetwarzania (RODO art. 18) — rozliczalność wobec osób jak data_subject_requests; kto ma dostęp i retencja do decyzji D-07/D-08/D-09 (0178, #100)',
   backup_runs: 'dziennik przebiegów kopii zapasowej i próby odtworzenia — dane operacyjne środowiska, nie danych Rady (0058)',
   import_batches: 'metadane importów — zakres i retencja do decyzji D-04',
   promotion_runs: 'rejestr idempotencji promocji na nowy rok (0151, #78) — same liczby i klucz; przypisania odtwarza eksport enrollments, ślad w audit_events',

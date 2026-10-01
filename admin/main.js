@@ -45,7 +45,7 @@ import {
   statusConfirmation, subjectOf,
 } from "./data-requests.js";
 import {
-  HISTORY_ACTION, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows, historySummary,
+  HISTORY_PATH, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows, historySummary,
   planRows, previewBody, previewSummary, resultMessage, retainedNote,
 } from "./anonymization.js";
 import { api as apiRequest } from "../shared/api.js";
@@ -1456,10 +1456,10 @@ for (const [id, key] of [["dr-filter-status", "status"], ["dr-filter-kind", "kin
 // --- Anonimizacja (#91; POST /api/admin/anonymizations, wyłącznie admin z MFA) ---
 // Podgląd (dryRun) pokazuje tylko liczniki. Wykonanie zatwierdza dokładnie ten plan
 // (confirm = id gospodarstwa, expectedPlanSha256 z podglądu); API nie używa Idempotency-Key,
-// bo powtórzenie jest idempotentne po stronie serwera (`replayed`). Historia pochodzi z dziennika
-// zdarzeń (domena „privacy”, tylko identyfikatory i liczniki). Nic nie jest zapisywane w przeglądarce.
+// bo powtórzenie jest idempotentne po stronie serwera (`replayed`). Historia pochodzi z
+// GET /api/admin/anonymizations (kursor, tylko identyfikatory i liczniki). Nic nie jest zapisywane w przeglądarce.
 
-const anon = { preview: null, request: null, busy: false, events: [], cursor: null };
+const anon = { preview: null, request: null, busy: false, runs: [], cursor: null };
 
 function clearAnonPreview() {
   anon.preview = null;
@@ -1494,14 +1494,14 @@ function renderAnonPlan() {
 }
 
 function renderAnonHistory() {
-  const rows = historyRows(anon.events);
+  const rows = historyRows(anon.runs);
   byId("anon-history-summary").textContent = historySummary(rows.length, Boolean(anon.cursor));
   const tbody = byId("anon-history-body");
   if (!rows.length) return emptyRow(tbody, 7, "Brak przebiegów.");
   tbody.replaceChildren(...rows.map((row) => {
     const tr = document.createElement("tr");
-    const run = cell(row.runId ? shortId(row.runId) : "—");
-    if (row.runId) run.title = row.runId;
+    const run = cell(row.id ? shortId(row.id) : "—");
+    if (row.id) run.title = row.id;
     const household = cell(row.householdId ? shortId(row.householdId) : "—");
     if (row.householdId) household.title = row.householdId;
     const digest = cell(row.planSha256 ? `${row.planSha256.slice(0, 12)}…` : "—");
@@ -1515,9 +1515,9 @@ function renderAnonHistory() {
 }
 
 async function loadAnonHistory({ append = false } = {}) {
-  const result = await api(withCursor(auditListPath("privacy"), append ? anon.cursor : null));
-  anon.events = append ? [...anon.events, ...result.events.filter((event) => event.action === HISTORY_ACTION)]
-    : result.events.filter((event) => event.action === HISTORY_ACTION);
+  const result = await api(withCursor(HISTORY_PATH, append ? anon.cursor : null));
+  const runs = Array.isArray(result.runs) ? result.runs : [];
+  anon.runs = append ? [...anon.runs, ...runs] : runs;
   anon.cursor = result.nextCursor ?? null;
   toggleMore("anon-more", anon.cursor);
   renderAnonHistory();
