@@ -181,9 +181,73 @@ export function assertNoUnmappedColumns(snapshotTables) {
   }
 }
 
-export function normalizeSnapshot(snapshot, { eventTimeZone } = {}) {
+// #179: reguły, które PostgreSQL egzekwuje twardo, a D1 sprzed migracji 0005/0007 mogło je łamać
+// (triggery D1 blokują poprawkę w miejscu). Zbieramy WSZYSTKIE naruszenia jako listę
+// { table, id, rule } — tylko identyfikatory i nazwy reguł, bez wartości. Niczego nie poprawiamy
+// po cichu: brak metody, nieistniejąca kategoria, wydatek > 3000 EUR bez uchwały itd. wymagają decyzji
+// skarbnika (D-15, D-09/D-12), a nie domysłu narzędzia.
+export const LEDGER_METHODS = ['bank', 'cash', 'card', 'other'];
+const LARGE_EXPENSE_CENTS = 300000;
+const KEYED_TABLES = specs.filter(([, columns]) => columns.includes('idempotency_key')).map(([name]) => name);
+
+export class MigrationViolationsError extends Error {
+  constructor(violations) {
+    super(`Snapshot violates PostgreSQL rules; restore refused before any transaction (${violations.length}): `
+      + violations.map(formatViolation).join('; '));
+    this.name = 'MigrationViolationsError';
+    this.violations = violations;
+  }
+}
+
+export function formatViolation({ table, id, rule }) {
+  return `${table} ${id}: ${rule}`;
+}
+
+export function collectViolations(snapshotTables) {
+  const violations = [];
+  const add = (table, row, rule) => violations.push({ table, id: rowKey(table, row), rule });
+  for (const table of KEYED_TABLES) {
+    for (const row of snapshotTables[table]) {
+      const key = row.idempotency_key;
+      if (key == null || key === '') continue; // brak klucza: deterministyczny klucz legacy:<typ>:<id>
+      const length = String(key).trim().length;
+      if (length < 8 || length > 128) add(table, row, 'idempotency_key_length_outside_8_128');
+    }
+  }
+  const categories = new Set(snapshotTables.ledger_categories.map((row) => `${row.id}|${row.school_year_id}|${row.direction}`));
+  const categoryIds = new Set(snapshotTables.ledger_categories.map((row) => row.id));
+  for (const row of snapshotTables.ledger_entries) {
+    const categoryId = row.category_id ?? row.category;
+    if (categoryId == null || categoryId === '') add('ledger_entries', row, 'category_missing');
+    else if (!categoryIds.has(categoryId)) add('ledger_entries', row, 'category_not_found');
+    else if (!categories.has(`${categoryId}|${row.school_year_id}|${row.direction}`)) add('ledger_entries', row, 'category_year_or_direction_mismatch');
+    if (!LEDGER_METHODS.includes(row.method)) add('ledger_entries', row, row.method == null || row.method === '' ? 'method_missing' : 'method_not_allowed');
+    if (row.direction === 'expense' && Number(row.amount_cents) > LARGE_EXPENSE_CENTS
+      && String(row.resolution_reference ?? '').trim().length < 3) {
+      add('ledger_entries', row, 'expense_over_3000_eur_without_resolution');
+    }
+    if (row.payment_entry_id != null && row.direction !== 'income') add('ledger_entries', row, 'payment_link_on_non_income');
+  }
+  return violations;
+}
+
+// Tryb --check: wszystkie naruszenia reguł + pierwszy błąd pozostałych kontroli normalizacji
+// (spójność zakresów, strefa czasu wydarzeń, kolumny spoza mapowania), jeśli reguły są spełnione.
+export function checkSnapshot(snapshot, { eventTimeZone } = {}) {
+  verifySnapshot(snapshot);
+  const violations = collectViolations(snapshot.tables);
+  let otherError = null;
+  try { normalizeSnapshot(snapshot, { eventTimeZone, skipRuleCheck: true }); } catch (error) { otherError = error.message; }
+  return { ok: violations.length === 0 && otherError == null, violations, otherError };
+}
+
+export function normalizeSnapshot(snapshot, { eventTimeZone, skipRuleCheck = false } = {}) {
   verifySnapshot(snapshot);
   assertNoUnmappedColumns(snapshot.tables);
+  if (!skipRuleCheck) {
+    const violations = collectViolations(snapshot.tables);
+    if (violations.length) throw new MigrationViolationsError(violations);
+  }
   const tables = structuredClone(snapshot.tables);
   const assignments = new Map(tables.payment_assignments.map((row) => [row.payment_entry_id, row]));
   tables.payment_entries = tables.payment_entries.map((row) => {
@@ -214,7 +278,6 @@ export function normalizeSnapshot(snapshot, { eventTimeZone } = {}) {
   normalizeEventTimes(tables.events, eventTimeZone);
   tables.ledger_entries.forEach((row) => {
     row.category_id ??= row.category;
-    row.method ||= 'other';
     row.idempotency_key ||= legacyKey('ledger', row.id);
   });
   tables.audit_events.forEach((row) => {
