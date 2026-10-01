@@ -100,6 +100,81 @@ export function formatCents(cents) {
   return formatEur(cents, { style: "screen" });
 }
 
+// Zakończenie opieki (#86, #535). Przyciski „Zakończ …” są tylko podpowiedzią UX
+// z /api/access; o dostępie decyduje serwer (403/404 pokazujemy jako komunikat).
+export const END_KINDS = Object.freeze({
+  enrollment: { label: "Zakończ naukę w szkole", dateLabel: "Data odejścia (ostatni dzień nauki)", field: "endedOn", done: "Zapisano odejście ucznia ze szkoły." },
+  relation: { label: "Zakończ opiekę", dateLabel: "Ostatni dzień opieki", field: "endsOn", done: "Zapisano zakończenie relacji opiekun–dziecko." },
+  studentHousehold: { label: "Zakończ członkostwo", dateLabel: "Pierwszy dzień poza gospodarstwem", field: "endsOn", done: "Zapisano zakończenie członkostwa ucznia w gospodarstwie." },
+  guardianHousehold: { label: "Zakończ członkostwo", dateLabel: "Pierwszy dzień poza gospodarstwem", field: "endsOn", done: "Zapisano zakończenie członkostwa opiekuna w gospodarstwie." },
+});
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+export function isValidDate(value) {
+  if (typeof value !== "string" || !DATE_PATTERN.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+// Zakres szeroki (admin/zarząd bez klasy): tylko on może kończyć członkostwo opiekuna
+// i dodawać członkostwo ucznia. To wyłącznie podpowiedź dla przycisku.
+export function canEndGuardianHousehold(grants) {
+  return Array.isArray(grants) && grants.some((grant) => (grant?.role === "admin" || grant?.role === "board") && !grant.classId);
+}
+
+// target: { kind, studentId?, guardianId?, enrollmentId?, membershipId? }
+// Zwraca { url, method, body } albo { error }. Brak identyfikatora = brak trasy.
+export function buildEndRequest(target, { date, reason, confirmPersonalData = false } = {}) {
+  const spec = END_KINDS[target?.kind];
+  if (!spec) return { error: "Nieznana operacja." };
+  const part = (value) => (isValidId(value) ? encodeURIComponent(value) : null);
+  let url = null;
+  if (target.kind === "enrollment") {
+    const [s, e] = [part(target.studentId), part(target.enrollmentId)];
+    if (s && e) url = `/api/students/${s}/enrollments/${e}/end`;
+  } else if (target.kind === "relation") {
+    const [g, s] = [part(target.guardianId), part(target.studentId)];
+    if (g && s) url = `/api/guardians/${g}/students/${s}/end`;
+  } else if (target.kind === "studentHousehold") {
+    const [s, m] = [part(target.studentId), part(target.membershipId)];
+    if (s && m) url = `/api/students/${s}/households/${m}/end`;
+  } else {
+    const [g, m] = [part(target.guardianId), part(target.membershipId)];
+    if (g && m) url = `/api/guardians/${g}/households/${m}/end`;
+  }
+  if (!url) return { error: "Brak identyfikatora zapisu — odśwież kartę gospodarstwa." };
+  if (!isValidDate(date)) return { error: errorMessage("invalid_ended_on") };
+  const trimmed = String(reason ?? "").trim();
+  if (trimmed.length < 3 || trimmed.length > 500) return { error: ERROR_MESSAGES.invalid_reason };
+  const body = { [spec.field]: date, reason: trimmed };
+  if (confirmPersonalData === true) body.confirmPersonalData = true;
+  return { url, method: "POST", body };
+}
+
+// Komunikaty po udanym zakończeniu: changed:false = powtórka (podwójne kliknięcie),
+// campaignsToReview / withoutPrimaryHousehold / withoutHousehold to ostrzeżenia dla zarządu.
+export function endResultMessages(kind, response) {
+  const spec = END_KINDS[kind];
+  const messages = [];
+  if (response?.changed === false) {
+    messages.push("Ta zmiana była już zapisana wcześniej — nic nie zmieniono.");
+  } else if (spec) {
+    messages.push(spec.done);
+  }
+  const campaigns = Array.isArray(response?.campaignsToReview) ? response.campaignsToReview : [];
+  if (campaigns.length) {
+    messages.push(`Opiekun jest adresatem zatwierdzonych kampanii e-mail (${campaigns.join(", ")}). Wiadomość do niego nie zostanie wysłana; sprawdź te kampanie i w razie potrzeby przygotuj nową migawkę.`);
+  }
+  if (response?.withoutPrimaryHousehold === true) {
+    messages.push("Uczeń nie ma teraz głównego gospodarstwa, więc wypada z kampanii i kartek. Dodaj nowe członkostwo, jeśli to pomyłka.");
+  }
+  if (response?.withoutHousehold === true) {
+    messages.push("Opiekun nie ma teraz żadnego bieżącego gospodarstwa.");
+  }
+  return messages;
+}
+
 // Zwraca obiekt do PATCH /api/guardians/{id}/contact albo { error }.
 export function buildContactPatch({ email, contactAllowed, reason }, current) {
   const trimmedReason = String(reason ?? "").trim();

@@ -338,7 +338,7 @@ async function limitRow(type, value) {
 const pairRow = (email, ip) => limitRow('pair', `${email}|${ip}`);
 const failedFor = async (action, userId) => (await auditRows(action)).filter((row) => row.entity_id === userId).length;
 
-test('#186: 30 równoległych błędnych haseł — najwyżej 5 sprawdzeń, reszta 429, blokada trwa', async () => {
+test('#186: 30 równoległych błędnych haseł — najwyżej 5 sprawdzeń, reszta 429, blokada trwa (PGlite: po kolei, nie wyścig)', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-par30' });
   const ip = nextIp();
   const responses = await Promise.all(Array.from({ length: 30 }, (_, i) => login(account, { ip, password: `zle haslo rownolegle ${i}` })));
@@ -419,7 +419,7 @@ test('#186: podwójne kliknięcie „Zaloguj” z poprawnym hasłem przy licznik
   assert.ok(!row?.locked, 'udane logowanie nie zostawia blokady');
 });
 
-test('#186: limit IP przy równoległych błędnych tokenach resetu i zaproszenia (najwyżej 20 sprawdzeń)', async () => {
+test('#186: limit IP przy równoległych błędnych tokenach resetu i zaproszenia (najwyżej 20 sprawdzeń) (PGlite: po kolei, nie wyścig)', async () => {
   const ip = '192.0.2.186';
   const before = (await auditRows('auth.password_reset_failed')).length;
   const tokens = Array.from({ length: 30 }, () => randomBytes(32).toString('base64url'));
@@ -432,7 +432,7 @@ test('#186: limit IP przy równoległych błędnych tokenach resetu i zaproszeni
   assert.equal(accept.status, 429, 'ten sam zakres IP obejmuje przyjęcie zaproszenia');
 });
 
-test('#186: równoległe błędne hasła przy zmianie hasła i przyjęciu zaproszenia istniejącego konta', async () => {
+test('#186: równoległe błędne hasła przy zmianie hasła i przyjęciu zaproszenia istniejącego konta (PGlite: po kolei, nie wyścig)', async () => {
   const account = await seedPasswordUser({ userId: 'u-login-parchg' });
   const cookie = cookieFrom(await login(account));
   const changeIp = nextIp();

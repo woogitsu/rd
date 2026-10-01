@@ -127,7 +127,7 @@ test('zwrot: podwójny przelew tej samej rodziny zostaje jako dwie wpłaty; zwro
   } finally { await db.close(); }
 });
 
-test('zwrot większy niż kwota netto jest odrzucony; dwa równoległe zwroty — jeden odrzucony', async () => {
+test('zwrot większy niż kwota netto jest odrzucony; dwa równoległe zwroty — jeden odrzucony (PGlite: po kolei, nie wyścig)', async () => {
   const { db, cookie, fetch } = await setup();
   try {
     const paymentId = await createPayment(fetch, cookie, { amountCents: 3000, key: 'k-pay-refund-cap-001' });
@@ -264,7 +264,7 @@ test('ponowienie udanego przypisania (ten sam klucz i treść) zwraca zapisany w
   } finally { await db.close(); }
 });
 
-test('równoległe ponowienie ponownego przypisania (podwójne kliknięcie): jeden zapis i jedno odtworzenie', async () => {
+test('równoległe ponowienie ponownego przypisania (podwójne kliknięcie): jeden zapis i jedno odtworzenie (PGlite: po kolei, nie wyścig)', async () => {
   const { db, cookie, fetch } = await setup();
   try {
     const paymentId = await createPayment(fetch, cookie, { amountCents: 6000, key: 'k-pay-reassign-par-001', householdId: 'h1' });

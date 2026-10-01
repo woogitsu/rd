@@ -111,7 +111,7 @@ test('kategorie przez API: podwójne kliknięcie = jedna kategoria, wyłączenie
   } finally { await db.close(); }
 });
 
-test('wersje linii: nowa wersja nie usuwa poprzedniej, historia w API, równoległe rewizje — jedna wygrywa, druga 409', async () => {
+test('wersje linii: nowa wersja nie usuwa poprzedniej, historia w API, równoległe rewizje — jedna wygrywa, druga 409 (PGlite: po kolei, nie wyścig)', async () => {
   const { db, cookies, call, count } = await setup();
   try {
     const cat = (await category(call, cookies.treasurer, { direction: 'expense', name: 'Wydarzenia' })).body.category;
