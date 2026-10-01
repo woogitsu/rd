@@ -9,14 +9,33 @@ import { insertAuditEvent } from './audit.js';
 import { mfaStatus } from './mfa-policy.js';
 import { isAuthorizedScoped, schoolWideContext } from './scope.js';
 
+/**
+ * Typy współdzielone przez moduły src/pg (#160, typecheck w jsconfig.json).
+ * Grant i AuthContext są zdefiniowane w scope.js.
+ * @typedef {import('./scope.js').Grant} Grant
+ * @typedef {import('./scope.js').AuthContext} AuthContext
+ * @typedef {{query: (text: string, params?: unknown[]) => Promise<{rows: any[], rowCount?: number|null}>}} Tx transakcja (lub wykonawca zapytań)
+ * @typedef {Tx & {transaction: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>}} Db połączenie/pula z transakcjami
+ * @typedef {{db: Db} & Record<string, any>} Env
+ * @typedef {{user?: Actor, sessionId?: string|null, mfaVerifiedAt?: string|Date|null}} SessionExtras
+ * @typedef {{session: AuthContext['session'] & SessionExtras, grants: Grant[]}} AccessContext kontekst z loadAuthorizationContext
+ * @typedef {{id: string} & Record<string, any>} Actor zalogowany użytkownik (session.user)
+ * @typedef {import('./scope.js').ScopeRequirement & {classId?: string|null}} Requirement wymóg dostępu przekazywany do requireAccess
+ */
+
 // #176: konto może mieć rolę bez żadnej trasy chronionej dziś (np. `principal`,
 // ROLE_STATUS 'pending_decision'). Serwer — nie front-end — rozstrzyga, czy
 // przydziały dają cokolwiek: jedno źródło prawdy (ROLE_STATUS), żeby ekran
 // startowy nie musiał duplikować tej wiedzy ani zgadywać.
+/** @param {Grant[]} grants */
 export function hasActiveRole(grants) {
   return Array.isArray(grants) && grants.some((grant) => ROLE_STATUS[grant.role] !== 'pending_decision');
 }
 
+/**
+ * @param {Env} env
+ * @param {string} userId
+ */
 export async function loadActiveGrants(env, userId) {
   const { rows } = await env.db.query(
     `SELECT role, class_id, school_year_id, expires_at
@@ -35,6 +54,10 @@ export async function loadActiveGrants(env, userId) {
   }));
 }
 
+/**
+ * @param {Request} request
+ * @param {Env} env
+ */
 export async function loadAuthorizationContext(request, env) {
   const session = await loadSession(request, env);
   if (!session) return null;
@@ -74,6 +97,12 @@ export { isAuthorizedScoped, schoolWideContext };
 const ACCESS_DENIED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const ACCESS_DENIED_MAX_ROUTE = 300;
 
+/**
+ * @param {Env} env
+ * @param {AccessContext|null|undefined} context
+ * @param {Requirement|undefined} requirement
+ * @param {Request} request
+ */
 export async function logAccessDenied(env, context, requirement, request) {
   try {
     const actorId = context?.session?.user?.id;
@@ -133,6 +162,12 @@ export async function logDeferredAccessDenied(env, error, request) {
   await logAccessDenied(env, denial.context, denial.requirement, request);
 }
 
+/**
+ * @param {Request} request
+ * @param {Env} env
+ * @param {Requirement} requirement
+ * @param {(data: unknown, status?: number) => Response} json
+ */
 export async function requireAccess(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };
@@ -144,7 +179,7 @@ export async function requireAccess(request, env, requirement, json) {
   // `true` — SPRAWDZANE PO roli/zakresie (SR-07), więc osoba bez dostępu
   // dostaje ten sam ogólny `forbidden`, niezależnie od wieku MFA.
   if (requirement?.requireMfa && typeof requirement.requireMfa === 'object') {
-    const code = freshMfaForbiddenCode(context, requirement.requireMfa.maxAgeSeconds);
+    const code = freshMfaForbiddenCode(context, /** @type {{maxAgeSeconds?: number}} */ (requirement.requireMfa).maxAgeSeconds);
     if (code) return { response: json({ error: code }, 403) };
   }
   return { context };
@@ -194,6 +229,10 @@ export async function mfaAwareForbiddenCode(context, requirement, env) {
 
 // Cofnięcie przydziału roli: wiersz zostaje (revoked_at/revoked_by), zdarzenie
 // audytu w tej samej transakcji. Uprawnienie do cofania sprawdza wywołujący.
+/**
+ * @param {Env} env
+ * @param {{grantId: string, actorId: string}} params
+ */
 export async function revokeRoleGrant(env, { grantId, actorId }) {
   if (!actorId) throw new Error('actor_required');
   return env.db.transaction(async (tx) => {
