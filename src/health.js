@@ -2,7 +2,10 @@
 //
 // /health (liveness) potwierdza tylko, że proces odpowiada — tak jak dotąd.
 // /health/ready dodatkowo sprawdza bazę, gdy jest skonfigurowana (env.db):
-//   1. `SELECT 1` z krótkim limitem czasu,
+//   1. `SELECT` z krótkim limitem czasu, który przy okazji odczytuje
+//      `transaction_read_only` (#149): baza tylko do odczytu (replika, tryb
+//      awaryjny) przy normalnym `APP_WRITE_MODE` to 503 `database: "read_only"`,
+//      bez żadnego zapisu kontrolnego i bez tworzenia danych,
 //   2. czy tabela schema_migrations zawiera wszystkie pliki z postgres/migrations,
 //   3. czy suma kontrolna każdego nałożonego pliku zgadza się z repozytorium (#79).
 // Odpowiedź zawiera wyłącznie stan techniczny: liczby i nazwy brakujących
@@ -71,7 +74,7 @@ export async function checkReadiness(env = {}, options = {}) {
   }
   const existing = inflightChecks.get(env.db);
   if (existing) return existing.then(withWriteMode);
-  const promise = performReadinessCheck(env.db, options);
+  const promise = performReadinessCheck(env.db, { ...options, expectWritable: writeMode === WRITE_MODE_NORMAL });
   inflightChecks.set(env.db, promise);
   try {
     return withWriteMode(await promise);
@@ -86,15 +89,17 @@ async function performReadinessCheck(db, {
   timeoutMs = DEFAULT_READINESS_TIMEOUT_MS,
   migrations: migrationsProvider = repositoryMigrations,
   logger = log,
+  expectWritable = true,
 } = {}) {
   try {
     const expected = await migrationsProvider();
     const runChecks = async (q) => {
-      await q.query('SELECT 1');
+      const probeRow = await q.query("SELECT current_setting('transaction_read_only') AS read_only");
+      const readOnly = probeRow.rows?.[0]?.read_only === 'on';
       const table = await q.query("SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present");
-      if (!table.rows?.[0]?.present) return { applied: null };
+      if (!table.rows?.[0]?.present) return { applied: null, readOnly };
       const { rows } = await q.query('SELECT name, checksum FROM schema_migrations');
-      return { applied: new Map(rows.map((row) => [row.name, row.checksum])) };
+      return { applied: new Map(rows.map((row) => [row.name, row.checksum])), readOnly };
     };
     // Prawdziwa pula (src/db.js) udostępnia `probe`: zapytania mają budżet
     // czasu po stronie serwera (SET LOCAL statement_timeout), więc po
@@ -103,6 +108,10 @@ async function performReadinessCheck(db, {
     const result = typeof db.probe === 'function'
       ? await db.probe(runChecks, { timeoutMs })
       : await withTimeout(runChecks(db), timeoutMs);
+    if (result.readOnly && expectWritable) {
+      logger.error('readiness_database_read_only', {});
+      return { ready: false, body: { status: 'not_ready', checks: { database: 'read_only' } } };
+    }
     const missing = result.applied ? expected.filter((item) => !result.applied.has(item.name)).map((item) => item.name) : expected.map((item) => item.name);
     // Suma kontrolna nałożonego pliku ≠ suma w repozytorium (#79): plik scalonej
     // migracji został potem zmieniony. Odpowiedź nie zawiera treści SQL ani sum.
