@@ -156,7 +156,7 @@ export function isJsonContentType(raw) {
 
 /** @param {unknown} error @returns {boolean} naruszenie ograniczenia UNIQUE (SQLSTATE 23505) */
 export function isUniqueError(error) {
-  return error?.code === '23505';
+  return /** @type {{code?: string} | null | undefined} */ (error)?.code === '23505';
 }
 
 function bodyTooLarge(text, maxBytes) {

@@ -97,12 +97,12 @@ export function resolveScope(context, requirement) {
  * @param {number} [options.firstParam] numer pierwszego wolnego parametru (domyślnie 1)
  * @returns {{sql: string, params: unknown[]}}
  */
-export function scopeSql(scope, { classAlias, yearColumn = 'school_year_id', firstParam = 1 } = {}) {
+export function scopeSql(scope, { classAlias, yearColumn = 'school_year_id', firstParam = 1 } = /** @type {any} */ ({})) {
   return { sql: scopeSqlFragment({ classAlias, yearColumn, firstParam }), params: scopeSqlParams(scope) };
 }
 
 /** Sam fragment SQL z `scopeSql` (bez wartości) — gdy moduł składa kilka warunków na tych samych parametrach. */
-export function scopeSqlFragment({ classAlias, yearColumn = 'school_year_id', firstParam = 1 } = {}) {
+export function scopeSqlFragment({ classAlias, yearColumn = 'school_year_id', firstParam = 1 } = /** @type {any} */ ({})) {
   const p1 = firstParam;
   const p2 = firstParam + 1;
   const p3 = firstParam + 2;
