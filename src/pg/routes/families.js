@@ -26,7 +26,7 @@
 // wyłącznie role finansowe z MFA. Jednostka ewidencji składki — decyzja D-11.
 
 import { isSameOrigin } from '../../auth.js';
-import { loadAuthorizationContext } from '../authorization.js';
+import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { resolveScope, scopeSqlFragment, scopeSqlParams } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
@@ -130,7 +130,11 @@ async function requireReadContext(request, env, roles = READ_ROLES) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   const scope = familiesScope(context, roles);
-  if (!scope.any) throw new RequestError('forbidden', 403);
+  if (!scope.any) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles }, request);
+    throw new RequestError('forbidden', 403);
+  }
   return { context, scope };
 }
 
@@ -707,7 +711,11 @@ function parseAddHouseholdInput(data) {
 // członkostwo daje 409 student_household_overlap.
 async function addStudentHousehold(request, env, studentId, json) {
   const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
-  if (isClassScoped(scope)) throw new RequestError('forbidden', 403);
+  if (isClassScoped(scope)) {
+    // #184: zakres wyłącznie klasowy — ślad odmowy przed transakcją.
+    await logAccessDenied(env, context, { roles: EDIT_ROLES }, request);
+    throw new RequestError('forbidden', 403);
+  }
   const addData = await readJson(request);
   const input = parseAddHouseholdInput(addData);
   const actorId = context.session.user.id;

@@ -17,7 +17,8 @@
 // Publikacja zatwierdzonej migawki (aktualności) — osobny zakres, wymaga decyzji zarządu.
 
 import {
-  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS, mfaAwareForbiddenCode,
+  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS,
+  mfaAwareForbiddenCode,
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { reportContentSecurityPolicy } from '../audit-report.js';
@@ -43,7 +44,12 @@ async function requireReportAccess(request, env, schoolYearId, { roles = REPORT_
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   const rule = { roles, schoolYearId, requireMfa: true };
-  if (!isAuthorizedScoped(context, rule)) throw new RequestError(await mfaAwareForbiddenCode(context, rule, env), 403);
+  if (!isAuthorizedScoped(context, rule)) {
+    const code = await mfaAwareForbiddenCode(context, rule, env);
+    // #184: ślad odmowy roli/zakresu (przed transakcją żądania); kody MFA — bez zdarzenia.
+    if (code === 'forbidden') await logAccessDenied(env, context, rule, request);
+    throw new RequestError(code, 403);
+  }
   if (freshMfa) {
     // Zatwierdzenie sprawozdania to krok w górę MFA (jak zamknięcie roku, #150).
     const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
@@ -128,7 +134,12 @@ async function snapshotYear(request, env, snapshotId, options) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   const generic = { roles: options?.roles ?? REPORT_ROLES, requireMfa: true };
-  if (!isAuthorizedScoped(context, generic)) throw new RequestError(await mfaAwareForbiddenCode(context, generic, env), 403);
+  if (!isAuthorizedScoped(context, generic)) {
+    const code = await mfaAwareForbiddenCode(context, generic, env);
+    // #184: ślad odmowy roli/zakresu (przed transakcją żądania); kody MFA — bez zdarzenia.
+    if (code === 'forbidden') await logAccessDenied(env, context, generic, request);
+    throw new RequestError(code, 403);
+  }
   const schoolYearId = await loadSnapshotYear(env.db, snapshotId);
   if (!schoolYearId) throw new RequestError('report_snapshot_not_found', 404);
   return schoolYearId;

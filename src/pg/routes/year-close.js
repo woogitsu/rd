@@ -15,7 +15,9 @@
 // Zapis i jego zdarzenie audytu powstają w jednej transakcji. Powtórzenie
 // zakończonej operacji zwraca stan bez nowego zapisu (replayed: true).
 
-import { freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, MFA_STEP_UP_MAX_AGE_SECONDS } from '../authorization.js';
+import {
+  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
@@ -133,6 +135,8 @@ async function authorize(request, env, schoolYearId, roles, { requireFreshMfa = 
       && (await wasAuthorizedAtOwnClosure(env, actorId, schoolYearId, roles))) {
       throw new RequestError('school_year_closed', 409);
     }
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles }, request);
     throw new RequestError('forbidden', 403);
   }
   if (requireFreshMfa) {
@@ -149,7 +153,11 @@ async function authorizeArchiveRead(request, env, schoolYearId, roles, route) {
   if (!context) throw new RequestError('unauthenticated', 401);
   if (isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) return;
   const via = await archiveReadVia(env.db, context, schoolYearId, roles);
-  if (!via) throw new RequestError('forbidden', 403);
+  if (!via) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles }, request);
+    throw new RequestError('forbidden', 403);
+  }
   await recordArchiveRead(env.db, { actorId: context.session.user.id, schoolYearId, viaSchoolYearId: via, route });
 }
 

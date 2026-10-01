@@ -15,7 +15,9 @@
 // audytu (assertNoPii nie łapie samych cyfr, więc pilnujemy tego tutaj ręcznie).
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import {
+  isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, withDeferredAccessDenied,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { generateStructuredReference, isValidStructuredReference } from '../ogm.js';
@@ -84,6 +86,8 @@ async function requireFinancialContext(request, env, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
   if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true })) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles: FINANCIAL_ROLES }, request);
     throw new RequestError('forbidden', 403);
   }
   return context;
@@ -230,7 +234,7 @@ async function revokeReference(request, env, referenceId, json) {
       const reference = rows[0];
       if (!reference) throw new RequestError('payment_reference_not_found', 404);
       if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId: reference.school_year_id, requireMfa: true })) {
-        throw new RequestError('forbidden', 403);
+        throw withDeferredAccessDenied(new RequestError('forbidden', 403), context, { roles: FINANCIAL_ROLES });
       }
       if (reference.revoked_at !== null) throw new RequestError('payment_reference_already_revoked', 409);
       // #152: powód wpisu niezmiennego — bramka na dane osobowe (src/pg/pii-gate.js).
@@ -289,7 +293,11 @@ export async function handle(request, env, url, json) {
     if (isCreate) return await createReference(request, env, json);
     return await revokeReference(request, env, decodeId(revokeMatch[1]), json);
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof RequestError) {
+      // #184: odmowa zakresu roku z wnętrza transakcji — ślad po jej wycofaniu.
+      await logDeferredAccessDenied(env, error, request);
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }

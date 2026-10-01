@@ -2285,6 +2285,8 @@ export async function handle(request, env, url, json) {
     return json(result, replayed ? 200 : 201, { 'Idempotency-Replayed': replayed ? 'true' : 'false' });
   } catch (error) {
     if (error instanceof MeetingError) {
+      // #184: ślad odmowy (poza transakcją żądania — ta już się zakończyła).
+      if (error.status === 403 && error.code === 'forbidden') await env?.onAccessDenied?.();
       return json({ error: error.code, ...(error.details ?? {}) }, error.status);
     }
     throw error;

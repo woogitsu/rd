@@ -72,6 +72,13 @@ const addEntry = (db, id, direction, cents, category, date, method) => db.query(
   [id, YEAR, direction, cents, category, `Wpłata Jan Pułapka ${TRAP} ${id}`, date, method, `le-key-${id}`]);
 
 const count = async (db, table) => Number((await db.query(`SELECT count(*) AS n FROM ${table}`)).rows[0].n);
+// #184: odmowa 403 zapisuje wyłącznie ślad `access.denied` — liczymy go osobno.
+const countBusinessEvents = async (db) => Number((await db.query(
+  "SELECT count(*) AS n FROM audit_events WHERE action <> 'access.denied'",
+)).rows[0].n);
+const countDenials = async (db) => Number((await db.query(
+  "SELECT count(*) AS n FROM audit_events WHERE action = 'access.denied'",
+)).rows[0].n);
 
 test('migawka: JSON bez danych osób, SHA-256 zgodny z treścią, audyt bez treści raportu', async () => {
   const { db, cookies, call, create } = await setup();
@@ -241,7 +248,7 @@ test('zatwierdzenie: skarbnik, admin, audit, principal, przedstawiciel, brak MFA
 test('odczyt i tworzenie: granice ról, zakres roku, MFA; odmowa nic nie zapisuje', async () => {
   const { db, cookies, call, create } = await setup();
   const { snapshot } = await (await create(cookies.board)).json();
-  const before = { snapshots: await count(db, 'financial_report_snapshots'), audit: await count(db, 'audit_events') };
+  const before = { snapshots: await count(db, 'financial_report_snapshots'), audit: await countBusinessEvents(db) };
   for (const key of ['admin', 'audit', 'principal', 'rep', 'boardNoMfa', 'otherYearBoard']) {
     assert.equal((await create(cookies[key])).status, 403, `create ${key}`);
     assert.equal((await call(`${BASE}?schoolYearId=${YEAR}`, { cookie: cookies[key] })).status, 403, `list ${key}`);
@@ -253,7 +260,9 @@ test('odczyt i tworzenie: granice ról, zakres roku, MFA; odmowa nic nie zapisuj
   assert.equal((await create(cookies.board, { schoolYearId: 'y-brak' })).status, 403);
   assert.equal((await create(cookies.board, { schoolYearId: 'zły id!' })).status, 400);
   assert.equal(await count(db, 'financial_report_snapshots'), before.snapshots);
-  assert.equal(await count(db, 'audit_events'), before.audit);
+  assert.equal(await countBusinessEvents(db), before.audit);
+  // Odmowy `forbidden` zostawiły ślad (kody MFA konta bez MFA — bez śladu).
+  assert.ok(await countDenials(db) > 0);
   for (const cookie of [cookies.board, cookies.treasurer]) {
     assert.equal((await call(`${BASE}/${snapshot.id}`, { cookie })).status, 200);
   }

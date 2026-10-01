@@ -36,7 +36,8 @@ import { BlockList, isIP } from 'node:net';
 import { CLIENT_IP_HEADER } from './login.js';
 import { isSameOrigin } from '../../auth.js';
 import {
-  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS,
+  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied,
+  MFA_STEP_UP_MAX_AGE_SECONDS, withDeferredAccessDenied,
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
@@ -139,7 +140,9 @@ async function requireContext(request, env, roles) {
 }
 
 function requireYear(context, roles, schoolYearId) {
-  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) {
+    throw withDeferredAccessDenied(new RequestError('forbidden', 403), context, { roles });
+  }
 }
 
 const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.category, c.subject, c.body_text, c.content_hash,
@@ -2130,7 +2133,11 @@ export async function handle(request, env, url, json) {
     if (action === 'test-send') return await testSend(request, env, id, json);
     return json({ error: 'method_not_allowed' }, 405, { Allow: CAMPAIGN_ACTION_METHODS[action].join(', ') });
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof RequestError) {
+      // #184: odmowa zakresu roku z wnętrza transakcji — ślad po jej wycofaniu.
+      await logDeferredAccessDenied(env, error, request);
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }

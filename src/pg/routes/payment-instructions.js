@@ -18,7 +18,7 @@
 // klucz "iban", ale nie "bic" — pilnujemy tego tutaj ręcznie też dla BIC).
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { isValidIban, normalizeIban } from '../../../print/iban.js';
 import { createIdempotencyKeyReader, createJsonReader, isUniqueError } from '../input.js';
@@ -115,7 +115,11 @@ export async function campaignApprovedPaymentInstructionsId(executor, campaignId
 async function requireContext(request, env, roles, schoolYearId) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) throw new RequestError('forbidden', 403);
+  if (!isAuthorizedScoped(context, { roles, schoolYearId, requireMfa: true })) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles }, request);
+    throw new RequestError('forbidden', 403);
+  }
   return context;
 }
 
