@@ -1088,7 +1088,14 @@ bez potrzeby dostępu do Railway:
     gałęzi testowej z celowo podatną wersją pakietu, że job `audit` oblewa
     (bez scalania); (5) po #42 usunąć `wrangler`;
   - akcje GitHub w `ci.yml` przypięte do pełnego SHA (komentarz z numerem
-    wersji obok); Dependabot aktualizuje SHA automatycznie.
+    wersji obok); Dependabot aktualizuje SHA automatycznie. Test
+    `tests/ci-supply-chain.test.js` obejmuje każdy plik w
+    `.github/workflows/` (nie tylko `ci.yml`): wymaga 40-znakowego SHA i
+    komentarza `# vX.Y.Z`, jednego SHA na akcję w całym `ci.yml` oraz
+    tygodniowego (npm, deweloperskie grupowane) i miesięcznego
+    (github-actions) harmonogramu Dependabota bez automatycznego scalania.
+    Akcje lokalne (`./...`) są pomijane. Nowego SHA nie wpisuje się „z
+    pamięci”: bierze się go z commita tagu w repozytorium akcji.
   - po zamknięciu starej ścieżki Worker/D1 (#42): usunięcie `wrangler` z
     `devDependencies` zmniejszy powierzchnię audytu.
 

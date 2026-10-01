@@ -338,6 +338,8 @@ async function statusView(executor, schoolYearId) {
 // nie jest statusem dłużnika (składki są dobrowolne).
 export const CLOSE_WARNING_CODES = Object.freeze([
   'unallocated_payments',
+  'payments_not_in_ledger',
+  'payment_ledger_amount_mismatch',
   'expenses_without_evidence',
   'large_expenses_without_resolution',
   'reconciliation_missing',
@@ -360,6 +362,31 @@ async function closeWarnings(executor, schoolYearId) {
     [schoolYearId],
   )).rows[0];
   add('unallocated_payments', toSafeInteger(unallocated.n), toSafeInteger(unallocated.cents));
+
+  // #138: spójność wpłata (netto po korektach i zwrotach) ↔ księga. Tylko
+  // wskaźniki do wyjaśnienia, bez identyfikatorów i bez korekty z urzędu.
+  // „Nieujęte” nie jest błędem: ujęcie wpłaty w księdze jest ręczne, a sposób
+  // księgowania wpływów (jednostkowo albo zbiorczo) to decyzja Rady (D-13).
+  const linkage = (await executor.query(
+    `SELECT count(*) FILTER (WHERE l.entry_count = 0 OR l.ledger_net_cents = 0) AS not_in_ledger_n,
+            COALESCE(sum(p.net_amount_cents) FILTER (WHERE l.entry_count = 0 OR l.ledger_net_cents = 0), 0) AS not_in_ledger_cents,
+            count(*) FILTER (WHERE l.entry_count > 0 AND l.ledger_net_cents <> 0 AND l.ledger_net_cents <> p.net_amount_cents) AS mismatch_n,
+            COALESCE(sum(abs(l.ledger_net_cents - p.net_amount_cents))
+              FILTER (WHERE l.entry_count > 0 AND l.ledger_net_cents <> 0 AND l.ledger_net_cents <> p.net_amount_cents), 0) AS mismatch_cents
+       FROM payment_entry_net p
+       CROSS JOIN LATERAL (
+         SELECT count(*) AS entry_count,
+                COALESCE(sum(e.amount_cents - COALESCE(c.corrected_cents, 0)), 0) AS ledger_net_cents
+           FROM ledger_entries e
+           LEFT JOIN (SELECT ledger_entry_id, sum(amount_cents) AS corrected_cents
+                        FROM ledger_corrections GROUP BY ledger_entry_id) c ON c.ledger_entry_id = e.id
+          WHERE e.payment_entry_id = p.id
+       ) l
+      WHERE p.school_year_id = $1 AND p.status = 'recorded' AND p.net_amount_cents > 0`,
+    [schoolYearId],
+  )).rows[0];
+  add('payments_not_in_ledger', toSafeInteger(linkage.not_in_ledger_n), toSafeInteger(linkage.not_in_ledger_cents));
+  add('payment_ledger_amount_mismatch', toSafeInteger(linkage.mismatch_n), toSafeInteger(linkage.mismatch_cents));
 
   const evidence = (await buildEvidenceSection(executor, schoolYearId)).expensesWithoutEvidence;
   add('expenses_without_evidence', evidence.count, evidence.netCents);
