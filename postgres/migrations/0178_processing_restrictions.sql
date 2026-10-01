@@ -53,7 +53,7 @@ BEGIN
   IF current_setting('rd.restore', true) = 'on' THEN
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
   END IF;
-  RAISE EXCEPTION 'processing_restrictions_append_only';
+  RAISE EXCEPTION 'processing_restrictions_are_append_only';
 END $$;
 CREATE TRIGGER processing_restrictions_guard BEFORE UPDATE OR DELETE ON processing_restrictions
   FOR EACH ROW EXECUTE FUNCTION processing_restrictions_guard();

@@ -171,8 +171,8 @@ describe('ograniczenie przetwarzania (#100, art. 18)', () => {
     assert.doesNotMatch(history.text, /example\.invalid/);
     const campaignId = await snapshotCampaign();
     assert.ok((await recipientHouseholds(campaignId)).some((r) => r.guardian_id === 'g-3'));
-    await assert.rejects(db.query("UPDATE processing_restrictions SET action = 'lift' WHERE action = 'restrict'"), /processing_restrictions_append_only/);
-    await assert.rejects(db.query('DELETE FROM processing_restrictions'), /processing_restrictions_append_only/);
+    await assert.rejects(db.query("UPDATE processing_restrictions SET action = 'lift' WHERE action = 'restrict'"), /processing_restrictions_are_append_only/);
+    await assert.rejects(db.query('DELETE FROM processing_restrictions'), /processing_restrictions_are_append_only/);
     const events = await rows("SELECT action FROM audit_events WHERE action LIKE 'processing_restriction.%' AND metadata_json->>'requestId' = $1 ORDER BY occurred_at, id", [id]);
     assert.equal(events.length, 2);
   });
