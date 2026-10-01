@@ -23,6 +23,7 @@
 //   POST /api/email/provider-pause/lift              potwierdzenie naprawy konfiguracji: zarząd + świeże MFA (#209), idempotentne
 //   GET  /api/email/worker-status?schoolYearId=…     ostatni przebieg zadania i alarm „brak przebiegów” (#130; liczby i kody)
 //   GET  /api/email/quota?schoolYearId=…             stan dziennego limitu Brevo: doba UTC i strefa konta, dziś i jutro (#84; liczby)
+//   GET  /api/email/quota/other-sends                lista wpisów ręcznych i korekt (#84, kursor, filtr doby; bez adresów i treści)
 //   POST /api/email/quota/other-sends                ręczna ewidencja wiadomości spoza kolejki lub jej korekta (#84, Idempotency-Key, tylko dopisywanie)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //   GET  /api/email/preferences?t=…                  publiczna: podgląd wypisania (bez skutku, #110)
@@ -58,6 +59,7 @@ import { estimateSchedule } from '../../email/schedule.js';
 import {
   accountDay, BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, QUOTA_LOCK_ID, quotaOverview, unsubscribeUrlFor, utcDay,
 } from '../../email/worker.js';
+import { loadProcessingRestrictions } from '../processing-restrictions.js';
 import { createJsonReader, readBodyText } from '../input.js';
 import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
 
@@ -492,11 +494,21 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     );
     for (const row of prefRows) if (row.action === 'opt_out') optedOut.add(row.email_hash);
   }
+  // #100 (art. 18 RODO): ograniczone gospodarstwo wypada w całości, ograniczony
+  // opiekun przestaje być adresatem (inny opiekun rodziny może nim zostać).
+  const restricted = await loadProcessingRestrictions(executor);
   const recipients = [];
   const exclusions = [];
   const used = new Set();
   const ids = [...households.keys()].sort();
   for (const householdId of ids) {
+    const guardianRows = households.get(householdId);
+    if (restricted.households.has(householdId)
+        || (guardianRows.length && guardianRows.every((row) => restricted.guardians.has(row.guardian_id)))) {
+      exclusions.push({ householdId, reason: 'processing_restricted' });
+      continue;
+    }
+    households.set(householdId, guardianRows.filter((row) => !restricted.guardians.has(row.guardian_id)));
     if (followup?.covered.has(householdId)) { exclusions.push({ householdId, reason: 'followup_already_covered' }); continue; }
     if (paid.has(householdId)) { exclusions.push({ householdId, reason: 'payment_recorded' }); continue; }
     if (withReference && !withReference.has(householdId)) { exclusions.push({ householdId, reason: 'no_payment_reference' }); continue; }
@@ -566,6 +578,9 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
   const { rows } = await executor.query(
     `WITH d AS (SELECT COALESCE($3::date, rd_today()) AS on_date)
      SELECT CASE
+              WHEN EXISTS (SELECT 1 FROM processing_restricted_subjects x
+                            WHERE x.household_id = r.household_id OR x.guardian_id = r.guardian_id)
+                THEN 'processing_restricted'
               WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
                                  JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
                                 WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
@@ -575,6 +590,11 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
                                  JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
                                 WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
                 THEN 'student_withdrawn'
+              WHEN $4::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id AND en.class_id = $4)
+                THEN 'student_left_class'
               WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
                                  JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
                                  JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
@@ -585,7 +605,7 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
             END AS reason
        FROM email_campaign_recipients r
       WHERE r.campaign_id = $1`,
-    [campaign.id, campaign.school_year_id, on],
+    [campaign.id, campaign.school_year_id, on, campaign.audience === 'class_households' ? campaign.class_id : null],
   );
   const counts = {};
   for (const row of rows) if (row.reason) counts[row.reason] = (counts[row.reason] ?? 0) + 1;
@@ -1342,6 +1362,49 @@ function ledgerView(row) {
     id: row.id, day: row.day, count: row.message_count, reasonCode: row.reason_code,
     correctsId: row.corrects_id ?? null, recordedBy: row.actor_id, recordedAt: iso(row.recorded_at),
   };
+}
+
+// Lista wpisów ręcznych i korekt (#84): do wyboru wpisu do korekty w panelu.
+// Wyłącznie liczby, kody i identyfikatory; wpisy sprzed migracji 0177 (bez
+// aktora) nie są ręczne, więc ich tu nie ma. `corrected` = wpis dodatni ma już
+// choć jedną korektę; `correctedCount` = suma korekt, `correctableCount` = ile
+// jeszcze można skorygować (0 dla korekt).
+async function listOtherSends(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const day = url.searchParams.get('day');
+  if (day !== null && (!DAY_PATTERN.test(day) || new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day)) {
+    throw new RequestError('invalid_quota_day');
+  }
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, schoolYearId);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['quota-other-sends', day]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [];
+  const where = ["l.source = 'other'", 'l.actor_id IS NOT NULL'];
+  if (day !== null) { values.push(day); where.push(`l.day = $${values.length}`); }
+  if (cursor) where.push(afterTimestampDescSql('l.recorded_at', 'l.id', cursor, values));
+  const { rows } = await env.db.query(
+    `SELECT l.id, to_char(l.day, 'YYYY-MM-DD') AS day, l.message_count, l.reason_code, l.corrects_id, l.actor_id,
+            l.recorded_at, ${cursorTimestampSql('l.recorded_at')} AS cursor_ts,
+            COALESCE((SELECT SUM(-c.message_count) FROM email_send_ledger c WHERE c.corrects_id = l.id), 0)::int AS corrected_count
+       FROM email_send_ledger l WHERE ${where.join(' AND ')}
+      ORDER BY l.recorded_at DESC, l.id LIMIT ${limit + 1}`,
+    values,
+  );
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  const entries = page.items.map((row) => ({
+    ...ledgerView(row),
+    corrected: row.corrected_count > 0,
+    correctedCount: row.corrected_count,
+    correctableCount: row.message_count > 0 ? row.message_count - row.corrected_count : 0,
+  }));
+  return json(
+    { entries, nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit },
+    200, { 'Cache-Control': 'no-store' },
+  );
 }
 
 async function recordOtherSend(request, env, json) {
@@ -2237,8 +2300,9 @@ export async function handle(request, env, url, json) {
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
     }
     if (url.pathname === '/api/email/quota/other-sends') {
+      if (method === 'GET') return await listOtherSends(request, env, url, json);
       if (method === 'POST') return await recordOtherSend(request, env, json);
-      return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     if (url.pathname === '/api/email/provider-pause/lift') {
       if (method === 'POST') return await providerPauseLift(request, env, json);

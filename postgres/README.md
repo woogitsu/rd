@@ -1415,3 +1415,18 @@ Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSen
 pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
 SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
 Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
+
+`0178_processing_restrictions.sql` (#100, RODO art. 18) dodaje tabelę
+`processing_restrictions` (tylko dopisywanie: nałożenie `restrict` i zdjęcie
+`lift` to osobne wiersze z aktorem, czasem serwera i odwołaniem do żądania z
+`data_subject_requests`), widok `processing_restricted_subjects` (podmioty, których
+ostatni wiersz to `restrict`) oraz rozszerza CHECK
+`email_campaign_exclusions_reason_check` o powód `processing_restricted`.
+Skutki dla danych: brak wstecznego wypełnienia (po migracji nikt nie jest
+ograniczony); żadnych treści żądań ani danych kontaktowych; istniejące
+wykluczenia kampanii bez zmian; wiersz nie jest usuwany ani zmieniany
+(trigger, TRUNCATE blokuje `deny_truncate()`), `created_at` stempluje baza.
+Wycofanie: `DROP VIEW processing_restricted_subjects`, `DROP TABLE
+processing_restrictions`, `DROP FUNCTION processing_restrictions_guard()` oraz
+przywrócenie CHECK z 0158 (tylko bez wierszy `processing_restricted`); znika
+ślad ograniczeń, dane rodzin zostają.

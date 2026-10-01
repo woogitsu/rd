@@ -60,10 +60,21 @@
 //        zapisuje `access_log.viewed` (bez parametrów). Wyłącznie admin + MFA
 //        (wariant zachowawczy do D-04/D-07/D-08/D-09; zarząd, skarbnik, KR,
 //        dyrekcja i przedstawiciele: 403).
+//   GET  /api/admin/access-review?schoolYearId=  (wymagane)
+//        przegląd dostępu po kadencji (#133): przydziały roli w roku (aktywne,
+//        wygasłe, cofnięte), ostatni odczyt danych rodzin, odczyty w zakresie
+//        roku i bez ważnego przydziału oraz PROPOZYCJA (`revoke` dla aktywnego
+//        przydziału roku, który się skończył; `review`; `keep`). Tylko odczyt —
+//        nic nie jest odbierane automatycznie; odebranie wykonuje admin jawnie
+//        przez POST /api/admin/grants/{id}/revoke. Bez imion i e-maili. Sam
+//        zapisuje `access_review.viewed`. Wyłącznie admin + MFA.
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
 //   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
 //   POST /api/admin/data-requests/{id}/export?format=json|csv
+//   POST /api/admin/data-requests/{id}/restrict           ograniczenie przetwarzania gospodarstwa/opiekuna (art. 18, #100)
+//   POST /api/admin/data-requests/{id}/lift-restriction   zdjęcie ograniczenia (nowy zapis, historia zostaje)
+//   GET  /api/admin/data-requests/{id}/restrictions       historia ograniczeń podmiotu żądania
 //        eksport danych jednej rodziny (src/pg/family-export.js, docs/DATA_REQUESTS.md):
 //        tylko żądanie `access`/`portability` w stanie identity_verified/in_progress;
 //        krok w górę MFA; wpis data_access_log (strict, na każde gospodarstwo zakresu)
@@ -105,6 +116,7 @@
 // przydziałów admina są serializowane blokadą doradczą, aby dwie równoległe
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
+import { ProcessingRestrictionError, changeProcessingRestriction, listProcessingRestrictions } from '../processing-restrictions.js';
 import {
   allowPendingRoles, CLASS_SCOPE_ROLES, insertInvitation, isoTimestamp, normalizeEmail, reissueInvitation, revokeInvitation,
   revokeUserSessions,
@@ -133,6 +145,7 @@ import {
   afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
 import { DATA_ACCESS_KINDS, recordDataAccess } from '../data-access.js';
+import { accessReview } from '../access-review.js';
 import {
   buildFamilyExport, buildFamilyExportCsv, EXPORTABLE_REQUEST_KINDS, EXPORTABLE_REQUEST_STATUSES,
   FAMILY_EXPORT_FORMAT_VERSION, FamilyExportError,
@@ -1250,6 +1263,17 @@ async function listAccessLog(env, url, json, actorId) {
   });
 }
 
+async function getAccessReview(env, url, json, actorId) {
+  const schoolYearId = optionalId(url.searchParams.get('schoolYearId'), 'invalid_school_year_id');
+  if (!schoolYearId) throw new RequestError('invalid_school_year_id');
+  const review = await accessReview(env.db, schoolYearId);
+  if (!review) throw new RequestError('school_year_not_found', 404);
+  await insertAuditEvent(env.db, {
+    actorId, action: 'access_review.viewed', entityType: 'data_access_log', entityId: schoolYearId, metadata: { schoolYearId },
+  });
+  return json(review);
+}
+
 // --- Rejestr żądań osób (RODO, #100) ---------------------------------------
 
 const DATA_REQUEST_KINDS = new Set(['access', 'rectification', 'erasure', 'restriction', 'objection', 'portability']);
@@ -1403,6 +1427,27 @@ async function setDataRequestStatus(env, actorId, requestId, request, json) {
     return { request: dataRequestFromRow(updated[0]), changed: true };
   });
   return json(result);
+}
+
+// Ograniczenie przetwarzania (art. 18 RODO, #100): nałożenie/zdjęcie jako nowy zapis.
+// Powtórzenie tego samego przejścia (podwójne kliknięcie) zwraca 200 z changed: false.
+async function changeRestriction(env, actorId, requestId, action, json) {
+  try {
+    const result = await env.db.transaction((tx) => changeProcessingRestriction(tx, actorId, requestId, action));
+    return json({ restricted: result.restricted, changed: result.changed, subjectType: result.subjectType });
+  } catch (error) {
+    if (error instanceof ProcessingRestrictionError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+}
+
+async function dataRequestRestrictions(env, requestId, json) {
+  try {
+    return json(await listProcessingRestrictions(env.db, requestId));
+  } catch (error) {
+    if (error instanceof ProcessingRestrictionError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
 }
 
 // Eksport danych jednej rodziny dla żądania osoby (#100 pkt 2–3). Paczka nie
@@ -1696,9 +1741,11 @@ function allowedMethodsFor(section, pathLength, action, path) {
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
   if (section === 'access-log' && pathLength === 1) return ['GET'];
+  if (section === 'access-review' && pathLength === 1) return ['GET'];
   if (section === 'data-requests') {
     if (pathLength === 1) return ['GET', 'POST'];
-    if (pathLength === 3 && (action === 'status' || action === 'export')) return ['POST'];
+    if (pathLength === 3 && ['status', 'export', 'restrict', 'lift-restriction'].includes(action)) return ['POST'];
+    if (pathLength === 3 && action === 'restrictions') return ['GET'];
     return null;
   }
   if (section === 'retention' && pathLength === 2) return ['GET'];
@@ -1799,6 +1846,7 @@ async function route(request, env, url, json, actorId, context) {
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(request, env, url, json, actorId, context);
   if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
+  if (section === 'access-review' && path.length === 1 && method === 'GET') return getAccessReview(env, url, json, actorId);
   if (section === 'data-requests') {
     if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
     if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
@@ -1809,6 +1857,15 @@ async function route(request, env, url, json, actorId, context) {
     if (path.length === 3 && action === 'export' && method === 'POST') {
       requireFreshMfa(context);
       return exportDataRequest(env, actorId, decodeId(rawId), url);
+    }
+    if (path.length === 3 && action === 'restrict' && method === 'POST') {
+      return changeRestriction(env, actorId, decodeId(rawId), 'restrict', json);
+    }
+    if (path.length === 3 && action === 'lift-restriction' && method === 'POST') {
+      return changeRestriction(env, actorId, decodeId(rawId), 'lift', json);
+    }
+    if (path.length === 3 && action === 'restrictions' && method === 'GET') {
+      return dataRequestRestrictions(env, decodeId(rawId), json);
     }
   }
   if (section === 'retention' && rawId === 'preview' && path.length === 2 && method === 'GET') {
@@ -1825,7 +1882,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'anonymizations', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'access-review', 'data-requests', 'retention', 'anonymizations', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
