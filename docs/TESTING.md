@@ -205,6 +205,12 @@ bariery anulowania. Wpłaty mają kilka warstw blokad (API i triggery 0002/0038/
 0104): po zdjęciu `FOR UPDATE` z API korekty i z triggerów 0002 test bariery korekt
 nadal przechodzi, bo pozostałe warstwy trzymają blokadę.
 
+`tests/pg-real-tx-conflict.test.js` (#156, pomijany bez `RD_TEST_PG_URL`): dwie transakcje
+`REPEATABLE READ` czytają ten sam wiersz z migawki i obie go zwiększają; serwer zgłasza
+prawdziwe `40001`. `db.transaction` ponawia funkcję (oba przyrosty zapisane, trzy próby
+łącznie), a z `{ retries: 0 }` błąd trafia do wywołującego bez zapisu przegranej transakcji
+i klasyfikuje się jako `503 retry_later`. Atrapa w `tests/pg-tx-retry.test.js` tego nie dowodzi.
+
 `tests/pg-real-double-click.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera
 (`tests/helpers/pg-barrier.js`) dla kluczowych ścieżek — zapis wpłaty z tym samym
 `Idempotency-Key` (druga transakcja czeka na klucz, dostaje `23505` i odtwarza zapis;
