@@ -24,6 +24,11 @@ export function quotaUrl(schoolYearId) {
 
 export const OTHER_SENDS_URL = '/api/email/quota/other-sends';
 
+// Lista wpisów ręcznych i korekt (GET, #84): najnowsze pierwsze, bez adresów i treści.
+export function otherSendsListUrl(schoolYearId) {
+  return `${OTHER_SENDS_URL}?schoolYearId=${encodeURIComponent(String(schoolYearId ?? '').trim())}`;
+}
+
 function validDay(value) {
   return typeof value === 'string' && DAY_PATTERN.test(value)
     && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;

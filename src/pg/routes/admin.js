@@ -60,6 +60,14 @@
 //        zapisuje `access_log.viewed` (bez parametrów). Wyłącznie admin + MFA
 //        (wariant zachowawczy do D-04/D-07/D-08/D-09; zarząd, skarbnik, KR,
 //        dyrekcja i przedstawiciele: 403).
+//   GET  /api/admin/access-review?schoolYearId=  (wymagane)
+//        przegląd dostępu po kadencji (#133): przydziały roli w roku (aktywne,
+//        wygasłe, cofnięte), ostatni odczyt danych rodzin, odczyty w zakresie
+//        roku i bez ważnego przydziału oraz PROPOZYCJA (`revoke` dla aktywnego
+//        przydziału roku, który się skończył; `review`; `keep`). Tylko odczyt —
+//        nic nie jest odbierane automatycznie; odebranie wykonuje admin jawnie
+//        przez POST /api/admin/grants/{id}/revoke. Bez imion i e-maili. Sam
+//        zapisuje `access_review.viewed`. Wyłącznie admin + MFA.
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
 //   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
@@ -137,6 +145,7 @@ import {
   afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
 import { DATA_ACCESS_KINDS, recordDataAccess } from '../data-access.js';
+import { accessReview } from '../access-review.js';
 import {
   buildFamilyExport, buildFamilyExportCsv, EXPORTABLE_REQUEST_KINDS, EXPORTABLE_REQUEST_STATUSES,
   FAMILY_EXPORT_FORMAT_VERSION, FamilyExportError,
@@ -1254,6 +1263,17 @@ async function listAccessLog(env, url, json, actorId) {
   });
 }
 
+async function getAccessReview(env, url, json, actorId) {
+  const schoolYearId = optionalId(url.searchParams.get('schoolYearId'), 'invalid_school_year_id');
+  if (!schoolYearId) throw new RequestError('invalid_school_year_id');
+  const review = await accessReview(env.db, schoolYearId);
+  if (!review) throw new RequestError('school_year_not_found', 404);
+  await insertAuditEvent(env.db, {
+    actorId, action: 'access_review.viewed', entityType: 'data_access_log', entityId: schoolYearId, metadata: { schoolYearId },
+  });
+  return json(review);
+}
+
 // --- Rejestr żądań osób (RODO, #100) ---------------------------------------
 
 const DATA_REQUEST_KINDS = new Set(['access', 'rectification', 'erasure', 'restriction', 'objection', 'portability']);
@@ -1714,6 +1734,7 @@ function allowedMethodsFor(section, pathLength, action, path) {
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
   if (section === 'access-log' && pathLength === 1) return ['GET'];
+  if (section === 'access-review' && pathLength === 1) return ['GET'];
   if (section === 'data-requests') {
     if (pathLength === 1) return ['GET', 'POST'];
     if (pathLength === 3 && ['status', 'export', 'restrict', 'lift-restriction'].includes(action)) return ['POST'];
@@ -1818,6 +1839,7 @@ async function route(request, env, url, json, actorId, context) {
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(request, env, url, json, actorId, context);
   if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
+  if (section === 'access-review' && path.length === 1 && method === 'GET') return getAccessReview(env, url, json, actorId);
   if (section === 'data-requests') {
     if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
     if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
@@ -1853,7 +1875,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'anonymizations', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'access-review', 'data-requests', 'retention', 'anonymizations', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;
