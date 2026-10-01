@@ -374,6 +374,10 @@ wpłat, operacji finansowych, zmian ról i wysyłek. Pilnują tego trzy warstwy:
   w transakcji zmiany (`insertAuditEvent(tx, …)` oraz lokalne pomocniki `audit(tx, …)`),
   a `tests/audit-actions-catalog.test.js` wymaga etykiety i domeny każdej akcji
   w `shared/audit-actions.js`.
+- `tests/audit-pii-free-text.test.js`: `assertNoPii` odrzuca w metadanych zdarzeń klucze
+  wolnego tekstu (`note`, `title`, `body`, `description`, `subject`, `author`, `comment`,
+  `message`, `content`, `text` — także jako ostatni człon, np. `correctionNote`) niezależnie
+  od wartości; tekst powodu lub treści zostaje w tabeli biznesowej.
 
 Poza zakresem sprawdzenia: tabele bez kolumny `id` (np. liczniki prób logowania, hasła),
 zmiany istniejących wierszy (UPDATE) bez nowego wiersza — te obejmuje poziom trasy — oraz

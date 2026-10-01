@@ -13,6 +13,19 @@ const EMAIL_LIKE = /[^\s@]+@[^\s@]+/;
 // wyłącznie w tabeli biznesowej, nie w metadanych audytu.
 const CODE_ONLY_KEYS = new Set(['reason', 'code', 'status', 'event']);
 const CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
+// #184 pkt 3: pola wolnego tekstu są zakazane w metadanych niezależnie od
+// wartości (taka wartość nie musi wyglądać jak e-mail ani imię). Decyduje
+// ostatni człon nazwy klucza (camelCase/snake_case): `correctionNote` i
+// `NOTE` odpadają, `contentHash`, `subjectType` i `context` przechodzą.
+// Liczba/wartość logiczna/null pod takim kluczem przechodzi: eksport zapisuje
+// liczniki wierszy pod nazwami tabel (np. `audit_review_notes`).
+const FREE_TEXT_KEY_WORDS = new Set([
+  'note', 'notes', 'title', 'body', 'description', 'subject', 'author', 'comment', 'message', 'content', 'text',
+]);
+function isFreeTextKey(key) {
+  const words = String(key).replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return words.length > 0 && FREE_TEXT_KEY_WORDS.has(words[words.length - 1]);
+}
 
 // #174: zdarzenia dotyczące obiektów przypisanych do roku szkolnego muszą
 // nieść metadata.schoolYearId, inaczej eksport roczny (src/pg/export.js,
@@ -61,6 +74,8 @@ export function assertNoPii(metadata) {
     if (typeof value === 'object') {
       for (const [key, item] of Object.entries(value)) {
         if (FORBIDDEN_KEY.test(key)) throw new Error(`audit_metadata_pii:${path}.${key}`);
+        // Licznik pod nazwą tabeli (np. rowCounts.audit_review_notes = 3) nie jest tekstem.
+        if (isFreeTextKey(key) && typeof item !== 'number' && typeof item !== 'boolean' && item !== null) throw new Error(`audit_metadata_pii:${path}.${key}`);
         if (CODE_ONLY_KEYS.has(key) && typeof item === 'string' && !CODE_PATTERN.test(item)) {
           throw new Error(`audit_metadata_pii:${path}.${key}`);
         }
