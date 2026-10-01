@@ -6663,6 +6663,128 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/email/quota": {
+      "get": {
+        "operationId": "email_quota_get",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.quota.get",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.quota.get"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/email/quota/other-sends": {
+      "post": {
+        "operationId": "email_quota_otherSends",
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "email.quota.otherSends",
+        "tags": [
+          "email"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "email.quota.otherSends"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/email/suppressions": {
       "get": {
         "operationId": "email_suppressions_list",
@@ -18495,6 +18617,9 @@
           "invalid_post_id",
           "invalid_provider_pause_id",
           "invalid_quorum_rule",
+          "invalid_quota_count",
+          "invalid_quota_day",
+          "invalid_quota_reason",
           "invalid_reason",
           "invalid_reason_code",
           "invalid_received_on",
@@ -18646,6 +18771,8 @@
           "provider_pause_not_found",
           "public_copy_requires_license",
           "quorum_rule_source_required",
+          "quota_correction_exceeds",
+          "quota_correction_target_not_found",
           "rate_limited",
           "read_only",
           "recipients_hash_mismatch",
@@ -19841,6 +19968,21 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_quota_count",
+        "meaning": "Niepoprawna liczba wiadomości: od 1 do 10000; korekta jest liczbą ujemną.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_quota_day",
+        "meaning": "Niepoprawna doba limitu: wpis dotyczy dzisiejszej doby (UTC lub strefy konta), korekta — doby korygowanego wpisu.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_quota_reason",
+        "meaning": "Niepoprawny kod powodu wpisu.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_reason",
         "meaning": "Podaj powód (3–500 znaków).",
         "retry": "Nie — popraw dane żądania."
@@ -20593,6 +20735,16 @@
       {
         "code": "quorum_rule_source_required",
         "meaning": "Podaj źródło reguły quorum (np. regulamin).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "quota_correction_exceeds",
+        "meaning": "Korekty nie mogą łącznie przekroczyć liczby z korygowanego wpisu.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "quota_correction_target_not_found",
+        "meaning": "Nie znaleziono wpisu do skorygowania.",
         "retry": "Nie — popraw dane żądania."
       },
       {
