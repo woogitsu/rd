@@ -3669,6 +3669,7 @@
         "x-rd-matrix-ids": [
           "documents.uploadBoard",
           "documents.uploadClass",
+          "documents.uploadCouncilShared",
           "documents.uploadFinancial"
         ],
         "x-rd-mfa": {
@@ -3727,6 +3728,21 @@
               ],
               "repB": [
                 "B"
+              ]
+            }
+          },
+          {
+            "id": "documents.uploadCouncilShared",
+            "roles": [
+              "admin",
+              "board"
+            ],
+            "actorScopes": {
+              "admin": [
+                "W1"
+              ],
+              "board": [
+                "W1"
               ]
             }
           },
@@ -4503,6 +4519,365 @@
           "board",
           "board:class",
           "representative"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/documents/{council_sharedDocumentId}": {
+      "get": {
+        "operationId": "documents_getCouncilShared",
+        "parameters": [
+          {
+            "name": "council_sharedDocumentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "documents.getCouncilShared",
+        "tags": [
+          "documents"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ],
+          "repA": [
+            "W1"
+          ],
+          "repB": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "documents.getCouncilShared"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-mfa-deny-status": [
+          404
+        ],
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "representative"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/documents/{council_sharedDocumentId}/content": {
+      "get": {
+        "operationId": "documents_contentCouncilShared",
+        "parameters": [
+          {
+            "name": "council_sharedDocumentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "documents.contentCouncilShared",
+        "tags": [
+          "documents"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ],
+          "repA": [
+            "W1"
+          ],
+          "repB": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "documents.contentCouncilShared"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-mfa-deny-status": [
+          404
+        ],
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "representative"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/documents/{council_sharedDocumentId}/description": {
+      "post": {
+        "operationId": "documents_describeCouncilShared",
+        "parameters": [
+          {
+            "name": "council_sharedDocumentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "documents.describeCouncilShared",
+        "tags": [
+          "documents"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "documents.describeCouncilShared"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-mfa-deny-status": [
+          404
+        ],
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/documents/{council_sharedDocumentId}/supersede": {
+      "post": {
+        "operationId": "documents_supersedeCouncilShared",
+        "parameters": [
+          {
+            "name": "council_sharedDocumentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "documents.supersedeCouncilShared",
+        "tags": [
+          "documents"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "documents.supersedeCouncilShared"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-mfa-deny-status": [
+          404
+        ],
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/documents/{council_sharedDocumentId}/void": {
+      "post": {
+        "operationId": "documents_voidCouncilShared",
+        "parameters": [
+          {
+            "name": "council_sharedDocumentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "documents.voidCouncilShared",
+        "tags": [
+          "documents"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "W1"
+          ],
+          "board": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "documents.voidCouncilShared"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-mfa-deny-status": [
+          404
+        ],
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }

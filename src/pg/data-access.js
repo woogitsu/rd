@@ -117,7 +117,7 @@ const EXEMPT_GROUPS = [
     reason: 'zebrania, uchwały, wydarzenia, aktualności i metadane dokumentów Rady (zgody na wizerunek jako numery i referencje, bez imion)',
     routes: ['meetings.list', 'meetings.sharedMinutes', 'meetings.resolutionLookup', 'meetings.get', 'meetings.approvalChecklist', 'meetings.noticeCalendar',
       'meetings.resolutionRegister', 'events.list', 'events.get', 'news.list', 'news.get', 'news.photos', 'news.photoGet',
-      'documents.list', 'documents.getFinancial', 'documents.getBoard', 'documents.getClass'],
+      'documents.list', 'documents.getFinancial', 'documents.getBoard', 'documents.getClass', 'documents.getCouncilShared'],
   },
   {
     reason: 'agregaty i liczniki (bez imion, e-maili i identyfikatorów rodzin) albo konfiguracja',
@@ -141,7 +141,7 @@ const EXEMPT_GROUPS = [
     reason: 'podgląd kampanii: jedna próbka (identyfikator gospodarstwa i zamaskowany adres); pełna lista tylko przez email.recipients ze śladem audytu',
     routes: ['email.preview'],
   },
-  { reason: 'treść dokumentu: osobny ślad audytu każdego pobrania', audit: 'document.downloaded', routes: ['documents.contentFinancial', 'documents.contentBoard', 'documents.contentClass'] },
+  { reason: 'treść dokumentu: osobny ślad audytu każdego pobrania', audit: 'document.downloaded', routes: ['documents.contentFinancial', 'documents.contentBoard', 'documents.contentClass', 'documents.contentCouncilShared'] },
   { reason: 'odbiorcy kampanii (adresy opiekunów): osobny ślad audytu', audit: 'email.recipients.viewed', routes: ['email.recipients'] },
   { reason: 'wstrzymane adresy (zamaskowane) z gospodarstwem: osobny ślad audytu', audit: 'email.suppressions.viewed', routes: ['email.suppressions.list'] },
   { reason: 'nieudane doręczenia (adresy zamaskowane): osobny ślad audytu', audit: 'email.attention_list.viewed', routes: ['email.attention'] },

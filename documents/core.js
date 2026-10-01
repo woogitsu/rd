@@ -20,12 +20,14 @@ export const KIND_LABELS = Object.freeze({
   financial: "Dowód finansowy",
   board: "Dokument zarządu",
   class: "Materiał klasy",
+  council_shared: "Dokument Rady dla przedstawicieli",
 });
 
 export const KIND_HINTS = Object.freeze({
   financial: "Faktura, potwierdzenie przelewu, wyciąg. Wymaga roli finansowej i MFA.",
   board: "Protokół zarządu, uchwała.",
   class: "Materiał jednej klasy. Wymaga identyfikatora klasy.",
+  council_shared: "Regulamin, plan pracy, informacja o składce. Czytają go przedstawiciele wszystkich klas roku.",
 });
 
 // Lista zamknięta — zgodna z DOCUMENT_CATEGORIES w src/pg/routes/documents.js
@@ -400,6 +402,8 @@ export const DOCUMENT_ROLES = Object.freeze({
   financial: Object.freeze(["admin", "board", "treasurer"]),
   board: Object.freeze(["admin", "board"]),
   class: Object.freeze(["admin", "board", "representative"]),
+  // Przesyłają admin i zarząd; przedstawiciele klas tylko czytają (readRoles na serwerze).
+  council_shared: Object.freeze(["admin", "board"]),
 });
 
 // Rodzaje dokumentów, które konto może przesłać: rodzaje ogólnoszkolne wymagają przydziału

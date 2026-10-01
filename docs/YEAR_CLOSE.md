@@ -53,6 +53,7 @@ Zamknięcie jest odrzucane, gdy następny rok ma już bilans otwarcia (`next_yea
 
 Inne trasy a blokady zamknięcia (#212, weryfikacja na prawdziwym PostgreSQL — `tests/pg-year-close-race.test.js`, `npm run test:pg-real`; PGlite wykonuje transakcje po kolei i zakleszczeń nie pokazuje):
 
+- (#80) uzgodnienie rachunku: dopasowanie, nowe uzgodnienie i import wyciągu w trakcie zamknięcia czekają na wiersz zamknięcia (trigger zamrożenia, `FOR SHARE`) i dostają `409 school_year_closed`; dopasowanie niezatwierdzone przed zamknięciem wstrzymuje zamknięcie do swojego COMMIT; po zamknięciu cofnięcie dopasowania i zatwierdzenie uzgodnienia dają `409` (testy w `tests/pg-year-close-race.test.js`, bez zmian w kodzie — zakleszczeń nie stwierdzono);
 - zapis i korekta księgi (`ledger_entries`, `ledger_corrections`, …) czekają na `SHARE` z kroku 1; po zamknięciu w zamykanym roku dostają `409 school_year_closed`, w innym roku przechodzą po zwolnieniu blokady;
 - tabele wpłat (`payment_entries`, `payment_corrections`, …) nie są blokowane przez `LOCK TABLE`; trigger zamrożenia (`school_year_assert_open`, 0017) bierze `FOR SHARE` na wierszu zamknięcia. Korekta wpłaty w trakcie zamknięcia czeka na ten wiersz i dostaje `409 school_year_closed`; korekta niezatwierdzona przed zamknięciem wstrzymuje zamknięcie do swojego COMMIT (albo przed, albo `409`, nigdy w połowie);
 - ręczny bilans otwarcia (`POST /api/ledger/opening-balance`) bierze `LOCK ledger_opening_balances IN SHARE ROW EXCLUSIVE MODE` jako pierwszą blokadę — czeka na zamknięcie i widzi bilans przeniesiony (`409 opening_balance_exists`);
@@ -74,7 +75,7 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 - nowe przydziały ról w tym roku, także przydziały klasy tego roku wstawiane bez `school_year_id` (0022; API administratora zwraca `409 school_year_closed`); wygaszenie i cofnięcie istniejących pozostaje możliwe.
 - (#80, 0036) uzgodnienia rachunku: nowe uzgodnienie i każda jego zmiana (m.in. zatwierdzenie), import wyciągu, wiersze wyciągu, dopasowania oraz cofnięcie dopasowania,
 - (#80, 0036) nowy dokument (`documents`, każdy rodzaj: `financial`, `board`, `class`) przypisany do zamkniętego roku — dokumenty bez `school_year_id` (np. przywrócone z D1) nie są objęte,
-- (#80, 0036) nowa kampania e-mail (`email_campaigns`) przypisana do zamkniętego roku. Zmiana stanu **istniejącej** kampanii (np. wysyłka rozpoczęta przed zamknięciem) NIE jest blokowana — decyzja, czy taką kampanię dokończyć czy wstrzymać, wymaga ustalenia Rady (D-13/D-21); wymuszenie blokady w złym miejscu kolejki mogłoby zdublować albo urwać wysyłkę w połowie.
+- (#80, 0036) nowa kampania e-mail (`email_campaigns`) przypisana do zamkniętego roku. Zmiana stanu **istniejącej** kampanii (np. wysyłka rozpoczęta przed zamknięciem) NIE jest blokowana — decyzja, czy taką kampanię dokończyć czy wstrzymać, wymaga ustalenia Rady (D-13/D-21); wymuszenie blokady w złym miejscu kolejki mogłoby zdublować albo urwać wysyłkę w połowie. Zachowanie obecne (potwierdzone testem `tests/pg-email-year-close-resume.test.js`, #80): worker (`src/email/worker.js`) wybiera kampanie wyłącznie po `status = 'sending'` i nie sprawdza stanu roku, więc kampania rozpoczęta przed zamknięciem jest **dokańczana** po zamknięciu — każda rodzina dostaje jedną wiadomość (klucz idempotencji kampania + rodzina), zakończenie ustawia `done` (UPDATE nie jest objęty triggerem), a ponowione zadanie po końcu niczego nie wysyła. Jeśli Rada zdecyduje o wstrzymaniu, trzeba to dodać osobną zmianą workera (wstrzymanie, nie trigger).
 
 - (#80, 0130) `school_years` (UPDATE/DELETE granic, etykiety i samego wiersza zamkniętego roku) oraz `classes` (INSERT/UPDATE/DELETE: nazwy i skład klas zamkniętego roku),
 - (#82, w kodzie trasy, bez triggera) zastąpienie dokumentu zamkniętego roku (`POST /api/documents/{id}/supersede` → `409 school_year_closed`); unieważnienie pozostaje możliwe (wariant zachowawczy, D-04/D-07 — docs/DOCUMENTS.md),
@@ -92,6 +93,8 @@ Odczyt i dziennik audytu nie są blokowane przez triggery, ale po zamknięciu **
 API wpłat, księgi, wydarzeń, zebrań, uzgodnień rachunku, kampanii e-mail i dokumentów tłumaczy odmowę triggera na `409 school_year_closed` (SR-14 w docs/SECURITY_REVIEW.md). Nowe wiersze aktualności (`news_posts`, `school_year_id NOT NULL`) są od 0130 objęte zamrożeniem (INSERT); odmowę tłumaczy sieć bezpieczeństwa routera (`src/pg/db-errors.js`) na `409 school_year_closed`.
 
 Data wpisu poza rokiem szkolnym (`occurred_on`/`received_on` księgi i wpłat) jest osobno pokryta triggerem `b0_date_within_school_year` (#169, 0027) — patrz `docs/DATA_MODEL.md`.
+
+**Świadome odstępstwo od kryterium #80 (decyzja użytkownika):** kryterium issue mówiło `400 occurred_on_outside_school_year`; API zwraca `422 date_outside_school_year` i ten kontrakt NIE jest zmieniany. 400 oznacza w tym API żądanie źle zbudowane (`invalid_request`), 422 — żądanie poprawne formalnie, ale sprzeczne z regułą dziedziny (szczegóły: docs/LEDGER.md, „Data w roku szkolnym”). Dotyczy `POST /api/ledger`, `POST /api/payments`, przeniesienia kasa ↔ rachunek, przeksięgowania i wpłaty z pozycji wyciągu.
 
 ## API
 
