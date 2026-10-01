@@ -259,6 +259,17 @@ testy z barierą: drugie ponowienie i „Zaproś” czekają na blokadę doradcz
 jeden ważny token. Kontrola pozytywna: bez blokady adresu drugie ponowienie czeka
 dopiero na wiersz (warunkowy `UPDATE`) — mutant `invitation-reissue`.
 
+`tests/pg-real-payment-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
+kolejnych ścieżek finansowych — dwa zwroty wpłaty 70 + 70 € przy 100 €, korekta i zwrot
+tej samej wpłaty, dwa ponowne przypisania do tego samego gospodarstwa, dwie części wpłaty
+70 + 70 €, cofnięcie części kontra nowa część na całą kwotę, dwa cofnięcia tej samej
+części i dwa storna tego samego przeniesienia kasa ↔ rachunek. Każdy test sprawdza w
+`pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z kodu trasy. Mutanty:
+`payments-refund`, `payments-reassign`, `payments-allocation`,
+`payments-allocation-reversal`, `ledger-transfer-reversal`. Test nie ujawnił błędu
+współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria,
+zastąpienie wpisu), `ledger-budget.js`, bilans otwarcia i `ledger-cost-centers.js`.
+
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
 `scripts/check-lock-mutations.js` usuwa po kolei każdą blokadę z listy `MUTANTS`
@@ -267,12 +278,12 @@ tymczasowym i uruchamia wskazany plik testów na prawdziwym PostgreSQL; mutant m
 czerwony test. Najpierw przebieg bez mutacji (musi być zielony). Kod repozytorium nie
 jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`.
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
-Obecnie lista obejmuje: korektę i przypisanie wpłaty, korektę wpisu księgi i ujęcie
+Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisanie, części wpłaty i ich cofnięcie, storno przeniesienia kasa ↔ rachunek, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
 `rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit` i `rd_year_close`.
 Poza listą (brak testu z barierą, #208): `FOR UPDATE` w `families.js`, `events.js`,
 `news.js`, `meetings.js`, `documents.js`, pozostałe w `payments.js`/`ledger.js`
-(zwroty, przeksięgowania, części wpłat, autoryzacje) oraz blokady w triggerach migracji.
+(autoryzacje) oraz blokady w triggerach migracji.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
 (reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z

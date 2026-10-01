@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 const DOUBLE_CLICK = 'tests/pg-real-double-click.test.js';
+const PAYMENT_LOCKS = 'tests/pg-real-payment-locks.test.js';
 const CONCURRENCY = 'tests/pg-real-concurrency.test.js';
 const YEAR_CLOSE = 'tests/pg-year-close-race.test.js';
 
@@ -41,6 +42,11 @@ export const MUTANTS = [
   { id: 'invitation-pending', file: 'src/pg/auth.js', fn: 'insertInvitation', kind: 'advisory', test: DOUBLE_CLICK },
   { id: 'invitation-reissue', file: 'src/pg/auth.js', fn: 'reissueInvitation', kind: 'advisory', test: DOUBLE_CLICK },
   { id: 'import-commit', file: 'src/pg/routes/import.js', fn: 'commit', kind: 'advisory', test: DOUBLE_CLICK },
+  { id: 'payments-refund', file: 'src/pg/routes/payments.js', fn: 'createRefund', kind: 'for-update', test: PAYMENT_LOCKS },
+  { id: 'payments-reassign', file: 'src/pg/routes/payments.js', fn: 'reassignPayment', kind: 'for-update', test: PAYMENT_LOCKS },
+  { id: 'payments-allocation', file: 'src/pg/routes/payments.js', fn: 'createAllocation', kind: 'for-update', test: PAYMENT_LOCKS },
+  { id: 'payments-allocation-reversal', file: 'src/pg/routes/payments.js', fn: 'reverseAllocation', kind: 'for-update', test: PAYMENT_LOCKS },
+  { id: 'ledger-transfer-reversal', file: 'src/pg/routes/ledger-cash.js', fn: 'createTransfer', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'email-cancel', file: 'src/pg/routes/email.js', fn: 'loadCampaign', kind: 'for-update', test: CONCURRENCY },
   { id: 'year-close', file: 'src/pg/routes/year-close.js', fn: 'closeYear', kind: 'advisory', test: YEAR_CLOSE },
 ];
