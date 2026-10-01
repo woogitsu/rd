@@ -158,22 +158,28 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/import/commit` | jak wyżej | tak | 403 | wymaga podglądu (fingerprint, planDigest) i Idempotency-Key |
 | `POST /api/documents?kind=financial&schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | inny rok: 403 |
 | `POST /api/documents?kind=board&schoolYearId=:year` | admin, zarząd — przydział bez klasy, rok 1 | nie | 403 | skarbnik, przedstawiciel: 403 |
+| `POST /api/documents?kind=council_shared&schoolYearId=:year` | admin, zarząd — przydział bez klasy, rok 1 | nie | 403 | #167: dokumenty Rady dla przedstawicieli; przedstawiciel i zarząd z przydziałem klasy: 403 |
 | `POST /api/documents?kind=class&schoolYearId=:year&classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | |
-| `GET /api/documents?schoolYearId=:year` | admin, zarząd — rok 1 (finansowe tylko z MFA); skarbnik — finansowe, z MFA; przedstawiciel i zarząd z przydziałem klasy — dokumenty własnej klasy | skarbnik: tak | 403 | przydział klasowy roku 1 i rok 2: 403, nie pusta lista (DOC-01, naprawione) |
+| `GET /api/documents?schoolYearId=:year` | admin, zarząd — rok 1 (finansowe tylko z MFA); skarbnik — finansowe, z MFA; przedstawiciel i zarząd z przydziałem klasy — dokumenty własnej klasy; przedstawiciel dodatkowo dokumenty Rady (`council_shared`, #167) | skarbnik: tak | 403 | przydział klasowy roku 1 i rok 2: 403, nie pusta lista (DOC-01, naprawione) |
 | `GET /api/documents/:financialDocumentId` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | brak uprawnień lub MFA nieodróżnialny od braku dokumentu |
 | `GET /api/documents/:boardDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | |
+| `GET /api/documents/:council_sharedDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu; przedstawiciel — przydział klasowy w roku dokumentu (dowolna klasa) | nie | 404 | #167: przydział z innego roku, zarząd z przydziałem klasy, dyrekcja, Komisja Rewizyjna — 404 jak brak dokumentu |
 | `GET /api/documents/:classDocumentId` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | |
 | `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded`; `?disposition=inline` (podgląd PDF/PNG/JPEG, ta sama macierz) — `document.viewed` |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
+| `GET /api/documents/:council_sharedDocumentId/content` | jak metadane dokumentu Rady | nie | 404 | #167 |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
 | `POST /api/documents/:financialDocumentId/supersede` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | issue #82: te same reguły dostępu co odczyt dokumentu finansowego (canAccessDocument); zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
 | `POST /api/documents/:boardDocumentId/supersede` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | issue #82: te same reguły dostępu co odczyt dokumentu zarządu; skarbnik, przedstawiciel — 404 |
+| `POST /api/documents/:council_sharedDocumentId/supersede` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | #167: zapis węższy niż odczyt — przedstawiciel (tylko odczyt): 404 |
 | `POST /api/documents/:classDocumentId/supersede` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | issue #82: zastąpienie tylko dokumentem tego samego rodzaju/roku/klasy; powtórka tym samym kluczem — `replayed:true` |
 | `POST /api/documents/:financialDocumentId/void` | jak wyżej (supersede, dokument finansowy) | tak | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
 | `POST /api/documents/:boardDocumentId/void` | jak wyżej (supersede, dokument zarządu) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
+| `POST /api/documents/:council_sharedDocumentId/void` | jak wyżej (supersede, dokument Rady) | nie | 404 | #167 |
 | `POST /api/documents/:classDocumentId/void` | jak wyżej (supersede, dokument klasy) | nie | 404 | issue #82: unieważnienie bez usuwania pliku; ponowne unieważnienie tego samego dokumentu — `replayed:true`, inna akcja — 409 |
 | `POST /api/documents/:financialDocumentId/description` | jak metadane dokumentu finansowego | tak | 404 | tytuł/kategoria (#76); dopisuje wersję, `documents` niezmienne |
 | `POST /api/documents/:boardDocumentId/description` | jak metadane dokumentu zarządu | nie | 404 | #76 |
+| `POST /api/documents/:council_sharedDocumentId/description` | jak zapis dokumentu Rady (admin, zarząd) | nie | 404 | #167 |
 | `POST /api/documents/:classDocumentId/description` | jak metadane dokumentu klasy | nie | 404 | #76 |
 | `GET /api/ledger?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | zarząd z przydziałem klasy: 403 (SR-01) |
 | `GET /api/ledger/categories?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |

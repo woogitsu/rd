@@ -55,6 +55,13 @@ export const DOCUMENT_POLICIES = Object.freeze({
   board: Object.freeze({ roles: ['admin', 'board'], requireMfa: false, classScoped: false }),
   // Materiały jednej klasy: przedstawiciel wyłącznie własnej klasy.
   class: Object.freeze({ roles: ['admin', 'board', 'representative'], requireMfa: false, classScoped: true }),
+  // Dokumenty Rady dla przedstawicieli wszystkich klas roku (#167: regulamin, plan pracy,
+  // informacja o składce). Przesyła, opisuje i zastępuje wyłącznie admin/zarząd (przydział bez
+  // klasy, jak `board`); CZYTA dodatkowo `representative` z przydziałem klasowym w tym roku
+  // (`readRoles`). Które dokumenty tu trafiają, rozstrzyga zarząd (D-08).
+  council_shared: Object.freeze({
+    roles: ['admin', 'board'], readRoles: ['representative'], requireMfa: false, classScoped: false,
+  }),
 });
 
 const LINK_TABLES = Object.freeze({ ledger_entry: 'ledger_entries', payment_entry: 'payment_entries' });
@@ -104,6 +111,19 @@ export function canAccessDocument(context, doc) {
   const requirement = { roles: policy.roles, requireMfa: policy.requireMfa, schoolYearId: doc.schoolYearId };
   // src/pg/scope.js (#155): z classId — przydział szkolny albo tej klasy; bez — tylko bez klasy.
   return isAuthorizedScoped(context, policy.classScoped ? { ...requirement, classId: doc.classId } : requirement);
+}
+
+// Odczyt (lista, metadane, treść): jak canAccessDocument, a dla rodzajów z `readRoles`
+// także rola tylko-do-odczytu z JAKIMKOLWIEK przydziałem klasowym w roku dokumentu
+// (przydział z innego roku nie liczy się — brak wyroczni istnienia, SR-07). Zapis
+// (przesłanie, opis, zastąpienie, unieważnienie) zostaje przy canAccessDocument.
+export function canReadDocument(context, doc) {
+  if (canAccessDocument(context, doc)) return true;
+  const policy = DOCUMENT_POLICIES[doc?.kind];
+  if (!policy?.readRoles || !doc.schoolYearId || doc.classId || policy.classScoped) return false;
+  return authorizedClassIds(context, {
+    roles: policy.readRoles, requireMfa: policy.requireMfa, schoolYearId: doc.schoolYearId,
+  }).length > 0;
 }
 
 function toDocument(row) {
@@ -197,7 +217,7 @@ async function authorizedDocument(env, context, id, { auditDenied }) {
   const row = (await env.db.query(`${SELECT_DOCUMENT} WHERE d.id = $1`, [id])).rows[0];
   if (!row) return null;
   const doc = toDocument(row);
-  if (!canAccessDocument(context, doc)) {
+  if (!canReadDocument(context, doc)) {
     if (auditDenied) {
       await insertAuditEvent(env.db, {
         actorId: context.session.user.id, action: 'document.access_denied', entityType: 'document', entityId: doc.id,
@@ -362,11 +382,11 @@ async function list(request, env, url, json) {
   // Przestarzałe: offset działa tylko bez kursora (zgodność ze starymi klientami).
   const offset = cursor ? 0 : Math.min(Math.max(Number.parseInt(url.searchParams.get('offset') ?? '0', 10) || 0, 0), MAX_OFFSET);
 
-  // Zakres widoczności z przydziałów; SQL zawęża, a canAccessDocument
+  // Zakres widoczności z przydziałów; SQL zawęża, a canReadDocument
   // sprawdza jeszcze każdy wiersz (obrona w głąb).
   const unscopedKinds = Object.entries(DOCUMENT_POLICIES)
     .filter(([, policy]) => !policy.classScoped)
-    .filter(([kind]) => canAccessDocument(context, { kind, schoolYearId, classId: null }))
+    .filter(([kind]) => canReadDocument(context, { kind, schoolYearId, classId: null }))
     .map(([kind]) => kind);
   const classPolicy = DOCUMENT_POLICIES.class;
   const allClasses = isAuthorizedScoped(context, { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId });
@@ -402,10 +422,10 @@ async function list(request, env, url, json) {
       LIMIT $7 OFFSET $8`,
     queryValues,
   );
-  // Kursor liczymy z wierszy SQL (przed filtrem canAccessDocument), żeby strona
+  // Kursor liczymy z wierszy SQL (przed filtrem canReadDocument), żeby strona
   // zawężona filtrem uprawnień nie zgubiła dalszych wyników.
   const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), cursorScope);
-  const documents = page.items.map(toDocument).filter((doc) => canAccessDocument(context, doc));
+  const documents = page.items.map(toDocument).filter((doc) => canReadDocument(context, doc));
   return json({ documents, limit, offset, nextCursor: sort === 'documentDate' ? null : page.nextCursor, truncated: page.truncated });
 }
 
