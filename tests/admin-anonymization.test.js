@@ -17,7 +17,8 @@ test('powody i etykiety liczników zgadzają się z serwerem', () => {
   const reasons = /ANONYMIZATION_REASON_CODES = Object\.freeze\(\[([^\]]+)\]\)/.exec(source)[1].match(/'([a-z_]+)'/g).map((v) => v.slice(1, -1));
   assert.ok(reasons.length > 0);
   assert.deepEqual(Object.keys(REASON_LABELS).sort(), [...reasons].sort());
-  const tables = [...source.matchAll(/table: '([a-z_]+)'/g)].map((m) => m[1]);
+  // Klucz licznika: `key`, gdy wpis go podaje (np. identity_changes dzieli się na opiekunów i uczniów), inaczej `table`.
+  const tables = [...source.matchAll(/table: '([a-z_]+)'(?:, key: '([a-z_]+)')?/g)].map((m) => m[2] ?? m[1]);
   const keys = new Set(['guardians', 'students', ...tables].map((t) => (t === 'email_campaign_recipients' ? 'campaign_recipients' : t)));
   assert.ok(keys.size >= 15);
   assert.deepEqual(Object.keys(COUNT_LABELS).sort(), [...keys].sort());
