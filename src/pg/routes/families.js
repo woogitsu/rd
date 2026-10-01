@@ -228,9 +228,9 @@ async function getHousehold(request, env, householdId, json) {
          FROM student_households_current o WHERE o.student_id = s.id AND o.household_id <> $5`;
   // Uczniowie gospodarstwa widoczni w zakresie (rodzeństwo poza zakresem jest pomijane).
   const students = await env.db.query(
-    `SELECT s.id, s.first_name, s.last_name, m.is_primary,
+    `SELECT s.id, s.first_name, s.last_name, m.is_primary, m.id AS membership_id,
             COALESCE((
-              SELECT json_agg(json_build_object('classId', c.id, 'className', c.name, 'schoolYearId', c.school_year_id)
+              SELECT json_agg(json_build_object('classId', c.id, 'className', c.name, 'schoolYearId', c.school_year_id, 'enrollmentId', e.id)
                               ORDER BY y.starts_on DESC, c.name)
                 FROM enrollments_current e JOIN classes c ON c.id = e.class_id JOIN school_years y ON y.id = c.school_year_id
                WHERE e.student_id = s.id AND ${CLASS_IN_SCOPE('c')}
@@ -253,7 +253,7 @@ async function getHousehold(request, env, householdId, json) {
   // Zakres klasowy: tylko opiekunowie z aktywną relacją do widocznego ucznia;
   // e-mail tylko przy zgodzie opiekuna i zgodzie relacji do widocznego ucznia.
   const guardians = await env.db.query(
-    `SELECT g.id, g.first_name, g.last_name, g.email, g.contact_allowed,
+    `SELECT g.id, g.first_name, g.last_name, g.email, g.contact_allowed, gh.id AS membership_id,
             EXISTS (
               SELECT 1 FROM student_guardians_current sg
                WHERE sg.guardian_id = g.id AND sg.student_id = ANY($2::text[])
@@ -277,6 +277,7 @@ async function getHousehold(request, env, householdId, json) {
     household: { id: household.rows[0].id, archived: Boolean(household.rows[0].archived_at) },
     students: students.rows.map((row) => ({
       id: row.id,
+      membershipId: row.membership_id,
       firstName: row.first_name,
       lastName: row.last_name,
       ...(classScoped ? {} : { isPrimaryHousehold: row.is_primary }),
@@ -289,6 +290,7 @@ async function getHousehold(request, env, householdId, json) {
       const contactAllowed = classScoped ? row.contact_allowed && row.relation_contact_allowed : row.contact_allowed;
       return {
         id: row.id,
+        membershipId: row.membership_id,
         firstName: row.first_name,
         lastName: row.last_name,
         email: !classScoped || contactAllowed ? row.email ?? null : null,
