@@ -389,7 +389,7 @@ test('członkostwo opiekuna w gospodarstwie: granice ról (tylko zakres szeroki)
     assert.equal(classBoard.body.error, 'forbidden');
     const denied = await t.db.query(`SELECT actor_id, entity_id FROM audit_events WHERE action = 'access.denied'`);
     assert.deepEqual(denied.rows.map((r) => r.actor_id).sort(), ['u-board-a', 'u-rep-a', 'u-tr']);
-    assert.ok(denied.rows.every((r) => !r.entity_id.includes('?')));
+    assert.deepEqual(denied.rows.filter((r) => r.entity_id.includes('?')), [], 'ścieżka bez parametrów zapytania');
 
     assert.equal((await endGuardianHousehold(t, t.cookies.board, 'g-2', 'gh-nope')).status, 404);
     // Identyfikator członkostwa innego opiekuna: 404, nie zakończenie cudzego wiersza.
