@@ -165,7 +165,7 @@ test('odpowiedź nie zawiera danych opiekunów ani adresów e-mail', async () =>
   }
 });
 
-test('audyt print.cards_requested zawiera tylko liczby i zakres, bez danych osobowych', async () => {
+test('audyt print.cards_requested zawiera tylko liczby, zakres i identyfikator wersji informacji (D-06), bez danych osobowych', async () => {
   const { db, sessions, get } = await setup();
   try {
     await get(`schoolYearId=${YEAR}&classId=c-1a`, sessions.rep1a);
@@ -177,8 +177,8 @@ test('audyt print.cards_requested zawiera tylko liczby i zakres, bez danych osob
     const byActor = Object.fromEntries(rows.map((row) => [row.actor_id, row]));
     assert.equal(byActor['u-rep'].entity_type, 'school_year');
     assert.equal(byActor['u-rep'].entity_id, YEAR);
-    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false, paymentInstructionsApproved: false, structuredReferenceCount: 0 });
-    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true, paymentInstructionsApproved: false, structuredReferenceCount: 0 });
+    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false, paymentInstructionsApproved: false, privacyNoticeId: 'pn-test', privacyNoticeVersion: 1, structuredReferenceCount: 0 });
+    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true, paymentInstructionsApproved: false, privacyNoticeId: 'pn-test', privacyNoticeVersion: 1, structuredReferenceCount: 0 });
     const text = JSON.stringify(rows);
     assert.doesNotMatch(text, /Ala|Ewa|Olek|Testow|Przykład|H-1|H-2|@|4000/);
   } finally {

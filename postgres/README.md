@@ -653,20 +653,6 @@ e-mail i wydruku kartek dodaje migracja 0179 (niżej). Wycofanie na pustej bazie
 privacy_notice_deliveries, privacy_notices`, `DROP COLUMN import_batches.privacy_notice_id`
 i funkcji guard. Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).
 
-`0179_email_campaign_privacy_notice.sql` (issue #145, D-06) dodaje
-`email_campaigns.privacy_notice_id` (FK do `privacy_notices`, nullable, bez
-DEFAULT) oraz trigger `email_campaigns_privacy_notice_guard`: kolumnę ustawia
-wyłącznie przejście `draft → approved` (wyłącznie wersja o statusie
-`published`), czyści wyłącznie `approved → draft`, w innych stanach jest
-niezmienna; CHECK — szkic nie nosi wersji. Skutki dla danych: istniejące
-kampanie dostają NULL, nic nie jest uzupełniane wstecznie. Kampania zatwierdzona
-przed migracją (`approved`/`sending`/`paused`) nie ma zapisanej wersji —
-`queue`/`resume` odmawiają `409 privacy_notice_missing`, a worker ją pomija
-(wiersze zostają `queued`); trzeba ją zatwierdzić ponownie albo anulować i
-utworzyć nową. Kampanie `done`/`cancelled` bez zmian. ADD COLUMN bez DEFAULT nie
-przepisuje tabeli. Wycofanie: `DROP TRIGGER`, `DROP FUNCTION`, `DROP COLUMN`.
-Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).
-
 `0076_event_volunteering.sql` (issue #142, Etap 1) dodaje zadania i zapisy
 wolontariuszy do wydarzeń. `event_tasks` (treść niezmienna po utworzeniu poza
 jednorazowym odwołaniem) i `event_task_signups` (opiekun albo konto; status
@@ -1398,3 +1384,17 @@ rezerwują równoległe gałęzie); redefinicje funkcji zachowują wszystkie ga�
 definicje funkcji z migracji 0003, 0007, 0014, 0017, 0023, 0038, 0055, 0087,
 0136, `DROP FUNCTION rd_anonymization_update_allowed, rd_anonymization_active`,
 `DROP TABLE anonymization_runs` (na bazie z danymi tylko po kopii zapasowej).
+
+`0179_email_campaign_privacy_notice.sql` (issue #145, D-06) dodaje
+`email_campaigns.privacy_notice_id` (FK do `privacy_notices`, nullable, bez
+DEFAULT) oraz trigger `email_campaigns_privacy_notice_guard`: kolumnę ustawia
+wyłącznie przejście `draft → approved` (wyłącznie wersja o statusie
+`published`), czyści wyłącznie `approved → draft`, w innych stanach jest
+niezmienna; CHECK — szkic nie nosi wersji. Skutki dla danych: istniejące
+kampanie dostają NULL, nic nie jest uzupełniane wstecznie. Kampania zatwierdzona
+przed migracją (`approved`/`sending`/`paused`) nie ma zapisanej wersji —
+`queue`/`resume` odmawiają `409 privacy_notice_missing`, a worker ją pomija
+(wiersze zostają `queued`); trzeba ją zatwierdzić ponownie albo anulować i
+utworzyć nową. Kampanie `done`/`cancelled` bez zmian. ADD COLUMN bez DEFAULT nie
+przepisuje tabeli. Wycofanie: `DROP TRIGGER`, `DROP FUNCTION`, `DROP COLUMN`.
+Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).

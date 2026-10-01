@@ -2569,6 +2569,17 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
+    },
+    "privacy_notice_id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
     }
   },
   "email_outbox": {

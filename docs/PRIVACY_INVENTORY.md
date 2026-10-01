@@ -564,6 +564,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `meeting_notice_id` | none | — | nie |
 | `paused_at` | none | — | nie |
 | `paused_by` | pseudonymous | board_member | nie |
+| `privacy_notice_id` | none | — | nie |
 | `queued_at` | none | — | nie |
 | `queued_by` | none | — | nie |
 | `recipients_count` | none | — | nie |

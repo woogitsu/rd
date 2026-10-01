@@ -304,7 +304,7 @@ test('no send before approval; author and snapshot builder cannot self-approve; 
     assert.equal(again.status, 200, 'double click on approve is idempotent');
 
     // Baza też pilnuje zasady czterech oczu.
-    await assert.rejects(t.db.query("UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL WHERE id = $1", [campaign.id]).then(() =>
+    await assert.rejects(t.db.query("UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL, privacy_notice_id = NULL WHERE id = $1", [campaign.id]).then(() =>
       t.db.query("UPDATE email_campaigns SET status = 'approved', approved_by = created_by, approved_at = now(), approved_content_hash = content_hash, approved_recipients_hash = recipients_hash WHERE id = $1", [campaign.id])), /four_eyes/);
   } finally { await t.close(); }
 });
