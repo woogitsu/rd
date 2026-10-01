@@ -136,6 +136,17 @@ function appendUnsubscribeFooter(text, unsubscribeUrl) {
   return text + UNSUBSCRIBE_FOOTER.replace('{link_wypisania}', unsubscribeUrl);
 }
 
+// Odnośnik do opublikowanej informacji o przetwarzaniu danych (D-06, #145):
+// dodawany przez serwer na podstawie wersji zapamiętanej w kampanii przy
+// zatwierdzeniu (email_campaigns.privacy_notice_id). Sam mechanizm — treść
+// informacji pochodzi od zarządu, nie z kodu. Bez adresu (brak PUBLIC_BASE_URL)
+// zostaje numer wersji.
+function appendPrivacyNoticeFooter(text, privacyNotice) {
+  if (!privacyNotice) return text;
+  const where = privacyNotice.url ? `: ${privacyNotice.url}` : '';
+  return `${text}\n\n--\nInformacja o przetwarzaniu danych osobowych (wersja ${privacyNotice.version})${where}`;
+}
+
 // Czy treść kampanii używa {komunikat} — wtedy każda rodzina potrzebuje aktywnej
 // referencji roku (migawka wyklucza rodzinę bez niej, worker pomija wiersz).
 export function usesStructuredReference(campaign) {
@@ -156,12 +167,14 @@ export function usesPaymentInstructions(campaign) {
 // wymagana, gdy treść ma {rachunek}/{odbiorca} — nigdy wiadomość z pustym
 // albo niepoprawnym rachunkiem. Kod QR nie trafia do e-maila: wiadomość jest
 // czystym tekstem, a HTML/obraz wymaga decyzji D-17.
+// privacyNotice: { version, url } wersji informacji o przetwarzaniu danych (#145);
+// stopka przed linkiem wypisania. null = bez stopki (tylko dla starych wywołań/testów).
 // missingPaymentText: TYLKO podgląd dla zatwierdzającego — znacznik w miejscu
 // {rachunek}/{odbiorca}, gdy rok nie ma zatwierdzonej wersji (zatwierdzenie i
 // wysyłka takiej kampanii są wtedy zablokowane, więc znacznik nie trafi do rodzica).
 export function renderMessage(campaign, {
   schoolYearLabel, householdId, structuredReference = null, paymentInstructions = null, unsubscribeUrl = null,
-  missingPaymentText = null,
+  missingPaymentText = null, privacyNotice = null,
 }) {
   const values = { rok: schoolYearLabel, rodzina: householdId };
   if (usesStructuredReference(campaign)) {
@@ -181,7 +194,10 @@ export function renderMessage(campaign, {
     }
   }
   const subject = fill(campaign.subject, values);
-  const text = appendUnsubscribeFooter(fill(campaign.body_text ?? campaign.bodyText, values), unsubscribeUrl);
+  const text = appendUnsubscribeFooter(
+    appendPrivacyNoticeFooter(fill(campaign.body_text ?? campaign.bodyText, values), privacyNotice),
+    unsubscribeUrl,
+  );
   if (findForbiddenWording(subject) || findForbiddenWording(text)) throw new ContentError('forbidden_wording');
   return { subject, text };
 }

@@ -402,5 +402,9 @@
   {
     "name": "0178_processing_restrictions.sql",
     "sha256": "a6591a6c61965b2b780006ec309409c9f85ee9fa8d26edfaedfee70fcf901adb"
+  },
+  {
+    "name": "0179_email_campaign_privacy_notice.sql",
+    "sha256": "d08bec14c9d3a7cfe01f711c850a1d6797e268d074822bbcc41b92776287ca5d"
   }
 ]

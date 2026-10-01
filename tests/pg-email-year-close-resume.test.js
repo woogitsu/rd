@@ -10,7 +10,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { createBrevoTransport } from '../src/email/brevo.js';
 import { runEmailBatch } from '../src/email/worker.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const NEXT = 'y2027';
@@ -31,6 +31,7 @@ function brevoStub() {
 
 test('kampania rozpoczęta przed zamknięciem roku jest dokańczana po zamknięciu, każda rodzina raz; ponowienie zadania nic nie dubluje', async () => {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   try {
     await seedClass(db, { id: 'c1', schoolYearId: YEAR });
     await seedSchoolYear(db, NEXT, { startsOn: '2027-09-01', endsOn: '2028-08-31' });

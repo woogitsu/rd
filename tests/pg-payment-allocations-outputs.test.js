@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
-import { request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { request, seedClass, seedSchoolYear, seedUser, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const YEAR = 'y-127-out';
 const migrationsDirectory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
@@ -28,6 +28,7 @@ async function freshDb() {
 
 async function setup() {
   const db = await freshDb();
+  await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
   await seedSchoolYear(db, YEAR, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });
   await seedClass(db, { id: 'c-2b', schoolYearId: YEAR, name: '2B' });
