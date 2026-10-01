@@ -33,6 +33,11 @@ import { isAuthorized } from '../authorization.js';
  * @typedef {{any: boolean, schoolWide: boolean, years: 'all'|string[], classes: ClassScope[]}} Scope
  */
 
+// Tabela polityk (D-08/D-09, docs/AUTHORIZATION.md): role, których przydział
+// BEZ `classId` daje zakres szkolny w danych rodzin i zarządu. Zmiana decyzji
+// o zakresie ról = zmiana tej jednej stałej.
+export const HOUSEHOLD_WIDE_ROLES = Object.freeze(['admin', 'board', 'treasurer']);
+
 const EMPTY_SCOPE = Object.freeze({ any: false, schoolWide: false, years: [], classes: [] });
 
 /**
@@ -82,6 +87,18 @@ export function resolveScope(context, requirement) {
     years: allYears ? 'all' : [...years],
     classes,
   };
+}
+
+/**
+ * Zakres modułów rodzin i pulpitu zarządu: jak `resolveScope`, a przydział bez
+ * klasy liczy się jako szkolny wyłącznie dla ról z HOUSEHOLD_WIDE_ROLES.
+ *
+ * @param {AuthContext} context
+ * @param {string[]} roles
+ * @returns {Scope}
+ */
+export function householdScope(context, roles) {
+  return resolveScope(context, { roles, schoolWideRoles: HOUSEHOLD_WIDE_ROLES });
 }
 
 /**
