@@ -124,11 +124,11 @@ import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
 import {
-  approveGrantRequest, grantApprovalMode, GrantRequestError, insertGrantRequest, isProtectedRole, listGrantRequests,
+  approveGrantRequest, grantApprovalMode, GrantRequestError, insertGrantRequest, isProtectedRole, listGrantRequests, GRANT_REQUEST_LIST_MAX, grantRequestListScope,
   recordFourEyesWaiver, rejectGrantRequest,
 } from '../grant-requests.js';
 import {
-  approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, rejectRecoveryRequest, requiresRecoveryApproval,
+  approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, RECOVERY_LIST_MAX, recoveryListScope, rejectRecoveryRequest, requiresRecoveryApproval,
 } from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
 import { promotionAllowedMethods, PromotionError, routePromotions } from '../promotions.js';
@@ -411,7 +411,9 @@ async function mfaResetRoute(env, actorId, userId, request, json) {
 async function recoveryRequestsList(env, url, json) {
   const status = url.searchParams.get('status') || 'pending';
   try {
-    return json(await listRecoveryRequests(env, { status }));
+    const limit = listLimit(url, { defaultLimit: RECOVERY_LIST_MAX, maxLimit: RECOVERY_LIST_MAX });
+    const cursor = listCursor(url, 'timestamp', recoveryListScope(status));
+    return json(await listRecoveryRequests(env, { status, limit, cursor }));
   } catch (error) {
     if (error instanceof LoginError) throw new RequestError(error.code, error.status);
     throw error;
@@ -882,7 +884,10 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
 
 async function grantRequestsList(env, url, json) {
   try {
-    return json(await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }));
+    const status = url.searchParams.get('status') || 'pending';
+    const limit = listLimit(url, { defaultLimit: GRANT_REQUEST_LIST_MAX, maxLimit: GRANT_REQUEST_LIST_MAX });
+    const cursor = listCursor(url, 'timestamp', grantRequestListScope(status));
+    return json(await listGrantRequests(env, { status, limit, cursor }));
   } catch (error) {
     if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
     throw error;

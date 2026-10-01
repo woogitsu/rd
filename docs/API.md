@@ -23,6 +23,8 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/email/suppressions?schoolYearId=` (#543) | `created_at` malejąco, `email_hash` | 500 / 500 | rok szkolny |
 | `GET /api/meetings?schoolYearId=` | `scheduled_at` malejąco, `id` | 500 / 500 | rok szkolny |
 | `GET /api/admin/guardian-update-requests` | `created_at`, `id` rosnąco | 200 / 200 | `status` |
+| `GET /api/admin/account-requests` | `created_at` malejąco, `id` | 200 / 200 | `status` |
+| `GET /api/admin/grant-requests` | `created_at` malejąco, `id` | 200 / 200 | `status` |
 | `GET /api/admin/data-requests` (#543) | `received_on`, `created_at`, `id` rosnąco | 500 / 500 | `status`, `kind` |
 
 Uprawnienia tras nie zmieniły się: kursor niczego nie odblokowuje, a każde
@@ -117,8 +119,6 @@ niepełna; panel wtedy pokazuje komunikat o obcięciu:
 | `GET /api/meetings/shared-minutes` | 200 najnowszych | `truncated` |
 | `GET /api/meetings/public-notices` | 200 najbliższych | `truncated` |
 | `GET /api/news-photos` | 200 najnowszych | `truncated` |
-| `GET /api/admin/grant-requests` | 200 najnowszych | `truncated` |
-| `GET /api/admin/account-requests` | 200 najnowszych | `truncated` |
 
 Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCursor`.
 
