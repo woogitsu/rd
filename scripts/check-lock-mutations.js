@@ -13,8 +13,9 @@
 // plik przed kolejnym mutantem. Najpierw przebieg bez mutacji (każdy plik
 // testowy musi być zielony), potem mutanty. Wyłącznie dane syntetyczne.
 //
-// Blokady spoza listy (np. families.js, events.js, news.js) nie mają jeszcze
-// testu z barierą — docs/TESTING.md, „Kontrola mutacyjna”.
+// Blokady spoza listy (np. pozostałe FOR UPDATE w families.js, events.js, news.js,
+// meetings.js, documents.js) nie mają jeszcze testu z barierą — docs/TESTING.md,
+// „Kontrola mutacyjna”.
 import { spawn } from 'node:child_process';
 import { cp, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,6 +27,7 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DOUBLE_CLICK = 'tests/pg-real-double-click.test.js';
 const PAYMENT_LOCKS = 'tests/pg-real-payment-locks.test.js';
 const CONCURRENCY = 'tests/pg-real-concurrency.test.js';
+const DOMAIN = 'tests/pg-real-domain-locks.test.js';
 const YEAR_CLOSE = 'tests/pg-year-close-race.test.js';
 
 // kind: 'for-update' usuwa każde `FOR UPDATE [OF x]` w funkcji `fn`;
@@ -48,6 +50,11 @@ export const MUTANTS = [
   { id: 'payments-allocation-reversal', file: 'src/pg/routes/payments.js', fn: 'reverseAllocation', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'ledger-transfer-reversal', file: 'src/pg/routes/ledger-cash.js', fn: 'createTransfer', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'email-cancel', file: 'src/pg/routes/email.js', fn: 'loadCampaign', kind: 'for-update', test: CONCURRENCY },
+  { id: 'events-lock', file: 'src/pg/events.js', fn: 'lockEvent', kind: 'for-update', test: DOMAIN },
+  { id: 'news-lock', file: 'src/pg/news.js', fn: 'lockPost', kind: 'for-update', test: DOMAIN },
+  { id: 'meetings-lock', file: 'src/pg/meetings.js', fn: 'lockMeeting', kind: 'for-update', test: DOMAIN },
+  { id: 'documents-status', file: 'src/pg/routes/documents.js', fn: 'changeStatus', kind: 'for-update', test: DOMAIN },
+  { id: 'families-contact', file: 'src/pg/routes/families.js', fn: 'updateGuardianContact', kind: 'for-update', test: DOMAIN },
   { id: 'year-close', file: 'src/pg/routes/year-close.js', fn: 'closeYear', kind: 'advisory', test: YEAR_CLOSE },
 ];
 

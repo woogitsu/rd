@@ -47,8 +47,8 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
    ```
 
 5. Zachować raport bez danych osobowych: liczności wszystkich tabel, sumę
-   netto wpłat oraz sumy przychodów i wydatków. Porównać z zatwierdzonym
-   raportem źródłowym, a następnie sprawdzić reprezentatywne rodziny, wspólną
+   netto wpłat, sumy przychodów i wydatków oraz odcisk SHA-256 każdej tabeli
+   (`fingerprints`). Porównać z zatwierdzonym raportem źródłowym, a następnie sprawdzić reprezentatywne rodziny, wspólną
    opiekę, rodzeństwo, przypisania klas, korekty, bilans i preliminarz.
 
 ## Reguły mapowania
@@ -78,6 +78,27 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
 - Wydarzenie `published` staje się opublikowaną rewizją 1 ze źródłem
   `legacy_d1` (migracja 0008). Nieopublikowane wydarzenie z ustawionym
   `published_at` przerywa import — narzędzie nie zgaduje, czy było publiczne.
+- Lista kolumn jest zamknięta (#182). Snapshot zawiera wszystkie kolumny D1
+  (`SELECT *`), a import wstawia tylko kolumny z listy mapowania. Niepusta
+  wartość w kolumnie spoza listy (np. `ledger_entries.approval_id`) **przerywa**
+  import przed transakcją, z nazwą tabeli, kolumny, liczbą wierszy i jednym
+  identyfikatorem przykładowym (bez wartości). Kolumna pusta (NULL lub pusty
+  tekst) nie niesie danych i przechodzi; `ledger_entries.category` jest
+  zużywana przez mapowanie na `category_id`. Przeniesienie albo świadome
+  pominięcie takiej kolumny wymaga decyzji o zakresie importu (D-03) i zmiany
+  mapowania — narzędzie nie gubi danych finansowych po cichu.
+- Uzgodnienie po odtworzeniu (#182) porównuje **snapshot źródłowy** z bazą
+  docelową: liczności i sumy liczone z surowego snapshotu oraz odcisk każdego
+  wiersza (SHA-256 postaci kanonicznej: daty `YYYY-MM-DD`, czasy ISO UTC, flagi
+  boolean, kwoty jako tekst, JSON z posortowanymi kluczami) odczytany z
+  PostgreSQL po imporcie, w tej samej transakcji. Oczekiwana postać wiersza to
+  wiersz źródłowy po opisanych tu regułach mapowania; stan końcowy wpłaty
+  przypisanej jest porównywany ze stanem z D1 (nie z przejściowym `unmatched`).
+  Wyjątek: opublikowane wydarzenie bez `published_at` dostaje czas importu
+  (migracja 0008) — sprawdzamy tylko, że wartość nie jest pusta. Różnica w
+  dowolnej tabeli wycofuje import; błąd wskazuje tabelę i identyfikatory
+  wierszy (do 5), bez treści. Nadal brakuje niezależnego raportu źródłowego
+  liczonego zapytaniami do D1 oraz sum per rok (#182, część otwarta).
 - Zgodność z migracjami 0004, 0008 i 0009 oraz wyniki porównania API opisuje
   [EQUIVALENCE.md](EQUIVALENCE.md).
 - Metadane dokumentów mogą zostać przeniesione dopiero razem z uzgodnionym
