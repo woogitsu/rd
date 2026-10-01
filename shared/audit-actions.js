@@ -205,6 +205,7 @@ const CATALOG = {
   'enrollment.withdrawn': ['families', 'Wypisanie ucznia'],
   'enrollment.promoted': ['families', 'Przeniesienie ucznia do klasy na nowy rok'],
   'promotion.applied': ['families', 'Promocja uczniów na nowy rok'],
+  'promotion.representatives_extended': ['families', 'Przedłużenie przydziałów przedstawicieli na nowy rok'],
   'student_household.added': ['families', 'Powiązanie ucznia z gospodarstwem'],
   'student_household.ended': ['families', 'Zakończenie powiązania ucznia z gospodarstwem'],
   'guardian_household.ended': ['families', 'Zakończenie powiązania opiekuna z gospodarstwem'],

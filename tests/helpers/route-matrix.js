@@ -337,6 +337,14 @@ function promotionDigest(obj) {
   })).digest('hex');
 }
 
+// Skrót planu przedłużenia przedstawicieli (src/pg/promotions.js) dla fixture promotionYears.
+function representativesDigest(obj) {
+  return createHash('sha256').update(JSON.stringify({
+    kind: 'representatives', from: obj.fromSchoolYearId, to: obj.toSchoolYearId,
+    items: [[obj.representativeId, obj.fromClassId, obj.toClassId, 'eligible']],
+  })).digest('hex');
+}
+
 function adminRoute(id, method, path, { ok = 200, object, build, keyed = false }) {
   return {
     id, module: 'admin', method, path, targets: ['-'], allow: ADMIN_ONLY, mfa: true, ok, deny: 403,
@@ -1515,6 +1523,17 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.promotionApply', 'POST', '/api/admin/promotions/apply', {
     ok: 201, object: 'promotionYears', keyed: true,
     build: ({ obj }) => ({ path: '/api/admin/promotions/apply', body: { ...promotionBody(obj, { toClass: true }), planDigest: promotionDigest(obj) } }),
+  }),
+  // Przedłużenie przydziałów przedstawicieli (#78): fixture promotionYears ma przedstawiciela klasy źródłowej.
+  adminRoute('admin.promotionRepresentativesPreview', 'POST', '/api/admin/promotions/representatives/preview', {
+    object: 'promotionYears', build: ({ obj }) => ({ path: '/api/admin/promotions/representatives/preview', body: promotionBody(obj, { toClass: true }) }),
+  }),
+  adminRoute('admin.promotionRepresentativesApply', 'POST', '/api/admin/promotions/representatives/apply', {
+    ok: 201, object: 'promotionYears',
+    build: ({ obj }) => ({
+      path: '/api/admin/promotions/representatives/apply',
+      body: { ...promotionBody(obj, { toClass: true }), planDigest: representativesDigest(obj), confirm: obj.toSchoolYearId },
+    }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
   // Historia obiektu dla zarządu i skarbnika (#181): wariant zachowawczy (D-08/D-09) — board/treasurer, przydział bez klasy,
