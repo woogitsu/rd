@@ -279,6 +279,14 @@ Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js
 „truly parallel”, „are serialized” i „bez zakleszczenia”. Testy z `Promise.all` na
 PGlite mają w nazwie „sequential on PGlite” / „PGlite: po kolei”. „Podwójne
 kliknięcie” na PGlite oznacza ponowienie po kolei (odtworzenie zapisu), a nie wyścig.
+Reguła `pglite-parallel-unlabeled` wymaga w plikach używających `tests/helpers/pg.js`
+(bez `RD_TEST_PG_URL`), by nazwa z „parallel/simultaneous/concurrent/równoległe/naraz”
+zawierała „PGlite”, „po kolei” albo „sequential”; prawdziwy wyścig i odpowiedniki z barierą
+są w `tests/pg-real-*.test.js`. Reguła `every-without-nonempty` obejmuje każdą asercję
+`assert*(…every(…)` we wszystkich `tests/*.test.js` (niepustość w tej samej linii albo `assertEvery`).
+Pułapka sieci (`tests/helpers/network-guard.js`) przepuszcza `fetch` tylko do serwerów
+nasłuchujących na pętli zwrotnej, które uruchomił ten sam proces testowy (śledzone porty
+`net.Server#listen`); inne porty i hosty oblewają przebieg.
 
 `tests/pg-year-close-race.test.js` (#212, pomijany bez `RD_TEST_PG_URL`): równoległe
 „Zamknij rok” — dwie osoby z zarządu, podwójne kliknięcie tej samej osoby (i ponowienie

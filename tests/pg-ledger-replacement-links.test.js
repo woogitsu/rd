@@ -181,7 +181,7 @@ test('wpis powiązany z wpłatą: kwota tylko przez korektę wpłaty; kierunek i
   } finally { await db.close(); }
 });
 
-test('wpłata ujęta dokładnie raz: ponowne powiązanie i bezpośredni INSERT są odrzucane, równoległe przeksięgowania — jedno wygrywa', async () => {
+test('wpłata ujęta dokładnie raz: ponowne powiązanie i bezpośredni INSERT są odrzucane, równoległe przeksięgowania — jedno wygrywa (PGlite: po kolei, nie wyścig)', async () => {
   const ctx = await setup();
   const { db } = ctx;
   try {

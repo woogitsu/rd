@@ -58,7 +58,7 @@ async function bundleFile(name, body) {
   return path;
 }
 
-test('ujście z przeciążeniem: najwyżej jeden zapis naraz, fragmenty wielkości partii, te same bajty co paczka w pamięci', async () => {
+test('ujście z przeciążeniem: najwyżej jeden zapis naraz, fragmenty wielkości partii, te same bajty co paczka w pamięci (licznik w procesie Node, nie transakcje bazy)', async () => {
   const chunks = [];
   let pending = 0;
   let maxPending = 0;

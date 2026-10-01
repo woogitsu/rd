@@ -256,7 +256,7 @@ describe('katalog rodzin (osobna baza na test)', () => {
   // FAMILIES.md nie istnieje, brak decyzji zarządu): „ostatni zapis wygrywa”,
   // obie zmiany zostają w historii — nic nie ginie bezpowrotnie, tylko
   // bieżąca wartość gospodarstwa. Test dokumentuje dzisiejsze zachowanie.
-  test('zmiana kontaktu: dwie osoby edytują ten sam kontakt jednocześnie — ostatni zapis wygrywa, obie zmiany w historii (#211, brak decyzji zarządu)', async (t) => {
+  test('zmiana kontaktu: dwie osoby edytują ten sam kontakt jednocześnie — ostatni zapis wygrywa, obie zmiany w historii (#211, brak decyzji zarządu) (PGlite: po kolei, nie wyścig)', async (t) => {
     const { db, call, cookies } = await setup(t);
     const path = '/api/guardians/g-2/contact';
     // Druga osoba z zarządu (inne konto, ten sam poziom uprawnień) edytuje

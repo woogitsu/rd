@@ -136,7 +136,7 @@ test('#211 aktualności: wycofanie przed zatwierdzeniem blokuje zatwierdzenie i 
   } finally { await db.close(); }
 });
 
-test('#211 aktualności: równoległe zatwierdzenie/publikacja i wycofanie — wpis kończy wycofany i niewidoczny publicznie', async () => {
+test('#211 aktualności: równoległe zatwierdzenie/publikacja i wycofanie — wpis kończy wycofany i niewidoczny publicznie (PGlite: po kolei, nie wyścig)', async () => {
   const { db, submitted, isPublic, status, events } = await newsSetup();
   try {
     const post = await submitted();
