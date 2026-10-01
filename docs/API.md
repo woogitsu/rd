@@ -73,6 +73,15 @@ Stronicowanie jest keyset, nie `OFFSET`:
 `GET /api/admin/audit` przy każdym odczycie zapisuje zdarzenie `audit.viewed`
 (bez parametrów zapytania) — dotyczy to także kolejnych stron.
 
+`GET /api/audit/entity/{entityType}/{entityId}` (#181; `payment_entry`,
+`ledger_entry`, `reconciliation`, `email_campaign`) to historia jednego obiektu
+dla zarządu i skarbnika z przydziałem ogólnoszkolnym na rok obiektu (admin ma
+`/api/admin/audit/entity/...`). Obiekt nieistniejący albo z roku bez przydziału
+daje 404 `not_found`; Komisja Rewizyjna, dyrekcja i przedstawiciel klasy — 403
+(założenie zachowawcze do D-08/D-09). Zwraca tylko zdarzenia domeny obiektu
+(`finance` albo `email`), w kolejności czasu, w tym samym kształcie co trasa
+admina, i sama zapisuje `audit.viewed`.
+
 Każde zdarzenie w odpowiedzi (`GET /api/admin/audit` i `.../entity/...`) ma
 pola `actorKind` (`user`, `system`, `anonymous`) i `source` (#181). Dla
 zdarzeń bez aktora (`actorId: null`) `source` wskazuje pochodzenie: `email_worker`,

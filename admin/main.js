@@ -34,7 +34,7 @@ import {
   usersSummary,
 } from "./core.js";
 import {
-  batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
+  batchRowError, batchSummary, canApplyBatch, coverageActivation, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
 } from "./onboarding.js";
 import {
   attentionStudents, canApplyPromotion, MAP_FINAL, MAP_SKIP, missingRepresentativeNote, newPromotionKey, promotionBody,
@@ -802,16 +802,17 @@ async function loadCoverage() {
   const tbody = byId("coverage-body");
   if (!schoolYearId) {
     byId("coverage-summary").textContent = "Brak lat szkolnych.";
-    return emptyRow(tbody, 6, "Brak danych.");
+    return emptyRow(tbody, 7, "Brak danych.");
   }
   const result = await api(`/api/admin/class-coverage?schoolYearId=${encodeURIComponent(schoolYearId)}`);
   byId("coverage-summary").textContent = `${formatSchoolYear(yearLabel(schoolYearId))}: ${coverageSummary(result.classes)}`;
-  if (!result.classes.length) return emptyRow(tbody, 6, "Rok nie ma klas.");
+  if (!result.classes.length) return emptyRow(tbody, 7, "Rok nie ma klas.");
   tbody.replaceChildren(...result.classes.map((row) => {
     const tr = document.createElement("tr");
     const { key, label } = coverageState(row);
     tr.append(cell(row.name), statusCell(key, label));
-    tr.append(cell(String(row.activeRepresentativeCount), "num"), cell(String(row.pendingInvitationCount), "num"));
+    tr.append(cell(String(row.activeRepresentativeCount), "num"), cell(coverageActivation(row, result.representativeMfaRequired === true)));
+    tr.append(cell(String(row.pendingInvitationCount), "num"));
     tr.append(cell(row.nextInvitationExpiresAt ? formatDateTime(row.nextInvitationExpiresAt) : "—"));
     tr.append(cell(formatDateOrTimestamp(row.lastRepresentativeLoginOn, "Europe/Brussels") ?? "—"));
     return tr;

@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, FIRST_LOGIN_RULES, FIRST_LOGIN_STEPS,
+  batchRowError, batchSummary, canApplyBatch, coverageActivation, coverageState, coverageSummary, FIRST_LOGIN_RULES, FIRST_LOGIN_STEPS,
   invitationLinkFor, invitationsCount, newBatchKey, plural, printCardModel, schoolYearsCount, tokenListText,
 } from '../admin/onboarding.js';
 
@@ -78,6 +78,13 @@ test('obsada klasy: stan słowny', () => {
     { activeRepresentativeCount: 0, pendingInvitationCount: 2 },
     { activeRepresentativeCount: 1, pendingInvitationCount: 0 },
   ]), '3 klasy: bez przedstawiciela i bez zaproszenia 1, z oczekującym zaproszeniem 1.');
+});
+
+test('obsada klasy: stan aktywacji (bez logowania, MFA)', () => {
+  assert.equal(coverageActivation({ activeRepresentativeCount: 0 }, true), '—');
+  assert.equal(coverageActivation({ activeRepresentativeCount: 3, neverLoggedInRepresentativeCount: 1, mfaEnrolledRepresentativeCount: 2 }, true), 'bez logowania: 1 · MFA 2/3 (wymagane)');
+  assert.equal(coverageActivation({ activeRepresentativeCount: 1, neverLoggedInRepresentativeCount: 0, mfaEnrolledRepresentativeCount: 0 }, false), 'wszyscy zalogowani · MFA 0/1');
+  assert.equal(coverageState({ activeRepresentativeCount: 2, neverLoggedInRepresentativeCount: 2, lastRepresentativeLoginOn: null }).label, 'Konto bez logowania');
 });
 
 test('widok: sekcje obsady i partii, kartki poza <main>, tokeny czyszczone przy pagehide', () => {
