@@ -307,6 +307,21 @@ samej linii (`409 budget_line_superseded`, jedna rewizja) oraz dwie poprawki kas
 `budget-category`, `budget-revision`, `opening-adjustment`. `createOpening` używa
 `LOCK TABLE`, nie `FOR UPDATE`, więc zostaje poza listą.
 
+`tests/pg-real-idempotency-quota.test.js` (#6, #84, pomijany bez `RD_TEST_PG_URL`): dwa
+wyścigi bez odpowiednika na PGlite. (1) Dwa przypisania dwóch różnych wpłat pod tym samym
+`Idempotency-Key`: zwycięzca dostaje `201`, przegrany czeka w bazie na unikalny klucz
+(`transactionid`), dostaje `23505` i `409 idempotency_conflict` (nie `payment_already_assigned`);
+jego wpłata zostaje `unmatched`, jest jedno przypisanie i jeden wpis audytu, a ponowienie
+przegranego nadal jest konfliktem, zwycięzcy — odtworzeniem. (2) Dwa równoległe przebiegi
+workera e-mail na przełomie doby konta Brevo (22:30 UTC = 00:30 w Brukseli oraz 01:00 UTC,
+gdy doba konta liczy wpis sprzed północy UTC): A trzyma `QUOTA_LOCK_ID` po przejęciu
+wierszy, B czeka na blokadę doradczą (`advisory`) i po jej zwolnieniu liczy wiadomości „w
+locie” A; razem wychodzi dokładnie tyle, ile wynosi pula z większego zużycia (doba UTC /
+doba konta), bez drugiej wysyłki tej samej wiadomości. Kontrola: ten sam układ z kontem w
+UTC daje większą pulę. Zegar: `now` jest wstrzykiwany, ale `recorded_at` nowych wpisów
+dziennika pochodzi z zegara bazy, więc test nie robi przebiegu po zakończeniu A; wpisy
+„other” są zasiewane z jawnym `recorded_at`. Dane syntetyczne, atrapa transportu, brak sieci.
+
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
 `scripts/check-lock-mutations.js` usuwa po kolei każdą blokadę z listy `MUTANTS`
