@@ -21,7 +21,7 @@
 // Macierz poniżej to założenie techniczne do zatwierdzenia (D-08, D-09):
 // dyrekcja (`principal`) i Komisja Rewizyjna (`audit`) nie mają dostępu.
 
-import { loadAuthorizationContext } from '../authorization.js';
+import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { authorizedClassIds, isAuthorizedScoped } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { PersonalDataError, gateFreeText, piiAuditMetadata } from '../pii-gate.js';
@@ -373,7 +373,11 @@ async function list(request, env, url, json) {
   // DOC-01: przydział klasowy liczy się tylko w swoim roku (i z MFA, jeśli rodzaj go wymaga) —
   // przydział z innego roku nie może zamienić odmowy (403) w pustą listę.
   const ownClasses = authorizedClassIds(context, { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId });
-  if (!unscopedKinds.length && !allClasses && !ownClasses.length) return json({ error: 'forbidden' }, 403);
+  if (!unscopedKinds.length && !allClasses && !ownClasses.length) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, null, request);
+    return json({ error: 'forbidden' }, 403);
+  }
 
   // Wyszukiwanie i filtr kategorii zawężają zapytanie w SQL, PRZED LIMIT
   // (issue #76 wprost pilnuje tego, by pełna strona znaczyła realne wyniki).
@@ -431,7 +435,11 @@ async function upload(request, env, url, json) {
 
   // Uprawnienie do zapisu = uprawnienie do odczytu danego rodzaju w tym roku/klasie.
   const target = { kind, schoolYearId, classId: classId.value };
-  if (!canAccessDocument(context, target)) return json({ error: 'forbidden' }, 403);
+  if (!canAccessDocument(context, target)) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    await logAccessDenied(env, context, { roles: policy.roles }, request);
+    return json({ error: 'forbidden' }, 403);
+  }
   if (!env.storage) return json({ error: 'storage_unavailable' }, 503);
 
   // #185 pkt 3: limit współbieżnych uploadów NA PROCES, sprawdzony PRZED

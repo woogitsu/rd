@@ -111,6 +111,28 @@ export async function logAccessDenied(env, context, requirement, request) {
   }
 }
 
+// #184 etap 2: odmowa wykryta WEWNĄTRZ transakcji żądania (zakres roku
+// sprawdzany dopiero po odczycie wiersza, np. requireYear w modułach
+// finansowych). Tam logAccessDenied NIE może być wołane: zdarzenie wycofałoby
+// się razem z transakcją, a na PGlite (jedno połączenie) druga transakcja
+// czekałaby na pierwszą. Błąd niesie więc kontekst odmowy, a zewnętrzny
+// `catch` modułu — już po wycofaniu transakcji — zapisuje ślad przez
+// logDeferredAccessDenied. Odpowiedź 403 pozostaje bez zmian.
+const DEFERRED_DENIAL = Symbol('rd.deferredAccessDenied');
+
+export function withDeferredAccessDenied(error, context, requirement) {
+  if (error && typeof error === 'object') error[DEFERRED_DENIAL] = { context, requirement };
+  return error;
+}
+
+export async function logDeferredAccessDenied(env, error, request) {
+  const denial = error?.[DEFERRED_DENIAL];
+  if (!denial) return;
+  // Najwyżej jeden ślad na błąd, nawet gdy przechodzi przez kilka `catch`.
+  delete error[DEFERRED_DENIAL];
+  await logAccessDenied(env, denial.context, denial.requirement, request);
+}
+
 export async function requireAccess(request, env, requirement, json) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) return { response: json({ error: 'unauthenticated' }, 401) };

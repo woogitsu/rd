@@ -16,7 +16,9 @@
 // zostaje. Suma pozycji wersji ≤ netto wpisu; korekta poniżej sumy przypisania jest
 // odrzucana, dopóki nie powstanie nowa wersja z mniejszymi kwotami.
 
-import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
+import {
+  isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, withDeferredAccessDenied,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
@@ -72,7 +74,7 @@ async function requireFinancial(request, env, schoolYearId) {
 
 function requireYear(context, schoolYearId) {
   if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true })) {
-    throw new RequestError('forbidden', 403);
+    throw withDeferredAccessDenied(new RequestError('forbidden', 403), context, { roles: FINANCIAL_ROLES });
   }
 }
 
@@ -414,7 +416,11 @@ export async function handle(request, env, url, json) {
     if (eventMatch) return await readEventFinance(request, env, decodeId(eventMatch[1]), json);
     return null;
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof RequestError) {
+      // #184: odmowa zakresu roku z wnętrza transakcji — ślad po jej wycofaniu.
+      await logDeferredAccessDenied(env, error, request);
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }

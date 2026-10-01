@@ -31,7 +31,7 @@
 // ani statusem rodziny; brak wpisu może być nieaktualny.
 // Odpowiedź nigdy nie zawiera danych opiekunów (e-maili, imion, zgód).
 
-import { loadAuthorizationContext } from '../authorization.js';
+import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
 import { authorizedClassIds, isAuthorizedScoped } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { recordDataAccess } from '../data-access.js';
@@ -162,7 +162,11 @@ export async function handle(request, env, url, json) {
   }
 
   const scope = printScope(context, { schoolYearId, classId });
-  if (scope.error) return json({ error: scope.error }, scope.status);
+  if (scope.error) {
+    // #184: ślad odmowy 403 (przed transakcją żądania).
+    if (scope.status === 403) await logAccessDenied(env, context, { roles: PRINT_ROLES }, request);
+    return json({ error: scope.error }, scope.status);
+  }
 
   const actorId = context.session.user.id;
   if (classId) {

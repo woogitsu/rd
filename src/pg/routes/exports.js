@@ -12,7 +12,7 @@
 
 import { isSameOrigin } from '../../auth.js';
 import {
-  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, mfaAwareForbiddenCode,
+  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, mfaAwareForbiddenCode,
   MFA_STEP_UP_MAX_AGE_SECONDS,
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
@@ -78,6 +78,8 @@ async function authorize(request, env, requirement, json) {
     // mfa_enrollment_required zamiast ogólnego forbidden, by ekran logowania
     // mógł poprowadzić przedstawiciela do zapisania czynnika.
     const code = await mfaAwareForbiddenCode(context, requirement, env);
+    // #184: ślad tylko dla odmowy roli/zakresu (`forbidden`); kody MFA — bez zdarzenia.
+    if (code === 'forbidden') await logAccessDenied(env, context, requirement, request);
     return { response: json({ error: code }, 403) };
   }
   return { context };
@@ -114,7 +116,10 @@ async function createYearlyExport(request, env, json) {
   let archiveVia = null;
   if (!isAuthorizedScoped(context, { roles: [...YEARLY_EXPORT_ROLES], requireMfa: true, schoolYearId })) {
     archiveVia = await archiveReadVia(env.db, context, schoolYearId, ARCHIVE_EXPORT_ROLES);
-    if (!archiveVia) return json({ error: 'forbidden' }, 403);
+    if (!archiveVia) {
+      await logAccessDenied(env, context, { roles: [...YEARLY_EXPORT_ROLES] }, request);
+      return json({ error: 'forbidden' }, 403);
+    }
   }
   // #150 (SR-10, krok w górę): eksport roczny ujawnia pełne dane rodzin i
   // finansowe — rola/zakres dają dostęp, ale MFA musi być potwierdzone od
@@ -220,7 +225,12 @@ async function exportClassRoster(request, env, url, json) {
     await recordDataAccess(env, { actorId, accessKind: 'class_roster_export', classId, outcome: 'not_found' });
     return json({ error: 'class_not_found' }, 404);
   }
-  if (result.forbidden) return json({ error: 'forbidden' }, 403);
+  if (result.forbidden) {
+    // #184: odmowa zakresu roku klasy wykryta w transakcji — ślad dopiero po
+    // jej zakończeniu (transakcja nic nie zapisała, bo zwróciła przed recordRun).
+    await logAccessDenied(env, access.context, { roles: [...ROSTER_ROLES] }, request);
+    return json({ error: 'forbidden' }, 403);
+  }
 
   if (format === 'csv') {
     const csv = buildClassRosterCsv(result.roster);

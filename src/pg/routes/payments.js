@@ -24,7 +24,9 @@
 // salda „do zapłaty” ani statusu dłużnika.
 
 import { isSameOrigin } from '../../auth.js';
-import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
+import {
+  isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, withDeferredAccessDenied,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { csvCell, csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
 import { toXlsxWorkbook, xlsxResponse } from '../xlsx.js';
@@ -385,13 +387,13 @@ async function requireFinancialContext(request, env, schoolYearId) {
   return context;
 }
 
-// #184: bez śladu access.denied tutaj — wywoływana WEWNĄTRZ transakcji zapisu
-// (po odczycie wpłaty), więc zdarzenie wycofałoby się razem z nią. Odmowa roli
-// lub MFA zostawia ślad wcześniej, w requireFinancialContext; odmowa samego
-// zakresu roku (przydział na inny rok) — dziś bez śladu (follow-up w PR).
+// #184: wywoływana WEWNĄTRZ transakcji zapisu (po odczycie wiersza), więc
+// logAccessDenied tu nie wolno (zdarzenie wycofałoby się razem z nią). Błąd
+// niesie kontekst odmowy (withDeferredAccessDenied), a ślad zapisuje catch
+// w handle() po wycofaniu transakcji. Odmowa roli lub MFA — w requireFinancialContext.
 function requireYear(context, schoolYearId) {
   if (!isAuthorizedScoped(context, { roles: FINANCIAL_ROLES, schoolYearId, requireMfa: true })) {
-    throw new RequestError('forbidden', 403);
+    throw withDeferredAccessDenied(new RequestError('forbidden', 403), context, { roles: FINANCIAL_ROLES });
   }
 }
 
@@ -1264,7 +1266,11 @@ export async function handle(request, env, url, json) {
     if (reassignmentMatch) return await reassignPayment(request, env, decodeId(reassignmentMatch[1]), json);
     return await assignPayment(request, env, decodeId(assignmentMatch[1]), json);
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof RequestError) {
+      // #184: odmowa zakresu roku z wnętrza transakcji — ślad po jej wycofaniu.
+      await logDeferredAccessDenied(env, error, request);
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }

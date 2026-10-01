@@ -338,12 +338,17 @@ export async function insertHistoricalData(db, data) {
 
   // Szkic uzgodnienia w najnowszym roku — karta/propozycje mają co pokazać
   // nawet przed importem pozycji w scenariuszu (POST .../lines dokłada resztę).
+  // Data wyciągu = ostatni dzień rozkładu pozycji (latestSpreadDays, nie dalej
+  // niż dziś): pozycja wyciągu nie może być późniejsza niż data wyciągu
+  // (bank_statement_line_guard, 0015). Stała data „rok-09-30” psuła scenariusz
+  // od 1 października — pozycje z rozkładu wypadały po dacie wyciągu (400).
   const reconciliationId = 'hrec1';
+  const statementDate = addDays(data.latestStartsOn, data.latestSpreadDays - 1);
   await db.query(
     `INSERT INTO bank_reconciliations (id, school_year_id, statement_date, statement_balance_cents,
        ledger_balance_cents, ledger_non_bank_cents, reference_salt, created_by, idempotency_key)
      VALUES ($1, $2, $3, 0, 0, 0, $4, 'hu-treasurer', 'heavy-reconciliation-draft')`,
-    [reconciliationId, data.latestYear, `${data.latestStartsOn.slice(0, 4)}-09-30`,
+    [reconciliationId, data.latestYear, statementDate,
       [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('')],
   );
   // Statystyki planisty po wsadowym wstawieniu: bez ANALYZE PGlite (brak

@@ -1213,7 +1213,11 @@ export async function handle(request, env, url, json) {
     });
     return json({ event: result.event, replayed: result.replayed }, 200, noStore);
   } catch (error) {
-    if (error instanceof EventError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof EventError) {
+      // #184: ślad odmowy (poza transakcją żądania — ta już się zakończyła).
+      if (error.status === 403 && error.code === 'forbidden') await env?.onAccessDenied?.();
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     throw error;
   }
 }
