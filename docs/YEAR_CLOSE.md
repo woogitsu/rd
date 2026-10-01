@@ -35,6 +35,8 @@ Aplikacja nie sprawdza treści raportów — to potwierdzenie ludzkie. Zestawien
 
 `accessReview` (informacyjna pozycja przeglądu, #133): odczyty z `data_access_log` w zakresie roku (`school_year_id` roku albo klasa roku), z wynikiem `ok`, wg rodzaju (`reads`: wpisy, odczyty, liczba kont), `readsWithoutValidGrant` (odczyty, przy których konto nie miało w chwili odczytu ważnego przydziału — wygasłego, cofniętego albo jeszcze nieprzyznanego) oraz `activeGrantsInScope` (przydziały, które zamknięcie roku wygasi). Bez identyfikatorów kont — szczegóły w przeglądzie dziennika odczytu w panelu administratora. **Wariant zachowawczy (D-13/D-21):** nie jest to kolejny punkt blokujący listy kontrolnej (`CHECKLIST_ITEMS`); nowy punkt wymagałby migracji (`CHECK` na `school_year_closure_checklist.item`) i zmieniłby warunek zamknięcia, więc do decyzji Rady. Ekran `year-close/` pokazuje obie sekcje pod listą kontrolną.
 
+Szczegółowy przegląd dostępu po kadencji (#133): `GET /api/admin/access-review?schoolYearId={rok}` (admin + MFA, [docs/AUTHORIZATION.md](AUTHORIZATION.md)) — konta z przydziałami roku, ostatni odczyt, odczyty bez ważnego przydziału i propozycja odebrania. Zalecenie przed `close`: admin przegląda raport i jawnie odbiera zbędne przydziały (`POST /api/admin/grants/{id}/revoke`); aplikacja niczego nie odbiera sama, a zamknięcie roku i tak wygasza przydziały tego roku. Nie jest punktem blokującym listy kontrolnej (D-21).
+
 ## Zamknięcie
 
 `POST /api/year-close/{rok}/close` wykonuje w jednej transakcji, w tej kolejności blokad (#212 — nie odwracać, ani w tej, ani w innej trasie):

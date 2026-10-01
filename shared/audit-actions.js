@@ -220,6 +220,7 @@ const CATALOG = {
   // --- privacy ---
   'audit.viewed': ['privacy', 'Odczyt dziennika zdarzeń'],
   'access_log.viewed': ['privacy', 'Odczyt dziennika dostępu do danych'],
+  'access_review.viewed': ['privacy', 'Odczyt przeglądu dostępu po kadencji'],
   'data_subject_request.created': ['privacy', 'Rejestracja żądania osoby, której dane dotyczą'],
   'data_subject_request.status_changed': ['privacy', 'Zmiana stanu żądania osoby'],
   'processing_restriction.applied': ['privacy', 'Nałożenie ograniczenia przetwarzania danych (gospodarstwo lub opiekun)'],
