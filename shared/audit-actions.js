@@ -203,6 +203,7 @@ const CATALOG = {
   'promotion.applied': ['families', 'Promocja uczniów na nowy rok'],
   'student_household.added': ['families', 'Powiązanie ucznia z gospodarstwem'],
   'student_household.ended': ['families', 'Zakończenie powiązania ucznia z gospodarstwem'],
+  'guardian_household.ended': ['families', 'Zakończenie powiązania opiekuna z gospodarstwem'],
   'student_guardian.ended': ['families', 'Zakończenie powiązania ucznia z opiekunem'],
   'student_guardian.contact.updated': ['families', 'Zmiana kontaktu powiązania ucznia z opiekunem'],
   'guardian.contact.updated': ['families', 'Zmiana danych kontaktowych opiekuna'],

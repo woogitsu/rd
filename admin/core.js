@@ -125,6 +125,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   session: "Sesja",
   student_guardian: "Powiązanie ucznia z opiekunem",
   student_household: "Powiązanie ucznia z gospodarstwem",
+  guardian_household: "Powiązanie opiekuna z gospodarstwem",
   user: "Konto",
 });
 

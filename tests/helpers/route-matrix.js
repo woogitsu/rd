@@ -143,6 +143,10 @@ function eventAction(id, action, stage, allow, body = {}) {
 const IMPORT = { admin: SCHOOL_Y1, board: SCHOOL_Y1 };
 const DOC_FINANCIAL = FINANCIAL;
 const DOC_BOARD = { admin: SCHOOL_Y1, board: SCHOOL_Y1 };
+// #167: dokumenty Rady — zapis (przesłanie, opis, zastąpienie, unieważnienie) tylko admin/zarząd bez klasy;
+// odczyt także przedstawiciele z przydziałem klasowym w roku 1 (przydział zarządu ograniczony do klasy — nie).
+const DOC_COUNCIL_WRITE = DOC_BOARD;
+const DOC_COUNCIL_READ = { ...DOC_BOARD, repA: SCHOOL_Y1, repB: SCHOOL_Y1 };
 // Klasa: admin/zarząd bez klasy — obie klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — tylko ona.
 const CLASS_READ_ALL = { admin: ['A', 'B'], board: ['A', 'B'], repA: ['A'], repB: ['B'], boardA: ['A'] };
 const DOC_CLASS = CLASS_READ_ALL;
@@ -409,6 +413,8 @@ function yearCloseRoute(id, method, path, suffix, allow, ok, { fixture = null, o
 export function documentKindsCheck(actor, mfa, json) {
   const ownClass = actor.ownClass ?? actor.classBoard;
   const allowed = (doc) => {
+    // Przedstawiciel widzi też dokumenty Rady (#167); przydział zarządu ograniczony do klasy — nie.
+    if (actor.ownClass) return (doc.kind === 'class' && doc.classId === TARGETS[ownClass].classId) || doc.kind === 'council_shared';
     if (ownClass) return doc.kind === 'class' && doc.classId === TARGETS[ownClass].classId;
     if (doc.kind === 'financial') return FINANCIAL_ROLE_KEYS.includes(actor.key) && mfa;
     return ['admin', 'board'].includes(actor.key);
@@ -417,9 +423,9 @@ export function documentKindsCheck(actor, mfa, json) {
   const wrong = documents.filter((doc) => !allowed(doc));
   const problems = wrong.length ? [`lista zawiera niedozwolone dokumenty: ${wrong.map((doc) => `${doc.kind}/${doc.classId}`).join(', ')}`] : [];
   // Oczekiwane rodzaje (klasa) muszą być na liście — pusta lista nie jest dowodem poprawnego zakresu.
-  const expected = ownClass ? [`class/${TARGETS[ownClass].classId}`]
+  const expected = ownClass ? [`class/${TARGETS[ownClass].classId}`, ...(actor.ownClass ? ['council_shared/null'] : [])]
     : actor.key === 'treasurer' ? ['financial/null']
-      : [`class/${TARGETS.A.classId}`, `class/${TARGETS.B.classId}`, 'board/null', ...(mfa ? ['financial/null'] : [])];
+      : [`class/${TARGETS.A.classId}`, `class/${TARGETS.B.classId}`, 'board/null', 'council_shared/null', ...(mfa ? ['financial/null'] : [])];
   const seen = new Set(documents.map((doc) => `${doc.kind}/${doc.classId}`));
   const missing = expected.filter((entry) => !seen.has(entry));
   if (missing.length) problems.push(`lista nie zawiera: ${missing.join(', ')}`);
@@ -875,6 +881,7 @@ export const ROUTE_MATRIX = Object.freeze([
   // i przedstawiciel (także zarząd z przydziałem) wyłącznie przypisanej klasy. Odczyt bez uprawnień = 404.
   documentUpload('documents.uploadFinancial', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
   documentUpload('documents.uploadBoard', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentUpload('documents.uploadCouncilShared', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_WRITE, false),
   documentUpload('documents.uploadClass', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
   {
     id: 'documents.list', module: 'documents', method: 'GET', path: '/api/documents?schoolYearId=:year',
@@ -882,15 +889,18 @@ export const ROUTE_MATRIX = Object.freeze([
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1, repA: SCHOOL_Y1, repB: SCHOOL_Y1, boardA: SCHOOL_Y1 },
     // Skarbnik widzi wyłącznie dowody finansowe, a te wymagają MFA.
     mfa: (actor) => actor.key === 'treasurer', ok: 200, deny: 403, fixture: null,
-    needs: [['document', 'financial', YEAR_TARGETS], ['document', 'board', YEAR_TARGETS], ['document', 'class', ['A', 'B', 'Y2']]],
+    needs: [['document', 'financial', YEAR_TARGETS], ['document', 'board', YEAR_TARGETS], ['document', 'council_shared', YEAR_TARGETS], ['document', 'class', ['A', 'B', 'Y2']]],
     build: ({ target }) => ({ path: `/api/documents?schoolYearId=${target.schoolYearId}` }),
     check: ({ actor, mfa, json }) => documentKindsCheck(actor, mfa, json),
   },
   documentRead('documents.getFinancial', '/api/documents/:financialDocumentId', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, ''),
   documentRead('documents.getBoard', '/api/documents/:boardDocumentId', 'board', YEAR_TARGETS, DOC_BOARD, false, ''),
+  documentRead('documents.getCouncilShared', '/api/documents/:council_sharedDocumentId', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_READ, false, ''),
   documentRead('documents.getClass', '/api/documents/:classDocumentId', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, ''),
   documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
+  // Dokument Rady jest ogólnoszkolny — jego treść (znacznik roku) czyta także przedstawiciel jednej klasy (#167).
+  { ...documentRead('documents.contentCouncilShared', '/api/documents/:council_sharedDocumentId/content', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_READ, false, '/content'), visible: () => ['W1', 'Y2'] },
   documentRead('documents.contentClass', '/api/documents/:classDocumentId/content', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, '/content'),
   // Zmiana stanu dokumentu (issue #82): zastąpienie i unieważnienie — te same reguły dostępu
   // co odczyt (brak wyroczni istnienia dla nieznanego/niedozwolonego identyfikatora). Kod
@@ -901,10 +911,13 @@ export const ROUTE_MATRIX = Object.freeze([
   documentStatus('documents.voidFinancial', 'void', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
   documentStatus('documents.supersedeBoard', 'supersede', 'board', YEAR_TARGETS, DOC_BOARD, false),
   documentStatus('documents.voidBoard', 'void', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentStatus('documents.supersedeCouncilShared', 'supersede', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_WRITE, false),
+  documentStatus('documents.voidCouncilShared', 'void', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_WRITE, false),
   documentStatus('documents.supersedeClass', 'supersede', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
   documentStatus('documents.voidClass', 'void', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
   documentDescribe('documents.describeFinancial', '/api/documents/:financialDocumentId/description', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true),
   documentDescribe('documents.describeBoard', '/api/documents/:boardDocumentId/description', 'board', YEAR_TARGETS, DOC_BOARD, false),
+  documentDescribe('documents.describeCouncilShared', '/api/documents/:council_sharedDocumentId/description', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_WRITE, false),
   documentDescribe('documents.describeClass', '/api/documents/:classDocumentId/description', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false),
 
   // ---------- ledger (#38) ----------
@@ -1728,6 +1741,17 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({
       path: `/api/students/${obj.studentId}/households/${obj.membershipId}/end`,
       body: { endsOn: '2020-01-01', reason: 'Zakończenie członkostwa (syntetyczne)' },
+    }),
+  },
+  {
+    // Członkostwo opiekuna (#86, #535): wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403.
+    id: 'families.guardianHouseholdEnd', module: 'families', method: 'POST', path: '/api/guardians/:guardianId/households/:membershipId/end',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 200,
+    deny: (actor, targetKey, mfa) => (actor.key === 'boardA' ? 403 : familyEditDeny(actor, targetKey, mfa)),
+    fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/households/${obj.guardianMembershipId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zakończenie członkostwa opiekuna (syntetyczne)' },
     }),
   },
   {

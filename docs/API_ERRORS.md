@@ -549,9 +549,10 @@ błędów"). Nie obejmuje:
 - schematów ciał żądań i odpowiedzi w `docs/openapi.json` (etap 1 generatora,
   `scripts/build-openapi.js`, opisuje tylko ścieżki, metody, role, MFA,
   statusy i kody z tego katalogu; patrz sekcja „OpenAPI” niżej);
-- `jsconfig.json`, adnotacji `@ts-check`/JSDoc typów i kroku `tsc --noEmit` w
-  CI (wymagałoby dodania `typescript` jako zależności — instalacja pakietu
-  wymaga połączenia z rejestrem npm, co jest poza zakresem sesji tego
-  agenta poprawek).
+- pełnych typów `@typedef` (`Db`, `Tx`, `Grant`, `AuthContext`, `Actor`) i
+  objęcia sprawdzaniem typów całego `src/pg/**`. Start (#160): `jsconfig.json`
+  z `checkJs` dla `src/pg/input.js`, `scope.js`, `pii-gate.js`, `audit.js`,
+  `npm run typecheck` (`tsc -p jsconfig.json --noEmit`) i job `typecheck` w CI
+  (wymagany przez `ci-ok`). Kolejne pliki dopisuje się do `include`.
 
 To zostaje do kolejnych PR.

@@ -107,6 +107,9 @@ function snapshotFromD1() {
   try { return createSnapshot(db, '2026-09-27T00:00:00Z'); } finally { db.close(); }
 }
 
+// Fixture ma godziny wydarzeń bez strefy (#183): reguła jest podawana jawnie.
+const restore = (db, snapshot, options = { eventTimeZone: 'Europe/Brussels' }) => restoreSnapshot(db, snapshot, options);
+
 function resign(snapshot) {
   snapshot.checksum = snapshotChecksum(snapshot.tables);
   return snapshot;
@@ -119,7 +122,7 @@ test('restore from a D1-built snapshot works with every current PostgreSQL migra
   const expected = sourceReconciliation(structuredClone(snapshot.tables));
   const db = await createTestDb();
   try {
-    const report = await restoreSnapshot(db, snapshot);
+    const report = await restore(db, snapshot);
     // Uzgodnienie liczności i sum (restoreSnapshot porównuje je też sam i wycofuje przy różnicy).
     assert.deepEqual(report.counts, expected.counts);
     assert.deepEqual(report.payments, { count: 6, net_cents: '16500' });
@@ -173,9 +176,10 @@ test('naive D1 timestamps are read as UTC even when the server session zone is E
   const db = await createTestDb();
   try {
     await db.query("SET TIME ZONE 'Europe/Brussels'");
-    await restoreSnapshot(db, snapshotFromD1());
+    await restore(db, snapshotFromD1());
     const rows = (await db.query("SELECT to_char(published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') AS published, to_char(begins_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') AS begins FROM events WHERE id = 'ev-published'")).rows[0];
-    assert.deepEqual(rows, { published: '2026-09-20 10:00', begins: '2026-10-12 18:00' });
+    // published_at to znacznik techniczny (UTC); begins_at to czas kalendarza, tu odczytany jako brukselski (#183).
+    assert.deepEqual(rows, { published: '2026-09-20 10:00', begins: '2026-10-12 16:00' });
     const zone = (await db.query('SHOW TimeZone')).rows[0];
     assert.equal(Object.values(zone)[0], 'Europe/Brussels', 'SET LOCAL does not leak past the restore transaction');
   } finally { await db.close(); }
@@ -184,7 +188,7 @@ test('naive D1 timestamps are read as UTC even when the server session zone is E
 test('restored rows stay protected by the new guards (append-only audit, role grants, events)', async () => {
   const db = await createTestDb();
   try {
-    await restoreSnapshot(db, snapshotFromD1());
+    await restore(db, snapshotFromD1());
     await assert.rejects(db.query("UPDATE audit_events SET action = 'changed' WHERE id = 'ae-1'"), /audit_events_are_append_only/);
     await assert.rejects(db.query("DELETE FROM audit_events WHERE id = 'ae-3'"), /audit_events_are_append_only/);
     await assert.rejects(db.query("DELETE FROM role_grants WHERE id = 'rg-rep'"), /role_grants_cannot_be_deleted/);
@@ -212,19 +216,19 @@ test('an unpublished D1 event with a leftover published_at is rejected with a cl
   resign(snapshot);
   const db = await createTestDb();
   try {
-    await assert.rejects(restoreSnapshot(db, snapshot), /Unpublished event has published_at: ev-internal/);
+    await assert.rejects(restore(db, snapshot), /Unpublished event has published_at: ev-internal/);
     for (const table of ['school_years', 'users', 'role_grants', 'audit_events', 'events', 'event_revisions', 'payment_entries']) {
       assert.equal((await db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0, `rolled back: ${table}`);
     }
     // Błąd w połowie transakcji (po rolach, wydarzeniach i rewizjach z triggera 0008) też wycofuje wszystko.
     const broken = snapshotFromD1();
     broken.tables.payment_entries.find((row) => row.id === 'p-1').household_id = 'h-missing';
-    await assert.rejects(restoreSnapshot(db, resign(broken)), /foreign key/);
+    await assert.rejects(restore(db, resign(broken)), /foreign key/);
     for (const table of ['role_grants', 'events', 'event_revisions', 'audit_events', 'payment_entries']) {
       assert.equal((await db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0, `rolled back mid-transaction: ${table}`);
     }
     // Po odrzuceniu ta sama baza przyjmuje poprawny snapshot (brak częściowego stanu).
-    const report = await restoreSnapshot(db, snapshotFromD1());
+    const report = await restore(db, snapshotFromD1());
     assert.equal(report.counts.events, 4);
   } finally { await db.close(); }
 });
@@ -235,13 +239,13 @@ test('D1 snapshot with a role grant whose class is from another school year is r
   resign(snapshot);
   const db = await createTestDb();
   try {
-    await assert.rejects(restoreSnapshot(db, snapshot), /Role grant class does not belong to its school year: rg-rep/);
+    await assert.rejects(restore(db, snapshot), /Role grant class does not belong to its school year: rg-rep/);
     for (const table of ['school_years', 'users', 'role_grants']) {
       assert.equal((await db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n, 0, `nothing written: ${table}`);
     }
     const noYear = snapshotFromD1();
     noYear.tables.role_grants.find((row) => row.id === 'rg-rep').school_year_id = null;
-    await assert.rejects(restoreSnapshot(db, resign(noYear)), /Role grant has a class but no school year: rg-rep/);
+    await assert.rejects(restore(db, resign(noYear)), /Role grant has a class but no school year: rg-rep/);
   } finally { await db.close(); }
 });
 
@@ -253,14 +257,14 @@ test('D1 snapshot with user e-mails differing only by case is rejected with both
   resign(snapshot);
   const db = await createTestDb();
   try {
-    await assert.rejects(restoreSnapshot(db, snapshot), (error) => {
+    await assert.rejects(restore(db, snapshot), (error) => {
       assert.match(error.message, /Duplicate user email \(case-insensitive\): u-dup, u-rep/);
       assert.doesNotMatch(error.message, /example\.invalid/);
       return true;
     });
     const upper = snapshotFromD1();
     upper.tables.users.find((row) => row.id === 'u-rep').email = 'Rep@example.invalid';
-    await assert.rejects(restoreSnapshot(db, resign(upper)), /User email is not in lower\(btrim\(\)\) form: u-rep/);
+    await assert.rejects(restore(db, resign(upper)), /User email is not in lower\(btrim\(\)\) form: u-rep/);
     assert.equal((await db.query('SELECT count(*)::int AS n FROM users')).rows[0].n, 0);
   } finally { await db.close(); }
 });
@@ -272,6 +276,88 @@ test('restore refuses a non-empty target that already holds new-schema rows (mee
     await db.query("INSERT INTO users (id, email, display_name) VALUES ('u-x', 'x@example.invalid', 'X')");
     await db.query(`INSERT INTO meetings (id, school_year_id, kind, title, scheduled_at, created_by)
                     VALUES ('m-x', 'y-x', 'board', 'Zebranie próbne', '2026-10-01T17:00:00Z', 'u-x')`);
-    await assert.rejects(restoreSnapshot(db, snapshotFromD1()), /Target table is not empty/);
+    await assert.rejects(restore(db, snapshotFromD1()), /Target table is not empty/);
+  } finally { await db.close(); }
+});
+
+// #183: godziny wydarzeń (czas wpisany przez człowieka) wymagają jawnej reguły strefy.
+async function publicEventTimes(db) {
+  const res = await handlePgRequest(request('/api/public/events?schoolYearId=y-2026'), { db });
+  assert.equal(res.status, 200);
+  return Object.fromEntries((await res.json()).events.map((e) => [e.id, [e.startsAt, e.startsAtUtc]]));
+}
+
+test('restore without an event time zone rejects naive begins_at before the transaction and writes nothing (#183)', async () => {
+  const db = await createTestDb();
+  try {
+    await assert.rejects(restoreSnapshot(db, snapshotFromD1()), /begins_at without a time zone \(3, e\.g\. ev-internal\).*eventTimeZone/);
+    await assert.rejects(restoreSnapshot(db, snapshotFromD1(), { eventTimeZone: 'Europe/Warsaw' }), /begins_at without a time zone/);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM events')).rows[0].n, 0);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM school_years')).rows[0].n, 0);
+  } finally { await db.close(); }
+});
+
+test('Europe/Brussels rule shows the typed hour in the public view and the panel, in summer and winter time (#183)', async () => {
+  const db = await createTestDb();
+  try {
+    await restore(db, snapshotFromD1());
+    assert.deepEqual(await publicEventTimes(db), {
+      'ev-published': ['2026-10-12T18:00:00+02:00', '2026-10-12T16:00:00.000Z'],
+      'ev-published-no-date': ['2026-12-01T10:00:00+01:00', '2026-12-01T09:00:00.000Z'],
+    }, 'tylko opublikowane; internal i draft_public niewidoczne publicznie');
+    const admin = await seedUserSession(db, { userId: 'u-admin', mfa: true });
+    const panel = await handlePgRequest(request('/api/events?schoolYearId=y-2026', { cookie: admin }), { db });
+    assert.equal(panel.status, 200);
+    const starts = Object.fromEntries((await panel.json()).events.map((e) => [e.id, e.startsAt]));
+    assert.equal(starts['ev-internal'], '2026-10-05T17:00:00+02:00', 'ta sama reguła dla internal');
+    assert.equal(starts['ev-published'], '2026-10-12T18:00:00+02:00');
+    assert.equal(starts['ev-published-no-date'], '2026-12-01T10:00:00+01:00');
+    assert.equal(starts['ev-draft'], '2026-11-20T10:00:00+01:00', 'wartość z jawnym Z bez zmian (09:00Z = 10:00 w Brukseli)');
+  } finally { await db.close(); }
+});
+
+test('UTC rule keeps the stored instant; restoring on a fresh database gives identical startsAtUtc (#183)', async () => {
+  const first = await createTestDb();
+  const second = await createTestDb();
+  try {
+    await restoreSnapshot(first, snapshotFromD1(), { eventTimeZone: 'UTC' });
+    await restoreSnapshot(second, snapshotFromD1(), { eventTimeZone: 'UTC' });
+    const times = await publicEventTimes(first);
+    assert.equal(times['ev-published'][1], '2026-10-12T18:00:00.000Z');
+    assert.equal(times['ev-published'][0], '2026-10-12T20:00:00+02:00');
+    assert.deepEqual(await publicEventTimes(second), times);
+  } finally { await first.close(); await second.close(); }
+});
+
+test('explicit-zone begins_at passes without conversion and without any zone rule (#183)', async () => {
+  const snapshot = snapshotFromD1();
+  const byId = (id) => snapshot.tables.events.find((row) => row.id === id);
+  byId('ev-published').begins_at = '2026-10-12T18:00:00+01:00';
+  byId('ev-published-no-date').begins_at = '2026-12-01T10:00:00Z';
+  byId('ev-internal').begins_at = '2026-10-05T17:00:00Z';
+  resign(snapshot);
+  const db = await createTestDb();
+  try {
+    await restoreSnapshot(db, snapshot);
+    const times = await publicEventTimes(db);
+    assert.equal(times['ev-published'][1], '2026-10-12T17:00:00.000Z');
+    assert.equal(times['ev-published-no-date'][1], '2026-12-01T10:00:00.000Z');
+  } finally { await db.close(); }
+});
+
+test('ambiguous or nonexistent Brussels local time is rejected with the event id and nothing is written (#183)', async () => {
+  const db = await createTestDb();
+  try {
+    for (const [value, reason] of [['2026-10-25 02:30:00', 'ambiguous_local_time'], ['2026-03-29 02:30:00', 'nonexistent_local_time']]) {
+      const snapshot = snapshotFromD1();
+      snapshot.tables.events.find((row) => row.id === 'ev-internal').begins_at = value;
+      resign(snapshot);
+      await assert.rejects(restore(db, snapshot), new RegExp(`${reason}\\): ev-internal`));
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM events')).rows[0].n, 0);
+    }
+    // Pod regułą UTC ta sama godzina jest jednoznaczna.
+    const snapshot = snapshotFromD1();
+    snapshot.tables.events.find((row) => row.id === 'ev-internal').begins_at = '2026-10-25 02:30:00';
+    await restoreSnapshot(db, resign(snapshot), { eventTimeZone: 'UTC' });
   } finally { await db.close(); }
 });

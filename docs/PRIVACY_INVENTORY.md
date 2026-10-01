@@ -91,6 +91,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`guardian_contact_changes`|`previous_email`|Opiekun|direct|kontakt|historia zmian kontaktu|guardian_contact|nie|nie|
 |`guardian_contact_changes`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie zmiany kontaktu|guardian_contact|tak|nie|
 |`guardian_households`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
+|`guardian_households`|`ended_reason`|Opiekun|direct|wolny tekst|uzasadnienie zmiany|nieustalona (D-04)|tak|tak|
 |`guardian_households`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`guardian_update_links`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`guardian_update_links`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -221,7 +222,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **208**, w tym wolnego tekstu: **58** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **209**, w tym wolnego tekstu: **59** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -907,6 +908,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `created_by` | pseudonymous | board_member | tak |
 | `ended_at` | none | — | tak |
 | `ended_by` | none | — | tak |
+| `ended_reason` | direct | guardian | tak |
 | `ends_on` | none | — | tak |
 | `guardian_id` | pseudonymous | guardian | tak |
 | `household_id` | none | — | tak |

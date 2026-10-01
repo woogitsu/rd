@@ -4887,6 +4887,17 @@
       "exportable": true,
       "data_type": "text"
     },
+    "ended_reason": {
+      "personal": "direct",
+      "subject": "guardian",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie zmiany",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": true,
+      "exportable": true,
+      "data_type": "text"
+    },
     "ends_on": {
       "personal": "none",
       "subject": null,
