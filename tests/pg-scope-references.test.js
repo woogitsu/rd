@@ -248,7 +248,7 @@ describe('#205: obecność — konto (userId) poza zakresem zebrania', () => {
     } finally { await db.close(); }
   });
 
-  test('podwójne kliknięcie i równoległe wpisy tego samego konta: jeden wiersz', async () => {
+  test('podwójne kliknięcie i równoległe wpisy tego samego konta: jeden wiersz (PGlite: po kolei, nie wyścig)', async () => {
     const { db, board, meeting } = await setup();
     try {
       await seedRoleGrant(db, { userId: 'u-skarbnik', role: 'treasurer', schoolYearId: YEAR });

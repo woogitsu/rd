@@ -84,7 +84,7 @@
         <div class="page-heading"><div><p class="eyebrow">Karta gospodarstwa</p><h1 id="household-title">Gospodarstwo</h1><p>Rodzeństwo spoza Twojego zakresu klas nie jest pokazywane.</p></div></div>
         <section class="card">
           <h2>Uczniowie</h2>
-          <div class="table-wrap"><table><caption class="sr-only">Uczniowie gospodarstwa</caption><thead><tr><th scope="col">Uczeń</th><th scope="col">Klasa</th><th scope="col">To gospodarstwo</th><th scope="col">Inne gospodarstwa</th></tr></thead><tbody id="household-students"></tbody></table></div>
+          <div class="table-wrap"><table><caption class="sr-only">Uczniowie gospodarstwa</caption><thead><tr><th scope="col">Uczeń</th><th scope="col">Klasa</th><th scope="col">To gospodarstwo</th><th scope="col">Inne gospodarstwa</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="household-students"></tbody></table></div>
         </section>
         <section class="card">
           <h2>Opiekunowie</h2>
@@ -126,6 +126,14 @@
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Potwierdź</button></div>
     </form></dialog>
 
+    <dialog id="end-dialog" aria-labelledby="end-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Zmiana zapisywana w historii</p><h2 id="end-dialog-title">Zakończenie</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p class="context"></p>
+      <label><span id="end-date-label">Data</span> <input name="date" type="date" required /></label>
+      <label>Powód <textarea name="reason" rows="3" minlength="3" maxlength="500" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
+      <div class="form-error" id="end-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zakończ</button></div>
+    </form></dialog>
     <script type="module" src="/main.js"></script>
   </body>
 </html>
