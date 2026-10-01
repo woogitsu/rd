@@ -11,8 +11,9 @@ różnym statusem w różnych modułach (np. `not_found` to najczęściej `404`,
 bywa też częścią odpowiedzi `403` tam, gdzie moduł celowo nie rozróżnia
 "nie istnieje" od "poza zakresem" — patrz `docs/AUTHORIZATION.md` i tabela
 403 vs 404 w opisie issue #160). Przypisanie jednego kanonicznego statusu do
-każdego kodu i opisanie per-moduł polityki 403 vs 404 zostaje do kolejnego
-PR — patrz sekcja "Czego nie obejmuje ten dokument" niżej.
+każdego kodu zostaje do kolejnego PR; stan 403 vs 404 per moduł opisuje sekcja
+„Polityka 403 i 404 per moduł” niżej (patrz też „Czego nie obejmuje ten
+dokument”).
 
 **Kolumna "czy ponawiać" to założenie tego PR, nie zweryfikowana polityka
 zarządu.** Reguła: kody walidacji (`invalid_*`, `*_not_found`, `*_mismatch`,
@@ -96,6 +97,7 @@ wpisów).
 | `data_request_identity_not_verified` | Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy. | Nie — najpierw zmień stan żądania. |
 | `data_request_kind_not_erasable` | Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_exportable` | Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych. | Nie — popraw dane żądania. |
+| `data_request_kind_not_rectification` | Sprostowanie można powiązać tylko z żądaniem sprostowania danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_restrictable` | Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw. | Nie — popraw dane żądania. |
 | `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
 | `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
@@ -142,7 +144,7 @@ wpisów).
 | `group_match_sum_mismatch` | Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu. | Nie — popraw dane żądania. |
 | `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
 | `guardian_outside_class` | Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku. | Zależy od kontekstu (patrz moduł trasy). |
-| `guardian_shared_outside_scope` | Ten opiekun ma też dziecko poza Twoją klasą. Zmianę kontaktu wykonuje zarząd bez ograniczenia do klasy. | Nie — zmianę wykonuje zarząd bez zawężenia do klasy. |
+| `guardian_shared_outside_scope` | Ten opiekun ma też dziecko poza Twoją klasą. Zmianę kontaktu lub imienia i nazwiska wykonuje zarząd bez ograniczenia do klasy. | Nie — zmianę wykonuje zarząd bez zawężenia do klasy. |
 | `household_not_found` | Nie znaleziono gospodarstwa. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -244,6 +246,7 @@ wpisów).
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
 | `invalid_payment_id` | Niepoprawny identyfikator wpłaty. | Nie — popraw dane żądania. |
 | `invalid_payment_link` | Niepoprawne powiązanie z wpłatą. | Nie — popraw dane żądania. |
+| `invalid_person_name` | Podaj imię lub nazwisko (1–100 znaków, bez znaku @ i znaków sterujących). | Nie — popraw dane żądania. |
 | `invalid_photo_id` | Niepoprawny identyfikator zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_photos` | Niepoprawna lista zdjęć. | Nie — popraw dane żądania. |
 | `invalid_plan_digest` | Brak poprawnego skrótu planu (planDigest) z podglądu. | Nie — popraw dane żądania. |
@@ -556,21 +559,67 @@ dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
 trasa), więc polityka 403/404 jest już czytelna maszynowo, choć jeszcze nie
 opisana słownie per moduł.
 
+## Polityka 403 i 404 per moduł (#160)
+
+Poniższa tabela jest **opisem stanu faktycznego**, nie decyzją: zbiera statusy
+odmowy (poza `401` dla braku sesji), jakie macierz tras
+(`tests/helpers/route-matrix.js`) przypisuje zalogowanemu aktorowi spoza
+uprawnień w danym module. To samo źródło zasila pole `x-rd-deny-status` w
+`docs/openapi.json`; test `tests/pg-api-errors-catalog.test.js` porównuje
+tabelę z tym polem, więc zmiana statusu w trasie wymaga aktualizacji tabeli.
+`404` oznacza, że moduł celowo nie rozróżnia „nie istnieje” od „poza zakresem”
+(SR-07); `—` to trasy bez odmowy dla zalogowanych (publiczne, logowanie).
+Wybór 403 albo 404 dla poszczególnych modułów jest założeniem do przeglądu, nie
+zatwierdzoną polityką zarządu ani szkoły.
+
+| Moduł | Statusy odmowy |
+| --- | --- |
+| admin | 403 |
+| audit-history | 403, 404 |
+| audit-reviews | 403 |
+| board | 403 |
+| documents | 403, 404 |
+| email | 403 |
+| events | 403, 404 |
+| exports | 403 |
+| families | 403, 404 |
+| financial-reports | 403 |
+| guardian-updates | 403 |
+| import | 403 |
+| ledger | 403, 404 |
+| ledger-budget | 403 |
+| ledger-cash | 403 |
+| ledger-cost-centers | 403 |
+| login | 403 |
+| meetings | 403, 404 |
+| mfa | 403 |
+| news | 403, 404 |
+| payment-instructions | 403 |
+| payment-references | 403 |
+| payments | 403 |
+| print | 400, 403 |
+| privacy-notice | 403 |
+| reconciliation | 403 |
+| representative | 403 |
+| session | 403 |
+| year-close | 403 |
+
 ## Czego nie obejmuje ten dokument
 
 Część #160 — ten katalog to tylko punkt 4 propozycji z issue ("katalog
 błędów"). Nie obejmuje:
 
-- statusu HTTP kanonicznego per kod ani opisanej per-moduł polityki 403 vs
-  404 dla obiektu poza zakresem (patrz różnice między `families.js`/
-  `documents.js` i `payments.js`/`ledger.js`/`email.js`/`reconciliation.js`
-  opisane w issue #160);
+- statusu HTTP kanonicznego per kod ani zatwierdzonej polityki 403 vs 404
+  (tabela per moduł wyżej opisuje stan, nie decyzję; różnice między
+  `families.js`/`documents.js` i `payments.js`/`ledger.js`/`email.js`/
+  `reconciliation.js` opisane w issue #160);
 - schematów ciał żądań i odpowiedzi w `docs/openapi.json` (etap 1 generatora,
   `scripts/build-openapi.js`, opisuje tylko ścieżki, metody, role, MFA,
   statusy i kody z tego katalogu; patrz sekcja „OpenAPI” niżej);
-- pełnych typów `@typedef` (`Db`, `Tx`, `Grant`, `AuthContext`, `Actor`) i
-  objęcia sprawdzaniem typów całego `src/pg/**`. Start (#160): `jsconfig.json`
+- objęcia sprawdzaniem typów całego `src/pg/**`. Dziś (#160): `jsconfig.json`
   z `checkJs` dla `src/pg/input.js`, `scope.js`, `pii-gate.js`, `audit.js`,
+  `authorization.js`, `auth.js`, `http.js` (typy `Db`, `Tx`, `Actor`,
+  `Requirement` w `authorization.js`, `Grant`/`AuthContext` w `scope.js`),
   `npm run typecheck` (`tsc -p jsconfig.json --noEmit`) i job `typecheck` w CI
   (wymagany przez `ci-ok`). Kolejne pliki dopisuje się do `include`.
 

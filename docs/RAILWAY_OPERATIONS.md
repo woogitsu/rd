@@ -610,7 +610,9 @@ DATABASE_URL=<referencja z Railway> APP_ENV=staging \
   i tokenu. Przyjęcie zaproszenia zapisuje `role_grant.created` z
   `metadata.source = 'bootstrap'`.
 - `APP_ENV=production` wymaga jawnego `--allow-production` i wolno go użyć
-  tylko w ramach zatwierdzonego cutover (D-20).
+  tylko w ramach zatwierdzonego cutover (D-20). Flaga czyta `APP_ENV` z powłoki
+  operatora, nie z docelowej bazy, więc nie zatrzyma `DATABASE_URL` produkcji
+  podanego z `APP_ENV=staging` (znacznik w bazie: po D-20, #166).
 - Przyjęcie zaproszenia: `/login/#invite=<token>` (`POST /api/invitations/accept`)
   ustawia hasło i nadaje rolę; potem administrator włącza MFA i dalsze konta
   (zarząd, skarbnik, przedstawiciele) zaprasza przez panel. Logowanie hasłem

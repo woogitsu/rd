@@ -347,6 +347,8 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/classes/:classId/students` | jak wyżej | nie | 403 / 404 | rola bez dostępu do rodzin: 403; klasa poza zakresem: 404 |
 | `GET /api/households/:householdId` | jak wyżej (dzieci spoza zakresu pominięte) | nie | 403 / 404 | rodzeństwo w 1A i 1B: przedstawiciel widzi tylko swoje dziecko (test uzupełniający) |
 | `PATCH /api/guardians/:guardianId/contact` | admin, zarząd — klasy roku 1; zarząd z przydziałem klasy — własna klasa | nie | 403 / 404 | rola bez prawa edycji: 403; opiekun bez relacji z uczniem z zakresu: 404; opiekun z aktywną relacją także z uczniem poza zakresem przydziału klasowego: `403 guardian_shared_outside_scope` (#200, zachowawczo do D-08; 403, nie 404, bo opiekun jest już widoczny w zakresie, więc nie ma wyroczni istnienia — SR-07); pełny zarząd/admin: 200; odmowa nie zapisuje nic w `guardians`, historii ani audycie |
+| `PATCH /api/students/:studentId/identity` | admin, zarząd — klasy roku 1; zarząd z przydziałem klasy — własna klasa | nie | 403 / 404 | sprostowanie imienia/nazwiska ucznia (art. 16 RODO, #100, migracja 0182); rola bez prawa edycji: 403 (ślad `access.denied`); uczeń poza zakresem: 404; powód 3–500 znaków przez bramkę danych osobowych (`422 personal_data_forbidden` / `possible_personal_data`); brak zmiany: 200 `changed: false` bez wpisu historii i audytu; opcjonalne `dataRequestId` (żądanie `rectification`) tylko admin — pozostałe role: 403 |
+| `PATCH /api/guardians/:guardianId/identity` | jak `…/contact`: admin, zarząd — klasy roku 1; zarząd z przydziałem klasy — własna klasa | nie | 403 / 404 | sprostowanie imienia/nazwiska opiekuna (#100); opiekun z aktywną relacją także z uczniem poza zakresem przydziału klasowego: `403 guardian_shared_outside_scope` (jak przy kontakcie, SR-07; ślad `access.denied`), bez zapisu w `guardians`, historii i audycie; pozostałe zasady jak dla ucznia |
 | `PATCH /api/guardians/:guardianId/students/:studentId` | jak wyżej; zakres klasowy — tylko aktywna relacja z uczniem własnej klasy | nie | 403 / 404 | zgoda na kontakt w relacji (#190); relacja poza zakresem lub nieistniejąca: 404; zakończona: 409 |
 | `POST /api/students/:studentId/enrollments` | jak wyżej | nie | 403 / 404 | macierz: przypisanie do tej samej klasy (200) |
 | `POST /api/students/:studentId/enrollments/:enrollmentId/end` | jak wyżej | nie | 403 / 404 | odejście ze szkoły (#86); po zakończeniu przypisanie niezmienne; ponowienie: `changed: false` |
@@ -408,6 +410,35 @@ Panele ukrywają akcje, których rola nie może wykonać. Robią to na podstawie
 | Konta i role | „Zatwierdź” wniosek o nadanie roli (#146) | administrator inny niż wnioskodawca i adresat (konto albo adres zaproszenia); wnioskodawca widzi „Wycofaj wniosek” i wyjaśnienie zasady czterech oczu; serwer i tak zwraca `403 grant_four_eyes_required` |
 
 Listy ról w panelach (`*/core.js`) porównuje ze stałymi serwera test `tests/role-policy-parity.test.js`. Odpowiedź 403 panele Wpłat i Księgi opisują jako brak uprawnień, a nie jako „Błąd serwera”.
+
+## Zakres roli audit
+
+Zestawienie faktów dla decyzji D-09 (#137), wyprowadzone z macierzy `tests/helpers/route-matrix.js`; **nie jest** rozstrzygnięciem ani zatwierdzonym zakresem. Pilnuje go `tests/audit-role-route-inventory.test.js` (liczby w tabeli muszą zgadzać się z macierzą, zmiana zakresu `audit` wymaga świadomej zmiany testu i tej tabeli). Kolumny: liczba tras modułu w macierzy, ile z nich dopuszcza `audit` (200 przy rolze, roku bez klasy i MFA), ile nie dopuszcza `audit` (odmowa 403, a dla dokumentów poza zakresem 404; w tym trasy publiczne z podpisem, np. webhook Brevo w `email`, których rola nie dotyczy).
+
+| Moduł | Tras | audit 200 | audit odmowa |
+| --- | --- | --- | --- |
+| `payments` | 11 | 0 | 11 |
+| `payment-references` | 3 | 0 | 3 |
+| `payment-instructions` | 2 | 0 | 2 |
+| `ledger` | 16 | 0 | 16 |
+| `ledger-budget` | 6 | 0 | 6 |
+| `ledger-cost-centers` | 4 | 0 | 4 |
+| `ledger-cash` | 5 | 0 | 5 |
+| `reconciliation` | 15 | 2 | 13 |
+| `financial-reports` | 6 | 0 | 6 |
+| `documents` | 25 | 0 | 25 |
+| `exports` | 2 | 0 | 2 |
+| `year-close` | 5 | 0 | 5 |
+| `audit-history` | 4 | 0 | 4 |
+| `import` | 3 | 0 | 3 |
+| `families` | 15 | 0 | 15 |
+| `email` | 30 | 0 | 30 |
+| `board` | 3 | 0 | 3 |
+| `audit-reviews` | 5 | 4 | 1 |
+
+Co `audit` dostaje dziś w modułach finansowych (200): `GET /api/reports/audit` (`format=json` i `xlsx`) oraz ścieżka kontroli — `GET /api/audit-reviews/:year`, `POST /api/audit-reviews/:year/notes`, `POST /api/audit-reviews/:year/notes/:id/closure`, `POST /api/audit-reviews/:year/conclusion`. Wszystkie wyłącznie dla przydziału bez klasy, w roku przydziału i z MFA. Jedyne trasy zapisu to niezmienne uwagi, zamknięcia i wniosek KR; żadnej trasy zapisu księgi, wpłat, uzgodnień, dokumentów, importu ani kampanii. Poza modułami finansowymi `audit` czyta zebrania, protokoły, uchwały i listę kontrolną zatwierdzenia (moduł `meetings`, bez MFA).
+
+Czego `audit` nie dostaje (403): `GET /api/ledger*` i eksporty księgi, wpłaty i eksport wpłat, uzgodnienia (lista i szczegóły), plan vs wykonanie, centra kosztów, dokumenty (także `kind='financial'` — lista, szczegół i pobranie), historia obiektu (`/api/audit/entity/*`), sprawozdanie roczne, przepływy, zamknięcie roku, dane rodzin. Skutek praktyczny do rozważenia w D-09: KR czyta zbiorczy raport i prowadzi uwagi, ale nie może otworzyć wpisu księgi ani faktury, do których uwaga się odnosi; punkt `audit_commission_report` zamknięcia roku potwierdza zarząd lub skarbnik, nie KR; w `DOCUMENT_POLICIES` nie ma rodzaju dokumentu, który KR mogłaby wgrać (protokół podpisany). Opcje do zatwierdzenia (bez wdrożenia): (a) stan obecny — raport i uwagi, bez księgi i dowodów; (b) wariant z PRODUCT.md — odczyt i eksport księgi oraz dokumentów finansowych roku, bez danych rodzin ponad sumy, za flagą konfiguracji; (c) dodatkowo rodzaj dokumentu „protokół KR” z zapisem dla `audit` i potwierdzaniem punktu zamknięcia roku przez KR. Wszystkie trzy wymagają decyzji zarządu.
 
 ## Znane luki (przypadki `todo` w macierzy)
 

@@ -128,7 +128,10 @@ test('restore from a D1-built snapshot works with every current PostgreSQL migra
     assert.deepEqual(report.payments, { count: 6, net_cents: '16500' });
     assert.deepEqual(report.ledger, { income_cents: '7000', expense_cents: '351000' });
     const { fingerprints, ...reconciliation } = report;
-    assert.deepEqual(await reconciliationReport(db), reconciliation);
+    // Zdarzenie migration.d1_import (#191) jest dopisywane po uzgodnieniu: w bazie jest o jedno więcej.
+    const afterImport = await reconciliationReport(db);
+    assert.equal(afterImport.counts.audit_events, reconciliation.counts.audit_events + 1);
+    assert.deepEqual({ ...afterImport, counts: { ...afterImport.counts, audit_events: reconciliation.counts.audit_events } }, reconciliation);
     assert.deepEqual(Object.keys(fingerprints), SNAPSHOT_TABLES);
 
     // Wpłaty: przypisanie odtworzone chronionym przejściem, suma per rodzina bez statusu „dłużnik”.
@@ -428,4 +431,94 @@ test('two restores of the same snapshot give identical fingerprints (#182)', asy
     const b = await restore(second, structuredClone(snapshot));
     assert.deepEqual(a.fingerprints, b.fingerprints);
   } finally { await first.close(); await second.close(); }
+});
+
+// #191: ślad importu w dzienniku. Dane wyłącznie syntetyczne.
+async function importEvents(db) {
+  return (await db.query("SELECT actor_id, action, entity_type, entity_id, metadata_json FROM audit_events WHERE action = 'migration.d1_import'")).rows;
+}
+
+const IMPORT_OPTIONS = { eventTimeZone: 'Europe/Brussels', actorId: 'u-admin' };
+
+test('restore appends exactly one migration.d1_import event with checksum, counts and the named admin (#191)', async () => {
+  const snapshot = snapshotFromD1();
+  const db = await createTestDb();
+  try {
+    const report = await restore(db, snapshot, IMPORT_OPTIONS);
+    const events = await importEvents(db);
+    assert.equal(events.length, 1);
+    const [event] = events;
+    assert.equal(event.actor_id, 'u-admin');
+    assert.equal(event.entity_type, 'd1_snapshot');
+    assert.equal(event.entity_id, snapshot.checksum);
+    assert.equal(event.metadata_json.snapshotChecksum, snapshot.checksum);
+    assert.equal(event.metadata_json.format, snapshot.format);
+    assert.deepEqual(event.metadata_json.counts, report.counts, 'counts are those reconciled before the event was appended');
+    assert.equal(event.metadata_json.counts.audit_events, snapshot.tables.audit_events.length);
+    assert.match(event.metadata_json.fingerprintsSha256, /^[0-9a-f]{64}$/);
+    assert.equal(event.metadata_json.sessionsAndInvitationsImported, false);
+    assert.doesNotMatch(JSON.stringify(event.metadata_json), /example\.invalid|Testow/, 'no personal data in the audit metadata');
+    const total = (await db.query('SELECT count(*)::int AS n FROM audit_events')).rows[0].n;
+    assert.equal(total, snapshot.tables.audit_events.length + 1);
+    await assert.rejects(() => db.query("UPDATE audit_events SET actor_id = NULL WHERE action = 'migration.d1_import'"), /append_only/);
+  } finally { await db.close(); }
+});
+
+test('a second restore into the same database is refused and leaves exactly one import event (#191)', async () => {
+  const snapshot = snapshotFromD1();
+  const db = await createTestDb();
+  try {
+    await restore(db, snapshot, IMPORT_OPTIONS);
+    await assert.rejects(() => restore(db, structuredClone(snapshot), IMPORT_OPTIONS), /Target table is not empty/);
+    assert.equal((await importEvents(db)).length, 1);
+  } finally { await db.close(); }
+});
+
+test('a failed restore leaves no import event and the retry yields exactly one (#191)', async () => {
+  const snapshot = snapshotFromD1();
+  const db = await createTestDb();
+  try {
+    const failing = new Proxy(db, {
+      get(target, property) {
+        if (property !== 'query') return Reflect.get(target, property);
+        return (sql, params) => (/INSERT INTO "ledger_budget_lines"/.test(String(sql))
+          ? Promise.reject(new Error('synthetic failure mid-import')) : target.query(sql, params));
+      },
+    });
+    await assert.rejects(() => restore(failing, structuredClone(snapshot), IMPORT_OPTIONS), /synthetic failure/);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM audit_events')).rows[0].n, 0, 'rolled back, nothing left');
+    await restore(db, structuredClone(snapshot), IMPORT_OPTIONS);
+    assert.equal((await importEvents(db)).length, 1);
+  } finally { await db.close(); }
+});
+
+test('import actor must be a restored, enabled admin: representative, treasurer, disabled, unknown and expired are refused before any write (#191)', async () => {
+  const db = await createTestDb();
+  try {
+    const cases = [
+      ['u-rep', /no active admin role grant/, () => {}],
+      ['u-treasurer', /no active admin role grant/, () => {}],
+      ['u-off', /account is disabled/, () => {}],
+      ['u-missing', /not a user in the snapshot/, () => {}],
+      ['u-admin', /no active admin role grant/, (s) => { s.tables.role_grants.find((g) => g.id === 'rg-admin').expires_at = '2020-01-01 00:00:00'; }],
+    ];
+    assert.ok(cases.length > 0);
+    for (const [actorId, pattern, mutate] of cases) {
+      const snapshot = snapshotFromD1();
+      mutate(snapshot);
+      resign(snapshot);
+      await assert.rejects(() => restore(db, snapshot, { eventTimeZone: 'Europe/Brussels', actorId }), pattern, actorId);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM school_years')).rows[0].n, 0, `${actorId}: nothing written`);
+    }
+  } finally { await db.close(); }
+});
+
+test('without an actor the event is still written with a NULL actor (library callers) (#191)', async () => {
+  const db = await createTestDb();
+  try {
+    await restore(db, snapshotFromD1());
+    const events = await importEvents(db);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].actor_id, null);
+  } finally { await db.close(); }
 });

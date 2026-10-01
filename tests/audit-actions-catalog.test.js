@@ -1,5 +1,5 @@
 // #181: test przekrojowy słownika zdarzeń dziennika. Każda akcja zapisywana
-// w audit_events przez src/pg/** i src/email/** (oraz przez migracje SQL) ma
+// w audit_events przez src/pg/**, src/email/** i src/d1-postgres-migration.js (oraz przez migracje SQL) ma
 // polską etykietę i dokładnie jedną domenę w shared/audit-actions.js — inaczej
 // znika z filtra `domain` GET /api/admin/audit i pokazuje się w panelu surowym
 // kodem. Słownik nie trzyma też akcji, których nikt nie zapisuje.
@@ -14,7 +14,7 @@ import { AUDIT_ACTIONS } from '../src/pg/routes/admin.js';
 import { ACTION_LABELS, AUDIT_DOMAIN_OPTIONS, auditListPath, describeAuditEvent } from '../admin/core.js';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const ACTION = /^[a-z_]+(\.[a-z_]+)+$/;
+const ACTION = /^[a-z_]+(\.[a-z0-9_]+)+$/;
 
 function jsFiles(dir) {
   return readdirSync(dir).flatMap((name) => {
@@ -37,7 +37,7 @@ const TEMPLATE_EXPANSIONS = {
 function writtenActions() {
   const literals = new Set();
   const templates = new Set();
-  for (const file of [...jsFiles(join(ROOT, 'src/pg')), ...jsFiles(join(ROOT, 'src/email'))]) {
+  for (const file of [...jsFiles(join(ROOT, 'src/pg')), ...jsFiles(join(ROOT, 'src/email')), join(ROOT, 'src/d1-postgres-migration.js')]) {
     for (const line of readFileSync(file, 'utf8').split('\n')) {
       if (!/(\baction\b\s*(:|=)|\baudit\()/.test(line)) continue;
       for (const match of line.matchAll(/'([^'\n]+)'/g)) if (ACTION.test(match[1])) literals.add(match[1]);

@@ -39,14 +39,17 @@ function normalizeEmail(email) {
 // Re-eksport: jedna implementacja w src/app-env.js (#166).
 export { isProductionEnv };
 
+// `now` (opcjonalnie, Date/ISO): zegar kontroli „czy istnieje ważny admin/zaproszenie”;
+// domyślnie now() bazy. Wstrzykiwany w testach zamiast wyłączania strażnika (#214).
 // db: kontrakt src/db.js (albo PGlite). Zwraca { userId, userCreated, invitationId, secret, expiresAt }.
 export async function bootstrapAdmin(db, {
-  email, displayName = 'Administrator', appEnv, allowProduction = false, ttlSeconds = BOOTSTRAP_DEFAULT_TTL_SECONDS,
+  email, displayName = 'Administrator', appEnv, allowProduction = false, ttlSeconds = BOOTSTRAP_DEFAULT_TTL_SECONDS, now = null,
 } = {}) {
   if (!db || typeof db.transaction !== 'function') throw new Error('database_unavailable');
   if (isProductionLikeEnv(appEnv) && allowProduction !== true) throw new BootstrapRefused('production_requires_flag');
   const normalized = normalizeEmail(email);
   const ttl = Math.max(60 * 60, Math.min(Number(ttlSeconds) || BOOTSTRAP_DEFAULT_TTL_SECONDS, BOOTSTRAP_MAX_TTL_SECONDS));
+  const clock = now == null ? null : new Date(now).toISOString();
   const name = String(displayName ?? '').trim().slice(0, 120) || 'Administrator';
 
   return db.transaction(async (tx) => {
@@ -58,14 +61,16 @@ export async function bootstrapAdmin(db, {
       `SELECT count(*)::int AS n
          FROM role_grants g JOIN users u ON u.id = g.user_id
         WHERE g.role = 'admin' AND g.revoked_at IS NULL
-          AND (g.expires_at IS NULL OR g.expires_at > now())
+          AND (g.expires_at IS NULL OR g.expires_at > COALESCE($1::timestamptz, now()))
           AND u.disabled_at IS NULL`,
+      [clock],
     );
     if (admins.rows[0].n > 0) throw new BootstrapRefused('admin_exists');
 
     const pending = await tx.query(
       `SELECT min(expires_at) AS expires_at FROM invitations
-        WHERE role = 'admin' AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
+        WHERE role = 'admin' AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > COALESCE($1::timestamptz, now())`,
+      [clock],
     );
     if (pending.rows[0].expires_at) {
       throw new BootstrapRefused('pending_admin_invitation', { expiresAt: new Date(pending.rows[0].expires_at).toISOString() });

@@ -94,7 +94,7 @@ export function missingRepresentativeNote(plan) {
   const missing = plan?.missingRepresentative ?? [];
   if (!missing.length) return "Każda klasa docelowa z przenoszonymi uczniami ma aktywnego przedstawiciela.";
   return `Klasy docelowe bez aktywnego przedstawiciela: ${missing.map((item) => item.name).join(", ")}. `
-    + "Promocja nie przedłuża przydziałów — przedstawicieli nowego roku zapraszasz osobno (partia zaproszeń powyżej).";
+    + "Promocja uczniów nie przedłuża przydziałów — użyj kroku „Przedłużenie przydziałów przedstawicieli” poniżej albo partii zaproszeń.";
 }
 
 export function promotionConfirmation(plan, labels) {

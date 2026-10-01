@@ -147,12 +147,10 @@ test('drugie uruchomienie przy ważnym zaproszeniu → czytelna odmowa (idempote
 test('po wygaśnięciu niewykorzystanego zaproszenia można ponowić; konto jest ponownie użyte', async () => {
   await withDb(async (db) => {
     const first = await bootstrapAdmin(db, { email: EMAIL, appEnv: 'staging' });
-    // Symulacja upływu czasu: trigger invitation_guard nie pozwala zmienić expires_at,
-    // więc test wyłącza go tylko na czas tej instrukcji.
-    await db.exec(`ALTER TABLE invitations DISABLE TRIGGER invitations_guard;
-      UPDATE invitations SET expires_at = now() - interval '1 minute';
-      ALTER TABLE invitations ENABLE TRIGGER invitations_guard;`);
-    const second = await bootstrapAdmin(db, { email: EMAIL.toUpperCase(), appEnv: 'staging' });
+    // Upływ czasu: wstrzyknięty zegar (`now`) po terminie ważności zaproszenia,
+    // bez wyłączania strażnika invitations_guard.
+    const later = new Date(new Date(first.expiresAt).getTime() + 60_000);
+    const second = await bootstrapAdmin(db, { email: EMAIL.toUpperCase(), appEnv: 'staging', now: later });
     assert.equal(second.userId, first.userId);
     assert.equal(second.userCreated, false);
     assert.notEqual(second.secret, first.secret);

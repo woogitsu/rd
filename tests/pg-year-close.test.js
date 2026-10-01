@@ -3,7 +3,7 @@ import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedEnrolledHousehold, seedUserSession } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const OLD = 'y-2026';
@@ -47,6 +47,8 @@ async function setup() {
     VALUES ('lc-out', 'le-out', 5000, 'Zwrot części kosztu', 'u-treasurer', 'lc-out-key-1')`);
 
   await db.query("INSERT INTO households (id) VALUES ('h-1'), ('h-2')");
+  // #138: h-2 ma ucznia zapisanego w starym roku, więc ponowne przypisanie dochodzi do kontroli zamknięcia roku.
+  await seedEnrolledHousehold(db, 'h-2', [OLD], { classIds: { [OLD]: 'c-1a' } });
   await db.query(`INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
     VALUES ('p-1', 'h-1', $1, 2000, '2026-10-02', 'bank', 'recorded', 'u-treasurer', 'p-1-key-001'),
            ('p-2', NULL, $1, 1500, '2026-10-03', 'bank', 'unmatched', 'u-treasurer', 'p-2-key-001')`, [OLD]);
@@ -150,6 +152,36 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
       /school_year_closure_is_final/);
     await assert.rejects(db.query('DELETE FROM school_year_closures WHERE school_year_id = $1', [OLD]),
       /school_year_closures_cannot_be_deleted/);
+  });
+
+  test('zwrot wpłaty i ponowne przypisanie w zamkniętym roku są odrzucane, nic nie zapisano (#138)', async () => {
+    const refused = [
+      [`INSERT INTO payment_refunds (id, payment_entry_id, amount_cents, refunded_on, method, reason, created_by, idempotency_key)
+        VALUES ('pr-late', 'p-1', 100, '2027-08-30', 'bank', 'Spóźniony zwrot', 'u-treasurer', 'pr-late-key-1')`],
+      [`INSERT INTO payment_reassignments (id, payment_entry_id, old_household_id, new_household_id, reason, created_by, idempotency_key)
+        VALUES ('pre-late', 'p-1', 'h-1', 'h-2', 'Spóźnione przypisanie', 'u-treasurer', 'pre-late-key-1')`],
+    ];
+    for (const [sql] of refused) await assert.rejects(db.query(sql), /school_year_closed/, sql);
+
+    // Przez API (rola finansowa bez ograniczenia do roku): odmowa, bez zapisu i bez zdarzenia audytu.
+    const refund = await handlePgRequest(request('/api/payments/p-1/refunds', {
+      method: 'POST', cookie: cookies.boardGlobal, headers: { 'Idempotency-Key': 'api-late-refund-1' },
+      body: { amountCents: 100, refundedOn: '2027-08-30', method: 'bank', reason: 'Spóźniony zwrot' },
+    }), env);
+    assert.equal(refund.status, 409, JSON.stringify(await refund.clone().json()));
+    assert.equal((await refund.json()).error, 'school_year_closed');
+    const reassign = await handlePgRequest(request('/api/payments/p-1/reassignment', {
+      method: 'POST', cookie: cookies.boardGlobal, headers: { 'Idempotency-Key': 'api-late-reassign-1' },
+      body: { householdId: 'h-2', reason: 'Spóźnione przypisanie' },
+    }), env);
+    assert.equal(reassign.status, 409, JSON.stringify(await reassign.clone().json()));
+    assert.equal((await reassign.json()).error, 'school_year_closed');
+
+    const refunds = await db.query('SELECT count(*)::int AS n FROM payment_refunds');
+    const reassignments = await db.query('SELECT count(*)::int AS n FROM payment_reassignments');
+    assert.deepEqual([refunds.rows[0].n, reassignments.rows[0].n], [0, 0]);
+    const holder = await db.query("SELECT household_id FROM payment_entries WHERE id = 'p-1'");
+    assert.equal(holder.rows[0].household_id, 'h-1');
   });
 
   test('role starej kadencji wygasają, role nowego roku pozostają', async () => {

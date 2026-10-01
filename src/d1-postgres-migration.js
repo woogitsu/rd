@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { parseBrusselsLocal } from './pg/events.js';
 
 export const SNAPSHOT_FORMAT = 'rd-d1-snapshot-v1';
@@ -405,8 +405,55 @@ async function ensureEmpty(client) {
   }
 }
 
+// #191: ślad importu. Aktor (jeśli podany) musi być odtworzonym, niewyłączonym administratorem
+// z aktywnym przydziałem roli `admin` bez zakresu — przedstawiciel klasy ani konto wyłączone
+// nie mogą być wpisane jako osoba prowadząca. Sprawdzane przed transakcją, na danych snapshotu.
+export const IMPORT_AUDIT = Object.freeze({
+  action: 'migration.d1_import',
+  entityType: 'd1_snapshot',
+});
+
+export function assertImportActor(tables, actorId, now = new Date()) {
+  if (actorId == null) return;
+  const user = tables.users.find((row) => row.id === actorId);
+  if (!user) throw new Error(`Import actor is not a user in the snapshot: ${actorId}`);
+  if (user.disabled_at != null) throw new Error(`Import actor account is disabled: ${actorId}`);
+  const notExpired = (value) => value == null || new Date(/(Z|[+-]\d{2}:?\d{2})$/i.test(String(value)) ? String(value).replace(' ', 'T') : `${String(value).replace(' ', 'T')}Z`) > now;
+  const active = tables.role_grants.some((grant) => grant.user_id === actorId && grant.role === 'admin'
+    && grant.class_id == null && notExpired(grant.expires_at));
+  if (!active) throw new Error(`Import actor has no active admin role grant in the snapshot: ${actorId}`);
+}
+
+// Jedno zdarzenie na import, w tej samej transakcji co dane (nieudany import nie zostawia śladu,
+// udany nie da się powtórzyć na tej samej bazie: ensureEmpty). Metadane bez danych osobowych:
+// format, suma SHA-256 snapshotu, liczności i sumy, reguła czasu, odcisk wszystkich odcisków wierszy.
+async function appendImportAudit(client, snapshot, report, fingerprints, { actorId = null, eventTimeSummary: timeSummary }) {
+  const present = (await client.query("SELECT to_regclass('schema_migrations') IS NOT NULL AS present")).rows[0].present;
+  const migrations = present
+    ? (await client.query('SELECT count(*)::int AS count, max(name) AS last FROM schema_migrations')).rows[0]
+    : { count: 0, last: null };
+  const metadata = {
+    format: snapshot.format,
+    snapshotChecksum: snapshot.checksum,
+    snapshotCreatedAt: snapshot.createdAt ?? null,
+    counts: report.counts,
+    payments: report.payments,
+    ledger: report.ledger,
+    eventTimes: timeSummary,
+    fingerprintsSha256: createHash('sha256').update(JSON.stringify(fingerprints)).digest('hex'),
+    schemaMigrations: { applied: Number(migrations.count), last: migrations.last },
+    sessionsAndInvitationsImported: false,
+  };
+  await client.query(
+    `INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, metadata_json)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+    [randomUUID(), actorId, IMPORT_AUDIT.action, IMPORT_AUDIT.entityType, snapshot.checksum, JSON.stringify(metadata)],
+  );
+}
+
 export async function restoreSnapshot(client, snapshot, options = {}) {
   const tables = normalizeSnapshot(snapshot, options);
+  assertImportActor(tables, options.actorId);
   // #182: wartość oczekiwana pochodzi z SUROWEGO snapshotu (sumy), a odciski z wierszy źródłowych
   // po udokumentowanym mapowaniu — nie z danych porównywanych same ze sobą po odczycie z bazy.
   const expected = sourceReconciliation(snapshot.tables);
@@ -432,6 +479,10 @@ export async function restoreSnapshot(client, snapshot, options = {}) {
       throw new Error('Reconciliation mismatch; restore was rolled back');
     }
     const fingerprints = await compareRowFingerprints(client, expectedRows);
+    await appendImportAudit(client, snapshot, report, fingerprints, {
+      actorId: options.actorId ?? null,
+      eventTimeSummary: eventTimeSummary(snapshot, options.eventTimeZone),
+    });
     await client.query('COMMIT');
     return { ...report, fingerprints };
   } catch (error) {
