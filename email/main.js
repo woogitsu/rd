@@ -32,6 +32,7 @@ import { confirmAction } from "../shared/confirm-dialog.js";
 import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountSuppressions } from "./suppressions.js";
 import { mountResolutions } from "./resolutions.js";
+import { mountQuota } from "./quota.js";
 import { reportCsvUrl } from "./resolutions-core.js";
 import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
@@ -57,6 +58,8 @@ const state = {
   loading: false,
   providerPause: null,
 };
+
+const quota = mountQuota({ api, canEdit: () => hasEditorAccess(state.grants, state.schoolYearId) });
 
 const resolutions = mountResolutions({
   api,
@@ -227,6 +230,7 @@ async function showYear(value) {
     detailSection.hidden = true;
     state.selectedId = null;
     await suppressions.load(value);
+    await quota.load(value);
     await loadProviderPause().catch(() => { state.providerPause = null; renderProviderPause(); });
     await loadWorkerStatus().catch(() => renderWorkerStatus(null));
   } catch (error) {

@@ -334,6 +334,24 @@ export function userOptionLabel(user) {
   return `${user?.email ?? "—"} (${shortId(user?.id)})`;
 }
 
+// #128: filtr kont po stronie klienta na już wczytanej liście (e-mail i nazwa bez
+// rozróżniania wielkości liter i polskich znaków diakrytycznych, stan konta).
+const foldText = (value) => String(value ?? "").normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase();
+
+export function filterUsers(users = [], { q = "", state = "" } = {}) {
+  const needle = foldText(q).trim();
+  return users.filter((user) => {
+    if (state === "active" && user.disabledAt) return false;
+    if (state === "disabled" && !user.disabledAt) return false;
+    return !needle || foldText(user.email).includes(needle) || foldText(user.displayName).includes(needle);
+  });
+}
+
+export function usersSummary(shown, loaded, hasMore, filtered) {
+  const head = filtered ? `${shown} z ${loaded} wczytanych kont` : `${loaded} kont`;
+  return `${head}. Konta tworzy wyłącznie przyjęcie zaproszenia.${hasMore ? " Lista jest niepełna — użyj „Pokaż więcej”; filtr działa tylko na wczytanych kontach." : ""}`;
+}
+
 // Podpowiedź w UI (serwer i tak odmawia): czy wycofanie tego przydziału
 // odebrałoby zalogowanemu administratorowi ostatni aktywny dostęp admina.
 export function isOwnLastAdminGrant(grants, actorId, grantId) {

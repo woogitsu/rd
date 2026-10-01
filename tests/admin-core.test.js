@@ -393,3 +393,18 @@ test('#146/0159: ciało odrzucenia — pusty powód albo same spacje = brak pola
   assert.deepEqual(rejectRequestPayload(undefined), {});
   assert.deepEqual(rejectRequestPayload('  Brak uchwały  '), { reason: 'Brak uchwały' });
 });
+
+test('#128: filterUsers szuka po e-mailu i nazwie bez diakrytyków oraz filtruje po stanie konta', async () => {
+  const { filterUsers, usersSummary } = await import('../admin/core.js');
+  const users = [
+    { id: 'u1', email: 'skarbnik@example.test', displayName: 'Łukasz Żółć', disabledAt: null },
+    { id: 'u2', email: 'jan@example.test', displayName: 'Jan Kowalski', disabledAt: '2026-09-01T00:00:00Z' },
+  ];
+  assert.deepEqual(filterUsers(users, { q: 'lukasz zolc' }).map((u) => u.id), ['u1']);
+  assert.deepEqual(filterUsers(users, { q: 'KOWAL' }).map((u) => u.id), ['u2']);
+  assert.deepEqual(filterUsers(users, { state: 'disabled' }).map((u) => u.id), ['u2']);
+  assert.deepEqual(filterUsers(users, { state: 'active', q: 'jan' }), []);
+  assert.equal(filterUsers(users, {}).length, 2);
+  assert.match(usersSummary(1, 2, true, true), /^1 z 2 wczytanych kont\..*tylko na wczytanych/);
+  assert.match(usersSummary(2, 2, false, false), /^2 kont\./);
+});
