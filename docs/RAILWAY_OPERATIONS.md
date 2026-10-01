@@ -15,6 +15,7 @@ protokołu, `/api/admin/ops-status` i `/health/jobs`).
 |---|---|---|
 | Konfiguracja usługi | `railway.json` | build `npm ci && npm run build`, start `node src/server.js` (bezpośrednio, aby SIGTERM trafił do serwera), healthcheck `/health` (liveness), `drainingSeconds: 15`, restart `ON_FAILURE` (maks. 5 prób), region `europe-west4-drams3a` (Amsterdam), bez usypiania |
 | Usługa cron e-mail | `railway.email-worker.json` | osobna usługa (#130): build `npm ci`, start `node scripts/email-worker.js` (**dry-run**, bez `--send`), `cronSchedule` `15 * * * *`, restart `NEVER`, region `europe-west4-drams3a`; nie jest utworzona w żadnym środowisku (sekcja „Zadanie wysyłki e-mail”) |
+| Usługi cron kopii i próby odtworzenia | `railway.backup.json`, `railway.restore-drill.json` | osobne usługi `rd-backup` (`node scripts/backup-postgres.js`, `17 2 * * *`) i `rd-restore-drill` (`node scripts/restore-drill.js`, `43 4 * * 1`, bez `--allow-production`); restart `NEVER`, region `europe-west4-drams3a`; nie są utworzone w żadnym środowisku, zmienne `BACKUP_*`/`RESTORE_DRILL_*` i magazyn dopiero po D-01/D-20 (sekcja „Backup PostgreSQL”) |
 | Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE; usługa cron e-mail bez `--send` i bez restartu |
 | Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 17 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
 | Smoke test zdalny | `npm run smoke:remote` (`scripts/smoke-remote.js`) | wyłącznie `GET`, po deployu stagingu (sekcja „Smoke test po deployu” niżej) |
@@ -720,14 +721,14 @@ decyzje D-01/D-20 (nierozstrzygnięte).
 
    | Usługa | Harmonogram (UTC) | Polecenie | Uwagi |
    |---|---|---|---|
-   | `rd-backup` | codziennie, np. `17 2 * * *` | `npm run backup:postgres` | osobna usługa Railway z własnym plikiem konfiguracji z `cronSchedule` (np. `railway.backup.json`); `railway.json` aplikacji zostaje bez crona (`tests/railway-config.test.js`); przebieg nakładający się w tym samym dniu jest pomijany (klucz dnia) |
-   | `rd-restore-drill` | co tydzień, np. `43 4 * * 1`, najpierw staging | `npm run restore:drill` | odtwarza do OSOBNEJ bazy „drill” (inny host lub nazwa bazy niż `DATABASE_URL` — twarda kontrola); na produkcji wymaga `--allow-production` |
+   | `rd-backup` | codziennie, np. `17 2 * * *` | `npm run backup:postgres` | osobna usługa Railway z plikiem konfiguracji `railway.backup.json` (`cronSchedule`); `railway.json` aplikacji zostaje bez crona (`tests/railway-config.test.js`); przebieg nakładający się w tym samym dniu jest pomijany (klucz dnia) |
+   | `rd-restore-drill` | co tydzień, np. `43 4 * * 1`, najpierw staging | `npm run restore:drill` | plik `railway.restore-drill.json`; odtwarza do OSOBNEJ bazy „drill” (inny host lub nazwa bazy niż `DATABASE_URL` — twarda kontrola); na produkcji wymaga `--allow-production` |
 
    Alert „brak udanej kopii > 26 h” ma źródło danych: ostatni wiersz
    `kind = 'backup'`, `result = 'success'` w `backup_runs`
    (`GET /health/jobs`, `backup_too_old`; opis w sekcji „Stan systemu”).
-   Pliki usług cron i zmienne (`BACKUP_*`, `RESTORE_DRILL_*`) dodać dopiero
-   po wyborze magazynu; do tego czasu skrypty można uruchamiać wyłącznie
+   Pliki usług cron są w repozytorium (bez zmiennych i sekretów); zmienne
+   (`BACKUP_*`, `RESTORE_DRILL_*`) ustawić dopiero po wyborze magazynu; do tego czasu skrypty można uruchamiać wyłącznie
    lokalnie (patrz niżej).
 
 ## Próbne odtworzenie PostgreSQL
