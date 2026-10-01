@@ -82,7 +82,7 @@ function raceEnv(db, { pauseAfter = null, pauseBeforeCommit = false, dropAdvisor
 
 async function call(env, method, path, cookie, body = {}, idempotencyKey = null) {
   const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
-  const response = await handlePgRequest(request(path, { method, cookie, body, headers }), env);
+  const response = await handlePgRequest(request(path, { method, cookie, body: method === 'GET' ? undefined : body, headers }), env);
   const text = await response.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
@@ -337,6 +337,93 @@ test('#212 (PostgreSQL): korekta wpłaty niezatwierdzona przed zamknięciem — 
     assert.deepEqual([rclose.status, rclose.body.replayed], [200, false], JSON.stringify(rclose.body));
     assert.deepEqual(errors, []);
     assert.equal(await count(db, "SELECT count(*)::int AS n FROM payment_corrections WHERE payment_entry_id = 'p-1'"), 1);
+  });
+});
+
+// ------------------------------------------------ uzgodnienie rachunku a zamknięcie (#80)
+
+// Szkic uzgodnienia roku OLD z jedną pozycją wyciągu równą wpisowi `le-in`
+// (1200,00 EUR, 2026-10-01), założony PRZED zamknięciem.
+async function reconciliationDraft(db, cookies) {
+  const env = { db };
+  const created = await call(env, 'POST', '/api/reconciliations', cookies.treasurer,
+    { schoolYearId: OLD, statementDate: '2026-10-31', statementBalanceCents: 170000 }, key('rec'));
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const id = created.body.reconciliation.id;
+  const lines = await call(env, 'POST', `/api/reconciliations/${id}/lines`, cookies.treasurer,
+    { lines: [{ bookedOn: '2026-10-01', amountCents: 120000 }] }, key('imp'));
+  assert.equal(lines.status, 201, JSON.stringify(lines.body));
+  const detail = await call(env, 'GET', `/api/reconciliations/${id}`, cookies.treasurer, undefined);
+  assert.equal(detail.status, 200, JSON.stringify(detail.body));
+  return { id, lineId: detail.body.lines[0].id };
+}
+
+const matchBody = (draft) => ({ statementLineId: draft.lineId, ledgerEntryId: 'le-in' });
+const activeMatches = (db) => count(db, "SELECT count(*)::int AS n FROM bank_reconciliation_matches WHERE revoked_at IS NULL");
+
+test('#80 (PostgreSQL): dopasowanie, nowe uzgodnienie i import w trakcie zamknięcia czekają i dostają 409 school_year_closed, nigdy 503/40P01', { skip }, async () => {
+  await withReal(async (db) => {
+    const cookies = await setup(db);
+    const draft = await reconciliationDraft(db, cookies);
+    const errors = [];
+    const closing = raceEnv(db, { pauseBeforeCommit: true, errors });
+    const close = call(closing.env, 'POST', closePath(OLD), cookies.boardB);
+    await closing.reached;
+    const env = raceEnv(db, { errors }).env;
+    const writes = [
+      call(env, 'POST', `/api/reconciliations/${draft.id}/matches`, cookies.treasurer, matchBody(draft), key('m')),
+      call(env, 'POST', '/api/reconciliations', cookies.treasurer,
+        { schoolYearId: OLD, statementDate: '2026-11-30', statementBalanceCents: 0 }, key('rec')),
+      call(env, 'POST', `/api/reconciliations/${draft.id}/lines`, cookies.treasurer,
+        { lines: [{ bookedOn: '2026-10-05', amountCents: 100 }] }, key('imp')),
+    ];
+    let waiting;
+    try {
+      waiting = await waitForLockWaiters(db, writes.length);
+    } finally { closing.release(); }
+    assert.equal(waiting.length, writes.length, `wszystkie zapisy uzgodnienia czekały na zamknięcie: ${JSON.stringify(waiting)}`);
+    const closed = await close;
+    assert.deepEqual([closed.status, closed.body.replayed], [200, false], JSON.stringify(closed.body));
+    for (const result of await Promise.all(writes)) {
+      assert.deepEqual([result.status, result.body.error], [409, 'school_year_closed'], JSON.stringify(result.body));
+    }
+    assert.deepEqual(errors.filter((code) => code === '40P01' || code === '40001'), [], 'bez zakleszczeń i błędów serializacji');
+    assert.equal(await activeMatches(db), 0, 'dopasowanie nie weszło po zamknięciu');
+    assert.equal(await count(db, 'SELECT count(*)::int AS n FROM bank_reconciliations WHERE school_year_id = $1', [OLD]), 1);
+    assert.equal(await count(db, 'SELECT count(*)::int AS n FROM bank_statement_lines WHERE reconciliation_id = $1', [draft.id]), 1);
+  });
+});
+
+test('#80 (PostgreSQL): dopasowanie niezatwierdzone przed zamknięciem — zamknięcie czeka na jego COMMIT; potem cofnięcie i zatwierdzenie → 409 school_year_closed', { skip }, async () => {
+  await withReal(async (db) => {
+    const cookies = await setup(db);
+    const draft = await reconciliationDraft(db, cookies);
+    const errors = [];
+    // Dopasowanie wstrzymane po INSERT: trzyma FOR SHARE na wierszu zamknięcia
+    // (trigger zamrożenia), więc zamknięcie nie może go minąć.
+    const matching = raceEnv(db, { pauseAfter: /INSERT INTO bank_reconciliation_matches/, errors });
+    const match = call(matching.env, 'POST', `/api/reconciliations/${draft.id}/matches`, cookies.treasurer, matchBody(draft), key('m'));
+    await matching.reached;
+    const close = call(raceEnv(db, { errors }).env, 'POST', closePath(OLD), cookies.boardB);
+    try {
+      assert.equal((await waitForLockWaiters(db, 1)).length, 1, 'zamknięcie czeka na niezatwierdzone dopasowanie');
+    } finally { matching.release(); }
+    const [matched, closed] = await Promise.all([match, close]);
+    assert.equal(matched.status, 201, JSON.stringify(matched.body));
+    assert.deepEqual([closed.status, closed.body.replayed], [200, false], JSON.stringify(closed.body));
+    assert.deepEqual(errors, []);
+    assert.equal(await activeMatches(db), 1);
+
+    // Po zamknięciu: przydziały zawężone do roku OLD są wygaszone (krok 5 zamknięcia),
+    // więc wołamy rolami bez zakresu roku (to trigger zamrożenia, nie brak roli, ma odmówić).
+    // Po zamknięciu: cofnięcie dopasowania i zatwierdzenie uzgodnienia są odrzucane kontrolowanie.
+    const env = { db };
+    const revoked = await call(env, 'POST', `/api/reconciliations/${draft.id}/matches/${matched.body.match.id}/revocation`,
+      cookies.boardGlobal, { reason: 'Cofnięcie syntetyczne po zamknięciu' });
+    assert.deepEqual([revoked.status, revoked.body.error], [409, 'school_year_closed'], JSON.stringify(revoked.body));
+    const confirmed = await call(env, 'POST', `/api/reconciliations/${draft.id}/confirm`, cookies.boardGlobal2, {});
+    assert.deepEqual([confirmed.status, confirmed.body.error], [409, 'school_year_closed'], JSON.stringify(confirmed.body));
+    assert.equal(await activeMatches(db), 1, 'dopasowanie sprzed zamknięcia zostaje');
   });
 });
 
