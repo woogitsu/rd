@@ -23,6 +23,7 @@ import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
 import { ContentError, contentHash as emailContentHash, parseCampaignContent } from '../email/content.js';
 import { createJsonReader } from './input.js';
+import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from './list-cursor.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
@@ -642,11 +643,23 @@ export async function listMeetings(db, actor, input = {}) {
   const context = meetingContext(actor);
   // Any read grant for the year (also class-scoped) may list; rows are filtered below.
   if (!hasAnyMatchingGrant(context, { roles: [...READ_ROLES], schoolYearId })) throw new MeetingError('forbidden', 403);
+  // #159: keyset (scheduled_at DESC, id) zamiast LIMIT 500 bez sygnału obcięcia.
+  const fail = (code) => { throw new MeetingError(code); };
+  const limit = parseListLimit(input.limit ?? null, { defaultLimit: 500, maxLimit: 500 }, fail);
+  const scope = JSON.stringify(['meetings', schoolYearId]);
+  const cursor = decodeListCursor(input.cursor ?? null, { kind: 'timestamp', scope }, fail);
+  const values = [schoolYearId];
+  const after = cursor ? `AND ${afterTimestampDescSql('scheduled_at', 'id', cursor, values)}` : '';
   const { rows } = await db.query(
-    'SELECT * FROM meetings WHERE school_year_id = $1 ORDER BY scheduled_at DESC, id DESC LIMIT 500',
-    [schoolYearId]);
-  // Class-scoped read grants (if ever issued) see only their class.
-  const visible = rows.filter(row => {
+    `SELECT *, ${cursorTimestampSql('scheduled_at')} AS cursor_ts FROM meetings
+      WHERE school_year_id = $1 ${after}
+      ORDER BY scheduled_at DESC, id LIMIT ${limit + 1}`,
+    values);
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  // Class-scoped read grants (if ever issued) see only their class. Filtr po stronie
+  // serwera działa na stronie, więc strona może być krótsza niż `limit` — o dalszych
+  // stronach decyduje wyłącznie `nextCursor`.
+  const visible = page.items.filter(row => {
     try {
       authorize(actor, READ_ROLES, { schoolYearId, classId: row.class_id });
       return true;
@@ -654,7 +667,9 @@ export async function listMeetings(db, actor, input = {}) {
       return false;
     }
   });
-  return { meetings: visible.map(meetingFromRow) };
+  return {
+    meetings: visible.map(meetingFromRow), nextCursor: page.nextCursor, truncated: page.truncated, limit,
+  };
 }
 
 // Odczyt zebrania: role wewnętrzne (READ_ROLES) albo przedstawiciel-gospodarz
@@ -1129,6 +1144,8 @@ export async function setMinutesVisibility(db, actor, input = {}) {
   return { minutes: minutesFromRow(await loadMinutes(db, minutes.id)), replayed: result.replayed };
 }
 
+// #159: pobieramy o jeden wiersz więcej, żeby jawnie zasygnalizować obcięcie.
+const SHARED_MINUTES_LIMIT = 200;
 const SHARED_MINUTES_SQL = `
   SELECT e.id, e.meeting_id, e.version, e.body, e.approved_at, e.visibility,
          m.school_year_id, m.kind, m.class_id, m.title, m.scheduled_at
@@ -1137,7 +1154,7 @@ const SHARED_MINUTES_SQL = `
    WHERE m.school_year_id = $1 AND e.visibility = ANY($2::text[])
      AND (m.class_id IS NULL OR $3::boolean OR m.class_id = ANY($4::text[]))
    ORDER BY m.scheduled_at DESC, m.id
-   LIMIT 200`;
+   LIMIT ${SHARED_MINUTES_LIMIT + 1}`;
 
 function sharedFromRow(row) {
   return {
@@ -1170,7 +1187,10 @@ export async function listSharedMinutes(db, actor, input = {}) {
   if (!allClasses && !classIds.length) throw new MeetingError('forbidden', 403);
   const { rows } = await db.query(SHARED_MINUTES_SQL,
     [schoolYearId, ['parents', 'public'], allClasses, classIds]);
-  return { minutes: rows.map(sharedFromRow) };
+  return {
+    minutes: rows.slice(0, SHARED_MINUTES_LIMIT).map(sharedFromRow),
+    truncated: rows.length > SHARED_MINUTES_LIMIT,
+  };
 }
 
 // Parent-facing query for a future parent session: only approved minutes shared
@@ -1180,13 +1200,19 @@ export async function listMinutesForParents(db, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
   const classIds = Array.isArray(input.classIds) ? input.classIds.map(id => requireId(id)) : [];
   const { rows } = await db.query(SHARED_MINUTES_SQL, [schoolYearId, ['parents', 'public'], false, classIds]);
-  return { minutes: rows.map(sharedFromRow) };
+  return {
+    minutes: rows.slice(0, SHARED_MINUTES_LIMIT).map(sharedFromRow),
+    truncated: rows.length > SHARED_MINUTES_LIMIT,
+  };
 }
 
 export async function listPublicMinutes(db, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
   const { rows } = await db.query(SHARED_MINUTES_SQL, [schoolYearId, ['public'], true, []]);
-  return { minutes: rows.map(sharedFromRow) };
+  return {
+    minutes: rows.slice(0, SHARED_MINUTES_LIMIT).map(sharedFromRow),
+    truncated: rows.length > SHARED_MINUTES_LIMIT,
+  };
 }
 
 // ---------- resolutions ----------
@@ -2053,9 +2079,11 @@ export async function getMeetingNoticeCalendar(db, actor, input = {}, env) {
 export async function listPublicMeetingNotices(db, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
   const { rows } = await db.query(
-    'SELECT * FROM public_meeting_notices WHERE school_year_id = $1 ORDER BY scheduled_at, id LIMIT 200', [schoolYearId]);
+    'SELECT * FROM public_meeting_notices WHERE school_year_id = $1 ORDER BY scheduled_at, id LIMIT 201', [schoolYearId]);
+  // #159: 201 wierszy = jawny sygnał obcięcia (pokazujemy 200).
   return {
-    notices: rows.map(row => ({
+    truncated: rows.length > 200,
+    notices: rows.slice(0, 200).map(row => ({
       id: row.id,
       kind: row.kind,
       cancelled: row.kind === 'cancellation',
@@ -2216,7 +2244,9 @@ export async function handle(request, env, url, json) {
 
     const actor = await loadActor(request, env);
     if (!mutation) {
-      if (target.name === 'list') return json(await listMeetings(db, actor, { schoolYearId: query.get('schoolYearId') }));
+      if (target.name === 'list') return json(await listMeetings(db, actor, {
+        schoolYearId: query.get('schoolYearId'), limit: query.get('limit'), cursor: query.get('cursor'),
+      }));
       if (target.name === 'shared') {
         return json(await listSharedMinutes(db, actor, { schoolYearId: query.get('schoolYearId') }));
       }

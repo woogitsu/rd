@@ -403,7 +403,7 @@ async function mfaResetRoute(env, actorId, userId, request, json) {
 async function recoveryRequestsList(env, url, json) {
   const status = url.searchParams.get('status') || 'pending';
   try {
-    return json({ requests: await listRecoveryRequests(env, { status }) });
+    return json(await listRecoveryRequests(env, { status }));
   } catch (error) {
     if (error instanceof LoginError) throw new RequestError(error.code, error.status);
     throw error;
@@ -874,7 +874,7 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
 
 async function grantRequestsList(env, url, json) {
   try {
-    return json({ requests: await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }) });
+    return json(await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }));
   } catch (error) {
     if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
     throw error;
