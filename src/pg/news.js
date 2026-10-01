@@ -909,8 +909,12 @@ function internalPhotoFile(row) {
 // .withMetadata() — tu celowo pominięte). `.rotate()` na obrazie źródłowym
 // honoruje orientację EXIF przed jej odrzuceniem, więc wynik ma poprawny
 // obrót mimo braku metadanych.
+// JPEG nie ma kanału alfa: przezroczyste piksele PNG są spłaszczane na białe tło
+// strony publicznej (bez `flatten` stałyby się czarne). Przezroczystość nie jest
+// zachowywana — wariant jest zawsze nieprzezroczystym JPEG.
 async function renderPhotoVariant(source, { maxDimension, quality }) {
   const { data, info } = await source.clone()
+    .flatten({ background: '#ffffff' })
     .resize({ width: maxDimension, height: maxDimension, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality, mozjpeg: true })
     .toBuffer({ resolveWithObject: true });
