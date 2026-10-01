@@ -894,7 +894,8 @@ export async function withdrawSignup(db, actor, input) {
     const event = await lockEvent(tx, eventId);
     if (!canEdit(actor, event)) throw new EventError('event_not_found', 404);
     const { rows } = await tx.query(
-      'SELECT * FROM event_task_signups WHERE id = $1 AND task_id = $2 FOR UPDATE', [signupId, taskId],
+      `SELECT s.* FROM event_task_signups s JOIN event_tasks t ON t.id = s.task_id
+        WHERE s.id = $1 AND s.task_id = $2 AND t.event_id = $3 FOR UPDATE OF s`, [signupId, taskId, eventId],
     );
     const signup = rows[0];
     if (!signup) throw new EventError('event_task_signup_not_found', 404);

@@ -218,3 +218,38 @@ test('request log contains method, sanitized path, status and duration — no qu
     assert.doesNotMatch(lines.join('\n'), /@|rd_session|email|payments\/123/);
   });
 });
+
+// #149: baza tylko do odczytu (replika, default_transaction_read_only) nie jest gotowa
+// do pracy zapisującej; odczyt ustawienia nie tworzy żadnych danych.
+function readOnlyDb(db) {
+  return {
+    async query(text, params = []) {
+      if (text.includes('transaction_read_only')) return { rows: [{ read_only: 'on' }] };
+      return db.query(text, params);
+    },
+  };
+}
+
+test('503 database read_only when the database is read-only and writes are expected', async () => {
+  const db = await migratedDb();
+  const { logger, lines } = quietLogger();
+  const result = await checkReadiness({ db: readOnlyDb(db) }, { logger });
+  assert.equal(result.ready, false);
+  assert.deepEqual(result.body, { status: 'not_ready', checks: { database: 'read_only' }, write_mode: 'normal' });
+  assert.ok(lines.some((line) => line.includes('readiness_database_read_only')));
+});
+
+test('read-only database stays ready when APP_WRITE_MODE is read_only', async () => {
+  const db = await migratedDb();
+  const { logger } = quietLogger();
+  const result = await checkReadiness({ db: readOnlyDb(db), APP_WRITE_MODE: 'read_only' }, { logger });
+  assert.equal(result.ready, true);
+  assert.equal(result.body.write_mode, 'read_only');
+});
+
+test('a writable PGlite database reports transaction_read_only off', async () => {
+  const db = await migratedDb();
+  const { rows } = await db.query("SELECT current_setting('transaction_read_only') AS read_only");
+  assert.equal(rows.length, 1);
+  assert.ok(rows.length > 0 && rows.every((row) => row.read_only === 'off'));
+});
