@@ -1549,6 +1549,8 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Anonimizacja gospodarstwa (#91): wariant zachowawczy — admin + krok w górę MFA. Macierz wywołuje tylko podgląd
   // (dryRun), który niczego nie zmienia; wykonanie i odmowy: tests/pg-anonymization.test.js.
+  // Lista przebiegów anonimizacji (#91): identyfikatory i liczniki z `anonymization_runs`, bez danych osobowych.
+  adminRoute('admin.anonymizations', 'GET', '/api/admin/anonymizations', {}),
   adminRoute('admin.anonymizationPreview', 'POST', '/api/admin/anonymizations', {
     object: 'dataRequestErasure',
     build: ({ obj }) => ({

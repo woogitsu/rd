@@ -63,8 +63,10 @@ sam w sobie **niczego nie usuwa** — to wyłącznie rejestr.
 
 1. **Podgląd** (`dryRun` — domyślnie `true`): zwraca `planSha256`, liczniki per
    tabela (`counts`) i liczbę osób wspólnych z innymi gospodarstwami
-   (`retained`). Nic nie zapisuje (ani dziennika, ani audytu), nie zawiera
-   imion, e-maili ani tekstów.
+   (`retained`). Nie zmienia danych i nie zapisuje wiersza `anonymization_runs`,
+   ale zostawia ślad w audycie: zdarzenie `household.anonymization_previewed`
+   (aktor, czas, gospodarstwo, kod powodu i liczniki — bez danych osobowych).
+   Odpowiedź nie zawiera imion, e-maili ani tekstów.
 2. **Wykonanie** (`dryRun: false`): wymaga `confirm` równego `householdId` i
    `expectedPlanSha256` z podglądu — zatwierdzenie dokładnie tego planu. Dane
    zmienione od podglądu → `409 anonymization_plan_changed`. Wynik `201
@@ -161,7 +163,15 @@ mieć wyłącznie rola aplikacji.
   `household_id`, `reason_code`, `data_subject_request_id`, identyfikatory
   polityk, `plan_sha256` (SHA-256 listy zmienionych identyfikatorów), `counts`,
   `executed_by`, `executed_at`. Bez imion, e-maili i tekstów.
-- `audit_events`: `household.anonymized` (domena `privacy`, obiekt
+- `GET /api/admin/anonymizations` (`admin` z MFA, bez kroku w górę): lista
+  przebiegów od najnowszego z kursorem (`limit`, `cursor`, `nextCursor`,
+  `truncated`): `id`, `householdId`, `reasonCode`, `dataSubjectRequestId`,
+  `retentionPolicyIds`, `planSha256`, `counts`, `totalChanged` (suma liczników),
+  `executedBy`, `executedAt` — dokładnie to, co przechowuje tabela. Odczyt nie
+  zapisuje zdarzenia audytu.
+- `audit_events`: `household.anonymization_previewed` (domena `privacy`, obiekt
+  `household`; każdy podgląd, z aktorem, czasem, kodem powodu, `planSha256` i
+  licznikami) oraz `household.anonymized` (domena `privacy`, obiekt
   `anonymization_run`) z aktorem, czasem i metadanymi: identyfikatory, kod
   powodu, `planSha256`, liczniki i `retainedGuardians`/`retainedStudents`.
   Odmowy (401/403, błędne wejście, brak polityki) nie tworzą wpisu przebiegu

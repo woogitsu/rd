@@ -80,6 +80,10 @@
 //                                                 wyłącznie liczności per kategoria i rok/rok szkolny
 //                                                 + zarejestrowane polityki (`retention_policies`, bez PII).
 //                                                 Nie usuwa ani nie anonimizuje żadnych danych — sam odczyt.
+//   GET  /api/admin/anonymizations?limit=&cursor=  lista przebiegów anonimizacji (#91, `anonymization_runs`), od najnowszego:
+//                                                 id, gospodarstwo, powód, żądanie osoby, id polityk, skrót planu, liczniki
+//                                                 i suma, aktor, czas; kursor keyset (executed_at, id). Tylko identyfikatory
+//                                                 i liczniki (to samo, co tabela) — bez imion, e-maili i tekstów.
 //   POST /api/admin/anonymizations              { householdId, reasonCode, dataRequestId?, dryRun?, expectedPlanSha256?, confirm? }
 //                                                 anonimizacja gospodarstwa z zachowaniem księgi i sum wpłat (#91);
 //                                                 krok w górę MFA (#150). `dryRun` (domyślnie true) zwraca plan i
@@ -1297,6 +1301,35 @@ async function listDataRequests(env, url, json) {
   return json({ requests: rows.map(dataRequestFromRow), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit });
 }
 
+function anonymizationRunFromRow(row) {
+  const counts = row.counts && typeof row.counts === 'object' ? row.counts : {};
+  return {
+    id: row.id, householdId: row.household_id, reasonCode: row.reason_code,
+    dataSubjectRequestId: row.data_subject_request_id, retentionPolicyIds: row.retention_policy_ids,
+    planSha256: row.plan_sha256, counts,
+    totalChanged: Object.values(counts).reduce((sum, value) => sum + (Number.isInteger(value) ? value : 0), 0),
+    executedBy: row.executed_by, executedAt: isoTimestamp(row.executed_at),
+  };
+}
+
+// #91: dziennik przebiegów anonimizacji, od najnowszego (keyset executed_at DESC, id).
+async function listAnonymizations(env, url, json) {
+  const limit = listLimit(url);
+  const scope = 'anonymizations';
+  const cursor = listCursor(url, 'timestamp', scope);
+  const values = [];
+  const where = cursor ? `WHERE ${afterTimestampDescSql('executed_at', 'id', cursor, values)}` : '';
+  const { rows } = await env.db.query(
+    `SELECT id, household_id, reason_code, data_subject_request_id, retention_policy_ids, plan_sha256, counts,
+            executed_by, executed_at, ${cursorTimestampSql('executed_at')} AS cursor_ts
+       FROM anonymization_runs ${where}
+      ORDER BY executed_at DESC, id LIMIT ${limit + 1}`,
+    values,
+  );
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return json({ runs: page.items.map(anonymizationRunFromRow), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit });
+}
+
 async function createDataRequest(env, actorId, request, json) {
   const data = await readJson(request);
   if (!DATA_REQUEST_KINDS.has(data.kind)) throw new RequestError('invalid_kind');
@@ -1669,7 +1702,7 @@ function allowedMethodsFor(section, pathLength, action, path) {
     return null;
   }
   if (section === 'retention' && pathLength === 2) return ['GET'];
-  if (section === 'anonymizations' && pathLength === 1) return ['POST'];
+  if (section === 'anonymizations' && pathLength === 1) return ['GET', 'POST'];
   if (section === 'ops-status' && pathLength === 1) return ['GET'];
   return null;
 }
@@ -1781,6 +1814,8 @@ async function route(request, env, url, json, actorId, context) {
   if (section === 'retention' && rawId === 'preview' && path.length === 2 && method === 'GET') {
     return retentionPreview(env, json);
   }
+  // #91: lista przebiegów — identyfikatory i liczniki; ta sama rola co POST (admin + MFA), bez kroku w górę (nic nie zmienia).
+  if (section === 'anonymizations' && path.length === 1 && method === 'GET') return listAnonymizations(env, url, json);
   // #91: anonimizacja zmienia dane osobowe nieodwracalnie — krok w górę MFA (#150), także dla podglądu.
   if (section === 'anonymizations' && path.length === 1 && method === 'POST') {
     requireFreshMfa(context);
