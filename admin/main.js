@@ -1265,7 +1265,7 @@ byId("reload-audit").addEventListener("click", () => loadAudit().catch((error) =
 
 // --- Żądania osób (RODO, #100; trasy GET/POST /api/admin/data-requests, wyłącznie admin) ---
 // Eksport zawiera dane osobowe: plik trafia tylko do pobrania (Blob w pamięci karty,
-// zwalniany zaraz po kliknięciu); nic nie jest logowane, zapisywane w localStorage ani wyświetlane.
+// zwalniany zaraz po kliknięciu); nic nie jest logowane, zapisywane w pamięci przeglądarki ani wyświetlane.
 
 const dr = { requests: [], cursor: null, status: "", kind: "", createKey: null, createSignature: "", busy: false, selected: null };
 
