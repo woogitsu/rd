@@ -1223,13 +1223,15 @@ export async function listPublicMinutes(db, input = {}) {
 // narzucane. Tylko podpowiedź — unikalność nadal pilnuje istniejący indeks.
 async function suggestResolutionNumber(executor, schoolYearId) {
   const year = await one(executor,
-    'SELECT resolution_number_pattern, starts_on FROM school_years WHERE id = $1', [schoolYearId]);
+    'SELECT resolution_number_pattern, EXTRACT(YEAR FROM starts_on)::int AS start_year FROM school_years WHERE id = $1', [schoolYearId]);
   if (!year?.resolution_number_pattern) return null;
   const { rows } = await executor.query(
     `SELECT count(*)::int AS n FROM resolutions
       WHERE school_year_id = $1 AND corrects_id IS NULL AND number IS NOT NULL`, [schoolYearId]);
   const seq = rows[0].n + 1;
-  const yearNumber = new Date(year.starts_on).getUTCFullYear();
+  // Rok z bazy (nie z Date): `pg` mapuje DATE na północ lokalną procesu, a getUTCFullYear()
+  // dla 1 stycznia w strefie na wschód od UTC dawałby rok poprzedni (#208).
+  const yearNumber = year.start_year;
   return year.resolution_number_pattern.replace('{seq}', String(seq)).replace('{year}', String(yearNumber));
 }
 
@@ -1439,8 +1441,10 @@ function dateOnly(value) {
   return value;
 }
 
-// DATE wraca z pg/PGlite jako Date (północ UTC); zawsze oddajemy zwykły
-// 'RRRR-MM-DD', niezależnie od tego, czy zapytanie użyło to_char().
+// Zapytania zwracają daty jako tekst (to_char): `pg` mapuje DATE na Date o północy
+// LOKALNEJ strefy procesu (PGlite — UTC), więc toISOString() z surowej kolumny
+// dawał w strefie na wschód od UTC dzień wcześniejszy (#208). Gałąź Date zostaje
+// tylko dla wartości spoza bazy.
 function dateOnlyOut(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string') return value.slice(0, 10);
@@ -1464,7 +1468,7 @@ const REGISTER_SELECT = `
     LEFT JOIN resolution_current repealer
       ON repealer.amends_resolution_id = rc.id AND repealer.relation_kind = 'repeals' AND repealer.status = 'adopted'
     LEFT JOIN LATERAL (
-      SELECT status, due_on, responsible_user_id, created_at FROM resolution_execution_events
+      SELECT status, to_char(due_on, 'YYYY-MM-DD') AS due_on, responsible_user_id, created_at FROM resolution_execution_events
        WHERE resolution_id = rc.id ORDER BY created_at DESC LIMIT 1
     ) exec ON true`;
 
@@ -1576,7 +1580,9 @@ export async function recordResolutionExecution(db, actor, input = {}) {
       { resolutionId: resolution.id, schoolYearId: resolution.school_year_id, status: data.status, ...piiAuditMetadata(gate) });
     return { entityType: 'resolution_execution_event', entityId: id };
   });
-  const { rows } = await db.query('SELECT * FROM resolution_execution_events WHERE id = $1', [result.entityId]);
+  const { rows } = await db.query(
+    `SELECT id, resolution_id, status, responsible_user_id, to_char(due_on, 'YYYY-MM-DD') AS due_on, note, created_by, created_at
+       FROM resolution_execution_events WHERE id = $1`, [result.entityId]);
   return { execution: executionEventFromRow(rows[0]), replayed: result.replayed };
 }
 
