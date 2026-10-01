@@ -1305,7 +1305,11 @@ async function getAccessReview(env, url, json, actorId) {
 const DATA_REQUEST_KINDS = new Set(['access', 'rectification', 'erasure', 'restriction', 'objection', 'portability']);
 const DATA_REQUEST_STATUSES = ['received', 'identity_verified', 'in_progress', 'answered', 'rejected'];
 const DATA_REQUEST_STATUS_RANK = { received: 0, identity_verified: 1, in_progress: 2, answered: 3, rejected: 3 };
-const DATA_REQUEST_COLUMNS = `id, kind, household_id, guardian_id, student_id, received_on, due_on, status,
+// Daty jako tekst YYYY-MM-DD (to_char): sterownik `pg` mapuje DATE na Date o północy
+// LOKALNEJ strefy procesu, więc surowa kolumna dawała w JSON „…T00:00:00.000Z” (a w
+// strefie innej niż UTC — inny dzień). Tak samo jak pozostałe moduły (#208).
+const DATA_REQUEST_COLUMNS = `id, kind, household_id, guardian_id, student_id,
+  to_char(received_on, 'YYYY-MM-DD') AS received_on, to_char(due_on, 'YYYY-MM-DD') AS due_on, status,
   handled_by, decision_note_ref, created_by, created_at, updated_at`;
 
 function dataRequestFromRow(row) {
@@ -1343,7 +1347,7 @@ async function listDataRequests(env, url, json) {
   const { rows: fetched } = await env.db.query(
     `SELECT ${DATA_REQUEST_COLUMNS}, ${cursorTimestampSql('created_at')} AS cursor_ts,
             to_char(received_on, 'YYYY-MM-DD') AS received_key
-       FROM data_subject_requests ${where} ORDER BY received_on, created_at, id LIMIT ${limit + 1}`,
+       FROM data_subject_requests ${where} ORDER BY data_subject_requests.received_on, created_at, id LIMIT ${limit + 1}`,
     values,
   );
   const page = pageOf(fetched, limit, (row) => ({ key: `${row.received_key}|${row.cursor_ts}`, id: row.id }), scope);
