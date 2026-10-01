@@ -96,6 +96,8 @@ odpowiedzialności osoby zapisującej.
 | `news_post_revisions.body` | treść rewizji aktualności, jw. (szkic przedstawiciela klasy też przechodzi bramkę) |
 | `event_revisions.title` | tytuł rewizji wydarzenia — może wymienić osobę; rewizja niezmienna, bramka #152 |
 | `event_revisions.description` | opis rewizji wydarzenia, jw. |
+| `events.cancellation_reason` | powód odwołania wydarzenia może wymienić osobę lub okoliczności rodzinne; wiersz niezmienny po odwołaniu, bramka #152 |
+| `news_posts.withdrawal_reason` | powód wycofania aktualności, jw. |
 | `news_photos.revocation_reason` | powód wycofania zgody, może zawierać dane osoby wycofującej |
 | `email_campaigns.subject` | temat kampanii — do przeglądu przy zatwierdzeniu treści |
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |
