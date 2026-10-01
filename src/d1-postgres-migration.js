@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { parseBrusselsLocal } from './pg/events.js';
 
 export const SNAPSHOT_FORMAT = 'rd-d1-snapshot-v1';
 
@@ -104,7 +105,47 @@ function assertScopeConsistency(tables) {
   }
 }
 
-export function normalizeSnapshot(snapshot) {
+// Reguła dla godzin wydarzeń (#183): `events.begins_at` to czas wpisany przez człowieka,
+// nie znacznik techniczny, więc nie wolno go czytać domyślnie jako UTC. Wartości bez strefy
+// wymagają jawnej decyzji (`eventTimeZone`); wartości z `Z` / `±hh:mm` przechodzą bez zmian.
+export const EVENT_TIME_ZONES = ['Europe/Brussels', 'UTC'];
+const NAIVE_EVENT_TIME = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)$/;
+const ZONED_EVENT_TIME = /(Z|[+-]\d{2}:?\d{2})$/i;
+
+function isNaiveEventTime(value) {
+  return typeof value === 'string' && !ZONED_EVENT_TIME.test(value.trim());
+}
+
+export function eventTimeSummary(snapshot, eventTimeZone) {
+  const naive = (snapshot.tables?.events ?? []).filter((row) => isNaiveEventTime(row.begins_at)).length;
+  return { eventsWithNaiveTime: naive, rule: naive ? (eventTimeZone ?? null) : 'not_needed' };
+}
+
+function normalizeEventTimes(events, eventTimeZone) {
+  const naive = events.filter((row) => isNaiveEventTime(row.begins_at));
+  if (!naive.length) return;
+  if (!EVENT_TIME_ZONES.includes(eventTimeZone)) {
+    throw new Error(`Events have begins_at without a time zone (${naive.length}, e.g. ${naive[0].id}); `
+      + `specify eventTimeZone (--event-local-time-zone=Europe/Brussels or --event-time-zone=UTC)`);
+  }
+  for (const row of naive) {
+    const match = NAIVE_EVENT_TIME.exec(row.begins_at.trim());
+    if (!match) throw new Error(`Unsupported begins_at format: ${row.id}`);
+    const local = `${match[1]}T${match[2]}`;
+    if (eventTimeZone === 'UTC') {
+      row.begins_at = `${local.length === 16 ? `${local}:00` : local}Z`;
+      continue;
+    }
+    try {
+      row.begins_at = parseBrusselsLocal(local).toISOString();
+    } catch (error) {
+      // nonexistent_local_time / ambiguous_local_time (zmiana czasu): bez zgadywania przesunięcia.
+      throw new Error(`Event begins_at cannot be converted to Europe/Brussels (${error.message}): ${row.id}`);
+    }
+  }
+}
+
+export function normalizeSnapshot(snapshot, { eventTimeZone } = {}) {
   verifySnapshot(snapshot);
   const tables = structuredClone(snapshot.tables);
   const assignments = new Map(tables.payment_assignments.map((row) => [row.payment_entry_id, row]));
@@ -133,6 +174,7 @@ export function normalizeSnapshot(snapshot) {
       throw new Error(`Unpublished event has published_at: ${row.id}`);
     }
   });
+  normalizeEventTimes(tables.events, eventTimeZone);
   tables.ledger_entries.forEach((row) => {
     row.category_id ??= row.category;
     row.method ||= 'other';
@@ -177,8 +219,8 @@ async function ensureEmpty(client) {
   }
 }
 
-export async function restoreSnapshot(client, snapshot) {
-  const tables = normalizeSnapshot(snapshot);
+export async function restoreSnapshot(client, snapshot, options = {}) {
+  const tables = normalizeSnapshot(snapshot, options);
   const expected = sourceReconciliation(tables);
   await client.query('BEGIN');
   try {
