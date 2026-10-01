@@ -380,6 +380,10 @@
     "sha256": "338969d65bba34e46521db63050cb0cd318873b62ec6023f68ed48ffa28b737f"
   },
   {
+    "name": "0167_documents_council_shared.sql",
+    "sha256": "9b4fbdd386560c71873daa22c0be4320b7193f9cf928900a382b049cf4ab97f3"
+  },
+  {
     "name": "0174_anonymization_runs.sql",
     "sha256": "dd3e9fce885ad195359622375fa4cd840ec9bd747550ec8e9e352868551266d0"
   }

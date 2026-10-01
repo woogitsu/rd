@@ -65,8 +65,8 @@ test('403 to brak uprawnień, a nie „Błąd serwera”', () => {
 });
 
 test('Dokumenty: rodzaje w formularzu według roli', () => {
-  assert.deepEqual(uploadableKinds(G.admin), ['financial', 'board', 'class']);
-  assert.deepEqual(uploadableKinds(G.board), ['financial', 'board', 'class']);
+  assert.deepEqual(uploadableKinds(G.admin), ['financial', 'board', 'class', 'council_shared']);
+  assert.deepEqual(uploadableKinds(G.board), ['financial', 'board', 'class', 'council_shared']);
   assert.deepEqual(uploadableKinds(G.treasurer), ['financial']);
   assert.deepEqual(uploadableKinds(G.rep1), ['class']);
   assert.deepEqual(uploadableKinds(G.rep2), ['class']);
