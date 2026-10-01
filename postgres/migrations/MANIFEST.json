@@ -414,5 +414,9 @@
   {
     "name": "0181_data_subject_requests_idempotency.sql",
     "sha256": "fa21675243ce50fa8c23bd23dcdd535fb71693a6dcc26dea8096a8483a897e12"
+  },
+  {
+    "name": "0182_identity_changes.sql",
+    "sha256": "ede81f168a3bc805c9e9b9abbbd5f72512af80db00576e1ab19f72110df070e9"
   }
 ]

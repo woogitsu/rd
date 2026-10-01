@@ -108,6 +108,7 @@ direct`) powiązane z gospodarstwem — na `NULL` albo `[zanonimizowano]`:
 | `guardians` | imię, nazwisko → `[zanonimizowano]`; `email` → `NULL`; `contact_allowed` → `false` |
 | `students` | imię, nazwisko → `[zanonimizowano]` |
 | `guardian_contact_changes` | `previous_email`, `new_email`, `reason` → `NULL` (wiersze zostają: historia zmian kontaktu jest zanonimizowana, nie usunięta) |
+| `identity_changes` (0182) | `previous_first_name`, `previous_last_name`, `new_first_name`, `new_last_name` → `[zanonimizowano]`; `reason` → `NULL` (wiersze, aktor, czas i powiązanie z żądaniem zostają; plan liczy osobno historię opiekunów i uczniów: `identity_changes_guardians`, `identity_changes_students`) |
 | `student_guardian_changes`, `enrollment_history` | `reason` → `NULL` |
 | `guardian_households`, `student_households`, `enrollments` | powody zakończenia/utworzenia → `NULL` |
 | `guardian_update_requests` | `proposed_email`, `note` → `NULL` |

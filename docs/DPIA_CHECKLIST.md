@@ -82,6 +82,7 @@ odpowiedzialności osoby zapisującej.
 | `resolutions.correction_reason` | uzasadnienie korekty uchwały |
 | `resolution_execution_events.note` | notatka o postępie wykonania uchwały — może opisywać sytuację konkretnej rodziny (#102) |
 | `guardian_contact_changes.reason` | opis sytuacji rodzinnej przy zmianie kontaktu |
+| `identity_changes.reason` | powód sprostowania imienia/nazwiska ucznia lub opiekuna (art. 16 RODO, #100, migracja 0182); e-mail, IBAN i numer rejestru odrzucane, imię i nazwisko wymagają potwierdzenia; poprzednie i nowe imię w tej samej tabeli to dane osobowe — poza eksportem rocznym, w eksporcie rodziny i anonimizowane w przebiegu |
 | `guardian_update_requests.note` | uzasadnienie wniosku rodzica o zmianę kontaktu przez jednorazowy link (#140), może opisywać sytuację rodzinną |
 | `enrollments.ended_reason` | powód odejścia ucznia ze szkoły, może opisywać sytuację rodzinną (#86) |
 | `student_households.created_reason` | powód dodania członkostwa ucznia w gospodarstwie, może opisywać sytuację rodzinną (#86) |

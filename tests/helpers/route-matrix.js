@@ -337,6 +337,14 @@ function promotionDigest(obj) {
   })).digest('hex');
 }
 
+// Skrót planu przedłużenia przedstawicieli (src/pg/promotions.js) dla fixture promotionYears.
+function representativesDigest(obj) {
+  return createHash('sha256').update(JSON.stringify({
+    kind: 'representatives', from: obj.fromSchoolYearId, to: obj.toSchoolYearId,
+    items: [[obj.representativeId, obj.fromClassId, obj.toClassId, 'eligible']],
+  })).digest('hex');
+}
+
 function adminRoute(id, method, path, { ok = 200, object, build, keyed = false }) {
   return {
     id, module: 'admin', method, path, targets: ['-'], allow: ADMIN_ONLY, mfa: true, ok, deny: 403,
@@ -1516,6 +1524,17 @@ export const ROUTE_MATRIX = Object.freeze([
     ok: 201, object: 'promotionYears', keyed: true,
     build: ({ obj }) => ({ path: '/api/admin/promotions/apply', body: { ...promotionBody(obj, { toClass: true }), planDigest: promotionDigest(obj) } }),
   }),
+  // Przedłużenie przydziałów przedstawicieli (#78): fixture promotionYears ma przedstawiciela klasy źródłowej.
+  adminRoute('admin.promotionRepresentativesPreview', 'POST', '/api/admin/promotions/representatives/preview', {
+    object: 'promotionYears', build: ({ obj }) => ({ path: '/api/admin/promotions/representatives/preview', body: promotionBody(obj, { toClass: true }) }),
+  }),
+  adminRoute('admin.promotionRepresentativesApply', 'POST', '/api/admin/promotions/representatives/apply', {
+    ok: 201, object: 'promotionYears',
+    build: ({ obj }) => ({
+      path: '/api/admin/promotions/representatives/apply',
+      body: { ...promotionBody(obj, { toClass: true }), planDigest: representativesDigest(obj), confirm: obj.toSchoolYearId },
+    }),
+  }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
   // Historia obiektu dla zarządu i skarbnika (#181): wariant zachowawczy (D-08/D-09) — board/treasurer, przydział bez klasy,
   // rok obiektu. Admin (ma trasę /api/admin/audit/entity/...), audit, principal i przedstawiciele: 403. Obiekt roku bez przydziału: 404.
@@ -1790,6 +1809,35 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({
       path: `/api/guardians/${obj.guardianId}/contact`,
       body: { email: 'zmiana-zakresu@example.invalid', contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' },
+    }),
+  },
+  {
+    // #100: sprostowanie imienia i nazwiska ucznia (art. 16 RODO). Zakres jak przy kontakcie; macierz zmienia
+    // imię, więc sukces zostawia wpis historii (identity_changes) i zdarzenie student.identity.updated.
+    id: 'families.studentIdentity', module: 'families', method: 'PATCH', path: '/api/students/:studentId/identity',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/identity`,
+      body: { firstName: 'Sprostowane', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.guardianIdentity', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/identity',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/identity`,
+      body: { lastName: 'Sprostowany', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
+    }),
+  },
+  {
+    // #100: jak families.guardianContactShared — opiekun z dziećmi z dwóch klas: zarząd z przydziałem
+    // klasy dostaje 403 guardian_shared_outside_scope i nic nie zapisuje.
+    id: 'families.guardianIdentityShared', variant: 'opiekun z dziećmi z dwóch klas', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/identity',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: false, ok: 200,
+    deny: familySharedGuardianDeny, fixture: 'fresh', object: { kind: 'sharedGuardianHousehold' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/identity`,
+      body: { firstName: 'Sprostowana', lastName: 'Sprostowana', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
     }),
   },
   {
