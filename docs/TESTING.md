@@ -287,7 +287,7 @@ wpisu księgi i przeksięgowanie kontra korekta tego wpisu. Każdy test sprawdza
 `pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z kodu trasy. Mutanty:
 `payments-refund`, `payments-reassign`, `payments-allocation`,
 `payments-allocation-reversal`, `ledger-transfer-reversal`, `ledger-replacement`. Test nie ujawnił błędu
-współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria), `ledger-budget.js` i bilans otwarcia.
+współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria).
 
 `tests/pg-real-cost-center-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
 przypisania wpisu księgi do centrów kosztów (`ledger-cost-centers.js`) — dwa pierwsze
@@ -296,6 +296,16 @@ jedna wersja i jeden wpis audytu) oraz korekta wpisu 70 € w toku kontra przypi
 (`409 allocation_exceeds_net`, zero wersji). Test sprawdza w `pg_stat_activity`, że drugie
 żądanie czeka na `SELECT id FROM ledger_entries WHERE id = $1 FOR UPDATE` z `loadEntry`.
 Mutant: `cost-center-allocation`.
+
+`tests/pg-real-budget-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
+preliminarza i poprawek bilansu otwarcia — dwie dezaktywacje tej samej kategorii pod różnymi
+kluczami (`409 category_inactive`, jedna dezaktywacja i jeden wpis audytu), dwie rewizje tej
+samej linii (`409 budget_line_superseded`, jedna rewizja) oraz dwie poprawki kasy -60 € przy
+100 € w bilansie otwarcia (`409 cash_below_zero`, jedna poprawka). Test sprawdza w
+`pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z `deactivateCategory`,
+`reviseLine` (`ledger-budget.js`) albo `createAdjustment` (`ledger-cash.js`). Mutanty:
+`budget-category`, `budget-revision`, `opening-adjustment`. `createOpening` używa
+`LOCK TABLE`, nie `FOR UPDATE`, więc zostaje poza listą.
 
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
@@ -310,11 +320,13 @@ wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anu
 `rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit`, `rd_year_close`
 oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` (dokumenty)
 i `updateGuardianContact`, a w `tests/pg-real-cost-center-locks.test.js` blokadę wpisu przy
-przypisaniu do centrów kosztów (`loadEntry` w `ledger-cost-centers.js`).
+przypisaniu do centrów kosztów (`loadEntry` w `ledger-cost-centers.js`), a w
+`tests/pg-real-budget-locks.test.js` blokady kategorii (dezaktywacja), linii preliminarza (rewizja)
+i bilansu otwarcia (poprawka).
 Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
 zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
 porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
-(autoryzacje uchwał) oraz blokady w triggerach migracji.
+(autoryzacje uchwał), `LOCK TABLE` w `createOpening` oraz blokady w triggerach migracji.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
 (reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z
