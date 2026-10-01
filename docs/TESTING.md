@@ -282,12 +282,12 @@ dopiero na wiersz (warunkowy `UPDATE`) — mutant `invitation-reissue`.
 kolejnych ścieżek finansowych — dwa zwroty wpłaty 70 + 70 € przy 100 €, korekta i zwrot
 tej samej wpłaty, dwa ponowne przypisania do tego samego gospodarstwa, dwie części wpłaty
 70 + 70 €, cofnięcie części kontra nowa część na całą kwotę, dwa cofnięcia tej samej
-części i dwa storna tego samego przeniesienia kasa ↔ rachunek. Każdy test sprawdza w
+części, dwa storna tego samego przeniesienia kasa ↔ rachunek oraz dwa przeksięgowania tego samego
+wpisu księgi i przeksięgowanie kontra korekta tego wpisu. Każdy test sprawdza w
 `pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z kodu trasy. Mutanty:
 `payments-refund`, `payments-reassign`, `payments-allocation`,
-`payments-allocation-reversal`, `ledger-transfer-reversal`. Test nie ujawnił błędu
-współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria,
-zastąpienie wpisu), `ledger-budget.js`, bilans otwarcia i `ledger-cost-centers.js`.
+`payments-allocation-reversal`, `ledger-transfer-reversal`, `ledger-replacement`. Test nie ujawnił błędu
+współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria), `ledger-budget.js`, bilans otwarcia i `ledger-cost-centers.js`.
 
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
@@ -297,7 +297,7 @@ tymczasowym i uruchamia wskazany plik testów na prawdziwym PostgreSQL; mutant m
 czerwony test. Najpierw przebieg bez mutacji (musi być zielony). Kod repozytorium nie
 jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`.
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
-Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisanie, części wpłaty i ich cofnięcie, storno przeniesienia kasa ↔ rachunek, korektę wpisu księgi i ujęcie
+Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisanie, części wpłaty i ich cofnięcie, storno przeniesienia kasa ↔ rachunek, przeksięgowanie wpisu księgi, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
 `rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit`, `rd_year_close`
 oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` (dokumenty)
@@ -305,7 +305,7 @@ i `updateGuardianContact`.
 Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
 zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
 porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
-(autoryzacje, zastąpienie wpisu) oraz blokady w triggerach migracji.
+(autoryzacje uchwał) oraz blokady w triggerach migracji.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
 (reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z
