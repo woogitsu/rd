@@ -69,6 +69,14 @@ Stronicowanie jest keyset, nie `OFFSET`:
 `GET /api/admin/audit` przy każdym odczycie zapisuje zdarzenie `audit.viewed`
 (bez parametrów zapytania) — dotyczy to także kolejnych stron.
 
+Każde zdarzenie w odpowiedzi (`GET /api/admin/audit` i `.../entity/...`) ma
+pola `actorKind` (`user`, `system`, `anonymous`) i `source` (#181). Dla
+zdarzeń bez aktora (`actorId: null`) `source` wskazuje pochodzenie: `email_worker`,
+`brevo_webhook`, `unsubscribe_link`, `login` (próby bez sesji), `bootstrap` albo
+`system`; dla zdarzeń użytkownika `source` jest `null`. To pochodna akcji i
+`metadata.source` liczona przy odczycie (`auditEventSource` w
+`shared/audit-actions.js`) — bez migracji i bez zmiany zapisanych wierszy.
+
 Domeny filtra `domain` (#181) to dokładne listy akcji ze słownika
 `shared/audit-actions.js` (`access`, `security`, `finance`, `email`,
 `documents`, `year_close`, `families`, `privacy`, `meetings`, `events`,
