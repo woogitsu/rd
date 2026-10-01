@@ -196,6 +196,18 @@ export const MESSAGES = Object.freeze({
   data_request_closed: "Żądanie jest już zamknięte (udzielono odpowiedzi albo odrzucono).",
   data_request_subject_mismatch: "Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze.",
   data_request_export_in_progress: "Eksport dla tego żądania już trwa. Poczekaj na jego zakończenie.",
+  retention_policy_missing: "Brak zatwierdzonej polityki retencji (D-04) dla wszystkich kategorii danych — nic nie zostało zanonimizowane.",
+  retention_policy_not_approved: "Polityka retencji nie ma zatwierdzenia drugiej osoby — nic nie zostało zanonimizowane.",
+  retention_rule_not_evaluable: "Polityka retencji ma tylko opis reguły, bez okresu — system nie potrafi wyliczyć terminu, nic nie zostało zanonimizowane.",
+  retention_period_not_elapsed: "Okres przechowywania danych tego gospodarstwa jeszcze nie upłynął — nic nie zostało zanonimizowane.",
+  anonymization_plan_changed: "Dane gospodarstwa zmieniły się od podglądu. Zrób podgląd jeszcze raz i zatwierdź nowy plan.",
+  anonymization_row_mismatch: "Liczba zmienionych wierszy nie zgadza się z planem — operację wycofano, nic nie zostało zanonimizowane.",
+  data_request_kind_not_erasable: "Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych.",
+  invalid_reason_code: "Podaj powód przebiegu: retention_policy albo data_subject_request.",
+  invalid_data_request_id: "Podaj identyfikator żądania osoby (tylko przy powodzie data_subject_request).",
+  invalid_dry_run: "Pole dryRun musi być wartością logiczną.",
+  invalid_plan_sha256: "Podaj skrót planu (planSha256) z podglądu.",
+  invalid_household_id: "Niepoprawny identyfikator gospodarstwa.",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",

@@ -12,82 +12,102 @@
 import { randomUUID } from 'node:crypto';
 import { sha256Hex } from '../storage.js';
 
-const DOCS_PREFIX = 'docs/';
 const PAGE_SIZE = 200;
+
+// Dwa zbiory obiektów w prywatnym buckecie: dokumenty (`docs/`, tabela
+// `documents`) i pliki zdjęć galerii (`photos/`, tabela `news_photo_files`,
+// migracja 0084). Nazwy tabel są stałe (nie z wejścia).
+export const BACKUP_SETS = Object.freeze([
+  Object.freeze({ name: 'documents', prefix: 'docs/', table: 'documents' }),
+  Object.freeze({ name: 'photos', prefix: 'photos/', table: 'news_photo_files' }),
+]);
 
 function storageBackupError(code, extra) {
   return Object.assign(new Error(code), { code, ...extra });
 }
 
-// Strona wierszy `documents` z kluczem obiektu, w porządku klucza — pozwala
-// wznowić po przerwaniu w połowie listy (kryterium akceptacji #103).
-async function documentPage(db, afterKey) {
+// Strona wierszy z kluczem obiektu, w porządku klucza — pozwala wznowić po
+// przerwaniu w połowie listy (kryterium akceptacji #103).
+async function rowPage(db, set, afterKey) {
   const { rows } = await db.query(
-    `SELECT object_key, sha256 FROM documents
+    `SELECT object_key, sha256 FROM ${set.table}
      WHERE object_key IS NOT NULL AND sha256 IS NOT NULL AND object_key LIKE $1
        AND ($2::text IS NULL OR object_key > $2)
      ORDER BY object_key LIMIT $3`,
-    [`${DOCS_PREFIX}%`, afterKey ?? null, PAGE_SIZE],
+    [`${set.prefix}%`, afterKey ?? null, PAGE_SIZE],
   );
   return rows;
 }
 
-async function allSourceKeys(sourceStorage) {
+async function allSourceKeys(sourceStorage, prefix) {
   const keys = [];
   let token;
   do {
-    const page = await sourceStorage.listObjects(DOCS_PREFIX, token);
+    const page = await sourceStorage.listObjects(prefix, token);
     keys.push(...page.keys);
     token = page.isTruncated ? page.nextContinuationToken : null;
   } while (token);
   return keys;
 }
 
-// Kopiuje obiekty `documents` (z kluczem i skrótem) brakujące w magazynie
-// docelowym, weryfikuje skrót źródła i kopii względem `documents.sha256`,
-// i raportuje osierocone/brakujące obiekty. Bez usuwania po żadnej stronie.
+// Kopiuje obiekty `documents` i `news_photo_files` (z kluczem i skrótem)
+// brakujące w magazynie docelowym, weryfikuje skrót źródła i kopii względem
+// kolumny `sha256` i raportuje osierocone/brakujące obiekty. Bez usuwania po
+// żadnej stronie. Pola najwyższego poziomu to sumy; `bySet` rozbija je na
+// dokumenty i zdjęcia. `startAfterKey` dotyczy tylko `docs/` (wznowienie).
 export async function runStorageBackup({ db, sourceStorage, targetStorage, startAfterKey = null }) {
-  const report = {
+  const empty = () => ({
     copied: 0, alreadyVerified: 0, missingInSource: 0, hashMismatches: 0, orphanedInSource: 0,
-  };
+  });
+  const bySet = {};
   let cursor = startAfterKey;
-  let hasMore = true;
-  const seenDocumentKeys = new Set();
 
-  while (hasMore) {
-    const page = await documentPage(db, cursor);
-    if (!page.length) { hasMore = false; break; }
-    for (const doc of page) {
-      seenDocumentKeys.add(doc.object_key);
-      cursor = doc.object_key;
-      if (await targetStorage.headObject(doc.object_key)) { report.alreadyVerified += 1; continue; }
+  for (const set of BACKUP_SETS) {
+    const report = empty();
+    bySet[set.name] = report;
+    const resumed = set.prefix === 'docs/' ? startAfterKey : null;
+    let setCursor = resumed;
+    let hasMore = true;
+    const seenKeys = new Set();
 
-      let source;
-      try {
-        source = await sourceStorage.getObject(doc.object_key);
-      } catch (error) {
-        if (error?.code === 'storage_object_not_found') { report.missingInSource += 1; continue; }
-        throw error;
+    while (hasMore) {
+      const page = await rowPage(db, set, setCursor);
+      if (!page.length) { hasMore = false; break; }
+      for (const row of page) {
+        seenKeys.add(row.object_key);
+        setCursor = row.object_key;
+        if (await targetStorage.headObject(row.object_key)) { report.alreadyVerified += 1; continue; }
+
+        let source;
+        try {
+          source = await sourceStorage.getObject(row.object_key);
+        } catch (error) {
+          if (error?.code === 'storage_object_not_found') { report.missingInSource += 1; continue; }
+          throw error;
+        }
+        if (sha256Hex(source.body) !== row.sha256) { report.hashMismatches += 1; continue; }
+
+        await targetStorage.putObject(row.object_key, source.body, source.contentType);
+        const copy = await targetStorage.getObject(row.object_key);
+        if (sha256Hex(copy.body) !== row.sha256) throw storageBackupError('storage_backup_copy_verification_failed');
+        report.copied += 1;
       }
-      if (sha256Hex(source.body) !== doc.sha256) { report.hashMismatches += 1; continue; }
-
-      await targetStorage.putObject(doc.object_key, source.body, source.contentType);
-      const copy = await targetStorage.getObject(doc.object_key);
-      if (sha256Hex(copy.body) !== doc.sha256) throw storageBackupError('storage_backup_copy_verification_failed');
-      report.copied += 1;
+      hasMore = page.length === PAGE_SIZE;
     }
-    hasMore = page.length === PAGE_SIZE;
+
+    // Osierocone: obiekty w źródle bez wiersza z hashem — tylko po pełnym
+    // przejściu listy wierszy (seenKeys pokrywa wszystkie strony wyłącznie
+    // przy pełnym przebiegu tego zbioru).
+    if (resumed === null) {
+      const sourceKeys = await allSourceKeys(sourceStorage, set.prefix);
+      report.orphanedInSource = sourceKeys.filter((key) => !seenKeys.has(key)).length;
+    }
+    if (set.prefix === 'docs/') cursor = setCursor;
   }
 
-  // Osierocone: obiekty w źródle bez wiersza `documents` z hashem — dopiero
-  // po pełnym przejściu listy dokumentów (seenDocumentKeys pokrywa wszystkie
-  // strony tylko przy pełnym przebiegu, tj. startAfterKey === null).
-  if (startAfterKey === null) {
-    const sourceKeys = await allSourceKeys(sourceStorage);
-    report.orphanedInSource = sourceKeys.filter((key) => !seenDocumentKeys.has(key)).length;
-  }
-
-  return { ...report, nextCursor: cursor };
+  const total = empty();
+  for (const part of Object.values(bySet)) for (const field of Object.keys(total)) total[field] += part[field];
+  return { ...total, bySet, nextCursor: cursor };
 }
 
 export async function backupRunsTableExists(db) {
