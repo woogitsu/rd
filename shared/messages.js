@@ -401,7 +401,7 @@ export const MESSAGES = Object.freeze({
   fingerprint_mismatch: "Dane różnią się od podglądu. Wyślij podgląd ponownie.",
   import_has_conflicts: "Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy.",
   idempotency_key_reused: "Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie.",
-  privacy_notice_missing: "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import.",
+  privacy_notice_missing: "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie.",
 
   // --- Informacja o przetwarzaniu danych (D-06) --------------------------------------------------
   invalid_body_text: "Podaj treść informacji (1–20000 znaków).",

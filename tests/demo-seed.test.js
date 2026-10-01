@@ -654,7 +654,9 @@ test('demo-seed: szkic kampanii tylko z uwagami o {rodzina} (#83) i stałą uwag
   const preview = await apiCall(seeded.env, { path: `/api/email/campaigns/${seeded.campaignId}/preview`, cookie: board.cookie });
   // Demo nie ma rejestru komunikacji strukturalnej (payment_references), więc szkic zostaje przy {rodzina}
   // — {komunikat} wykluczyłby wszystkie rodziny (no_payment_reference). #83 ostrzega o tym jawnie.
-  assert.deepEqual(preview.data.warnings, ['household_id_as_payment_reference', 'template_requires_board_decision_d16']);
+  // #145: demo nie ma opublikowanej informacji o przetwarzaniu danych (treść to decyzja D-06),
+  // więc podgląd ostrzega, a zatwierdzenie kampanii demo jest zablokowane.
+  assert.deepEqual(preview.data.warnings, ['household_id_as_payment_reference', 'template_requires_board_decision_d16', 'privacy_notice_missing']);
 });
 
 // #146/#586: demo ma jednego administratora, więc nadanie ról chronionych (zarząd ×2,

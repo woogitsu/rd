@@ -6,7 +6,7 @@ import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedPublishedPrivacyNotice, seedUserSession } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -24,6 +24,7 @@ describe('ograniczenie przetwarzania (#100, art. 18)', () => {
 
   before(async () => {
     db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     env = {
       db, APP_ENV: 'development', EMAIL_SENDING_ENABLED: 'true', EMAIL_TEST_ALLOWLIST: '*@example.invalid',
       BREVO_FROM_EMAIL: 'rada@example.invalid',

@@ -31,35 +31,51 @@
   (append-only), ale **żadna trasa jej jeszcze nie zapisuje** w tym PR (patrz
   „Czego nie obejmuje”).
 
-## Czego ten PR NIE obejmuje (świadomie, część #145)
+## Bramki kampanii e-mail i wydruku kartek (migracja 0179, część #145)
 
-Powód: równoległe otwarte PR-y (#303, #306, #309) zmieniają dokładnie
-`src/pg/routes/email.js` i `print/core.js` (harmonogram/pauza kampanii,
-raport doręczeń, rotacja sekretu webhooka, słownictwo o zadłużeniu PL/FR/NL).
-Dodanie tam kolejnej bramki i kolumny `email_campaigns.privacy_notice_id`
-groziłoby konfliktem scalania i nadpisaniem `CREATE OR REPLACE FUNCTION
-email_campaign_guard()`, którą te PR-y już zmieniają (patrz zasada w
-`fix-common.md`: „jeśli redefiniujesz funkcję, wyjdź od jej najnowszej wersji
-na origin/main” — tu najbezpieczniej jest w ogóle jej nie dotykać, dopóki
-tamte PR-y się nie scalą).
+- **Zatwierdzenie kampanii** (`POST /api/email/campaigns/{id}/approve`):
+  `409 privacy_notice_missing`, jeśli nie ma opublikowanej wersji. Zatwierdzenie
+  zapisuje wersję w `email_campaigns.privacy_notice_id` (w widoku API:
+  `campaign.privacyNoticeId`) i w zdarzeniu `email.campaign.approved`
+  (`privacyNoticeId`, `privacyNoticeVersion`, bez treści). Kolumnę ustawia
+  wyłącznie przejście szkic → zatwierdzona, czyści wyłącznie cofnięcie do szkicu
+  (zmiana treści/nowa migawka); w innych stanach jest niezmienna (trigger
+  `email_campaigns_privacy_notice_guard`). Wzór: `approved_payment_instructions_id` (0162).
+- **Stopka wiadomości**: „Informacja o przetwarzaniu danych osobowych (wersja N):
+  `{PUBLIC_BASE_URL}/api/public/privacy-notice`” — przed linkiem wypisania; bez
+  `PUBLIC_BASE_URL` zostaje numer wersji. Stopkę (numer i adres, nigdy treść)
+  dopisuje serwer na podstawie wersji zapamiętanej w kampanii: w podglądzie
+  szkicu jest to bieżąca opublikowana wersja (ostrzeżenie `privacy_notice_missing`,
+  gdy jej brak), po zatwierdzeniu — wersja zapisana, także w wiadomości testowej
+  i w workerze. Stopka NIE jest częścią `content_hash` (zależy od wersji
+  informacji, a nie od treści pisanej przez autora); wiązanie z wersją zapewnia
+  `privacy_notice_id` zapisane przy zatwierdzeniu, więc publikacja wersji 2 nie
+  zmienia zatwierdzonej ani zakolejkowanej kampanii.
+- **Kolejka, wznowienie, worker**: kampania zatwierdzona przed 0179
+  (`privacy_notice_id IS NULL`) nie wychodzi — `queue`/`resume` zwracają
+  `409 privacy_notice_missing`, worker pomija ją (`stopped_reason =
+  'privacy_notice_missing'`, wiersze zostają `queued`). Trzeba ją cofnąć do
+  szkicu i zatwierdzić ponownie albo anulować i utworzyć nową.
+- **Wiadomość testowa** bez opublikowanej informacji: `409 privacy_notice_missing`.
+- **Kartki** (`GET /api/print/cards`): po autoryzacji i walidacji zakresu,
+  `409 privacy_notice_missing` bez opublikowanej wersji; odpowiedź zawiera
+  `privacyNotice: { id, version, url }`, a panel `print/` drukuje na kartce
+  ten sam odnośnik. Zdarzenie `print.cards_requested` zapisuje `privacyNoticeId`
+  i `privacyNoticeVersion`. Kartki z pliku CSV/JSON wczytanego lokalnie w panelu
+  (bez API) nie mają odnośnika — to nadal otwarte.
 
-- **Bramka zatwierdzenia kampanii e-mail** (`409 privacy_notice_missing` przy
-  `POST /api/email/campaigns/{id}/approve`) i kolumna
-  `email_campaigns.privacy_notice_id` — do osobnego PR po scaleniu #303/#306/#309.
-- **Stopka wiadomości e-mail** z odnośnikiem do informacji — jw.
-- **Bramka i odnośnik na kartce** (`print/core.js`, `src/pg/routes/print.js`)
-  — jw. (#303 zmienia dokładnie `print/core.js`).
-- **Strona `/site/informacja-o-danych`** — front publiczny nie jest częścią
-  tego PR; `GET /api/public/privacy-notice` dostarcza dane, które taka strona
-  mogłaby wyświetlić.
+## Czego jeszcze brakuje w #145 (świadomie)
+
+- **Strona `/site/informacja-o-danych`** — front publiczny; `GET
+  /api/public/privacy-notice` dostarcza dane, a stopki wskazują właśnie tę trasę.
 - **Zapisywanie `privacy_notice_deliveries`** — tabela istnieje, ale żadna
-  trasa (API ani UI) jeszcze do niej nie pisze.
-- **Flaga `PRIVACY_NOTICE_REQUIRED`** z propozycji issue — bramka importu jest
-  dziś zawsze aktywna (prototyp bez danych rodzin, zgodnie z AGENTS.md); flaga
-  do rozważenia razem z bramkami e-mail/kartki, gdy powstaną.
+  trasa (API ani UI) jeszcze do niej nie pisze (zależy od D-06).
+- **Flaga `PRIVACY_NOTICE_REQUIRED`** z propozycji issue — bramki są dziś zawsze
+  aktywne (prototyp bez danych rodzin, zgodnie z AGENTS.md).
+- Wydruk kartek z danych wczytanych z pliku (poza API) nie jest bramkowany.
 
 ## Zależności od decyzji zarządu/szkoły
 
 D-06 (treść, kto informuje, kiedy), D-01 (w czyim imieniu), D-02 (cele —
 treść je wymienia), D-05 (dostawcy wymienieni w treści), D-16/D-17 (stopka i
-nadawca — dotyczy przyszłej bramki e-mail).
+nadawca — dotyczy stopki e-mail).

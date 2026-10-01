@@ -12,7 +12,7 @@ import { brusselsDay, effectiveDay } from '../src/pg/today.js';
 import { MESSAGES } from '../src/pg/routes/import.js';
 import { guessMapping, parseCsv, toServerPayload, validateRows } from '../import/core.js';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
-import { createTestDb, request, seedClass, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedUser, seedUserSession, seedPublishedPrivacyNotice as seedSharedPrivacyNotice } from './helpers/pg.js';
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('network_forbidden_in_tests'); };
@@ -95,6 +95,7 @@ async function scheduleMove(db, studentId, fromHousehold, toHousehold, on) {
 
 async function setup() {
   const db = await createTestDb();
+  await seedSharedPrivacyNotice(db);
   await seedUser(db, { userId: 'u-seed' });
   await seedClass(db, { id: 'c1', schoolYearId: YEAR, name: '1A' });
   await seedClass(db, { id: 'c2', schoolYearId: YEAR, name: '2B' });
