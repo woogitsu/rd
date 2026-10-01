@@ -20083,7 +20083,7 @@
       },
       {
         "code": "privacy_notice_missing",
-        "meaning": "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import.",
+        "meaning": "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {

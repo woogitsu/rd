@@ -386,5 +386,9 @@
   {
     "name": "0170_rd_app_role.sql",
     "sha256": "333cbaaa6f38dbac666905991c020518ed914da030676cabb6a618bbb6545fe7"
+  },
+  {
+    "name": "0179_email_campaign_privacy_notice.sql",
+    "sha256": "d08bec14c9d3a7cfe01f711c850a1d6797e268d074822bbcc41b92776287ca5d"
   }
 ]

@@ -53,6 +53,7 @@ import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, wit
 import { contentHash, preferencesToken, renderMessage, usesPaymentInstructions, usesStructuredReference } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { campaignPaymentInstructions } from '../pg/routes/payment-instructions.js';
+import { campaignPrivacyNotice } from '../pg/routes/privacy-notice.js';
 import { brusselsDay } from '../pg/today.js';
 
 const QUOTA_LOCK_ID = 732481707;
@@ -340,7 +341,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
     const { rows: campaigns } = await tx.query(
       `SELECT c.id, c.school_year_id, c.audience, c.category, c.subject, c.body_text, c.content_hash,
               c.approved_content_hash, c.approved_recipients_hash, c.recipients_hash, c.daily_cap,
-              c.status, c.approved_at, c.approved_payment_instructions_id,
+              c.status, c.approved_at, c.approved_payment_instructions_id, c.privacy_notice_id,
               y.label AS school_year_label,
               (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
                 + (${IN_FLIGHT} AND o.campaign_id = c.id) AS sent_today
@@ -375,6 +376,14 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
           continue;
         }
         paymentInstructions = payment.instructions;
+      }
+      // #145 (D-06): wyłącznie wersja informacji zapamiętana przy zatwierdzeniu
+      // (privacy_notice_id, 0179). Kampania zatwierdzona przed 0179 (NULL) jest
+      // pomijana jak przy korekcie rachunku — wiersze zostają 'queued'.
+      const privacyNotice = await campaignPrivacyNotice(tx, campaign, config.publicBaseUrl);
+      if (!privacyNotice) {
+        run.stoppedReason = 'privacy_notice_missing';
+        continue;
       }
       let capLeft = campaign.daily_cap - campaign.sent_today;
       if (capLeft <= 0) continue;
@@ -412,7 +421,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         const message = {
           ...renderMessage(campaign, {
             schoolYearLabel: campaign.school_year_label, householdId: row.household_id,
-            structuredReference: row.structured_reference ?? null, paymentInstructions, unsubscribeUrl,
+            structuredReference: row.structured_reference ?? null, paymentInstructions, unsubscribeUrl, privacyNotice,
           }),
           unsubscribeUrl,
         };

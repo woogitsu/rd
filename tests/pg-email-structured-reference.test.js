@@ -10,7 +10,7 @@ import {
   ContentError, SAMPLE_STRUCTURED_REFERENCE, contentWarnings, parseCampaignContent, renderMessage,
 } from '../src/email/content.js';
 import { formatStructuredReference, generateStructuredReference, isValidStructuredReference } from '../src/pg/ogm.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const NEXT = 'y2027';
@@ -31,6 +31,7 @@ function fakeTransport() {
 
 async function setup() {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   await seedSchoolYear(db, NEXT, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
   const treasurer = await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });

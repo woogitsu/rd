@@ -7,7 +7,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import { emailHash } from '../src/email/content.js';
 import { runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -16,6 +16,7 @@ const BODY = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok
 
 async function setup() {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const users = {
     treasurer: await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),

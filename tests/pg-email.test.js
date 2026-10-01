@@ -10,7 +10,7 @@ import {
   accountDay, campaignDailyCap, recordOtherSends, remainingQuota, runEmailBatch, ResultNotRecordedError,
 } from '../src/email/worker.js';
 import { proposeResolutions } from '../src/email/reconcile.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 // Pułapka na sieć (#214) jest teraz instalowana globalnie przez
 // tests/helpers/network-guard.js (importowany przez helpers/pg.js), więc
@@ -37,6 +37,7 @@ function fakeTransport({ fail } = {}) {
 
 async function setup(extraEnv = {}) {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const treasurer = await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const board = await seedUserSession(db, { userId: 'u-bd', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });

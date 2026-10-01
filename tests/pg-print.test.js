@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildHouseholds, parseInputRows, renderCardsHtml } from '../print/core.js';
 import { formatStructuredReference, generateStructuredReference } from '../src/pg/ogm.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-test';
@@ -50,6 +50,7 @@ async function seedFamilies(db) {
 
 async function setup() {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedFamilies(db);
   const sessions = {
     rep1a: await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }], mfa: true }),
