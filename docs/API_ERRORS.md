@@ -11,8 +11,9 @@ różnym statusem w różnych modułach (np. `not_found` to najczęściej `404`,
 bywa też częścią odpowiedzi `403` tam, gdzie moduł celowo nie rozróżnia
 "nie istnieje" od "poza zakresem" — patrz `docs/AUTHORIZATION.md` i tabela
 403 vs 404 w opisie issue #160). Przypisanie jednego kanonicznego statusu do
-każdego kodu i opisanie per-moduł polityki 403 vs 404 zostaje do kolejnego
-PR — patrz sekcja "Czego nie obejmuje ten dokument" niżej.
+każdego kodu zostaje do kolejnego PR; stan 403 vs 404 per moduł opisuje sekcja
+„Polityka 403 i 404 per moduł” niżej (patrz też „Czego nie obejmuje ten
+dokument”).
 
 **Kolumna "czy ponawiać" to założenie tego PR, nie zweryfikowana polityka
 zarządu.** Reguła: kody walidacji (`invalid_*`, `*_not_found`, `*_mismatch`,
@@ -558,21 +559,67 @@ dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
 trasa), więc polityka 403/404 jest już czytelna maszynowo, choć jeszcze nie
 opisana słownie per moduł.
 
+## Polityka 403 i 404 per moduł (#160)
+
+Poniższa tabela jest **opisem stanu faktycznego**, nie decyzją: zbiera statusy
+odmowy (poza `401` dla braku sesji), jakie macierz tras
+(`tests/helpers/route-matrix.js`) przypisuje zalogowanemu aktorowi spoza
+uprawnień w danym module. To samo źródło zasila pole `x-rd-deny-status` w
+`docs/openapi.json`; test `tests/pg-api-errors-catalog.test.js` porównuje
+tabelę z tym polem, więc zmiana statusu w trasie wymaga aktualizacji tabeli.
+`404` oznacza, że moduł celowo nie rozróżnia „nie istnieje” od „poza zakresem”
+(SR-07); `—` to trasy bez odmowy dla zalogowanych (publiczne, logowanie).
+Wybór 403 albo 404 dla poszczególnych modułów jest założeniem do przeglądu, nie
+zatwierdzoną polityką zarządu ani szkoły.
+
+| Moduł | Statusy odmowy |
+| --- | --- |
+| admin | 403 |
+| audit-history | 403, 404 |
+| audit-reviews | 403 |
+| board | 403 |
+| documents | 403, 404 |
+| email | 403 |
+| events | 403, 404 |
+| exports | 403 |
+| families | 403, 404 |
+| financial-reports | 403 |
+| guardian-updates | 403 |
+| import | 403 |
+| ledger | 403, 404 |
+| ledger-budget | 403 |
+| ledger-cash | 403 |
+| ledger-cost-centers | 403 |
+| login | 403 |
+| meetings | 403, 404 |
+| mfa | 403 |
+| news | 403, 404 |
+| payment-instructions | 403 |
+| payment-references | 403 |
+| payments | 403 |
+| print | 400, 403 |
+| privacy-notice | 403 |
+| reconciliation | 403 |
+| representative | 403 |
+| session | 403 |
+| year-close | 403 |
+
 ## Czego nie obejmuje ten dokument
 
 Część #160 — ten katalog to tylko punkt 4 propozycji z issue ("katalog
 błędów"). Nie obejmuje:
 
-- statusu HTTP kanonicznego per kod ani opisanej per-moduł polityki 403 vs
-  404 dla obiektu poza zakresem (patrz różnice między `families.js`/
-  `documents.js` i `payments.js`/`ledger.js`/`email.js`/`reconciliation.js`
-  opisane w issue #160);
+- statusu HTTP kanonicznego per kod ani zatwierdzonej polityki 403 vs 404
+  (tabela per moduł wyżej opisuje stan, nie decyzję; różnice między
+  `families.js`/`documents.js` i `payments.js`/`ledger.js`/`email.js`/
+  `reconciliation.js` opisane w issue #160);
 - schematów ciał żądań i odpowiedzi w `docs/openapi.json` (etap 1 generatora,
   `scripts/build-openapi.js`, opisuje tylko ścieżki, metody, role, MFA,
   statusy i kody z tego katalogu; patrz sekcja „OpenAPI” niżej);
-- pełnych typów `@typedef` (`Db`, `Tx`, `Grant`, `AuthContext`, `Actor`) i
-  objęcia sprawdzaniem typów całego `src/pg/**`. Start (#160): `jsconfig.json`
+- objęcia sprawdzaniem typów całego `src/pg/**`. Dziś (#160): `jsconfig.json`
   z `checkJs` dla `src/pg/input.js`, `scope.js`, `pii-gate.js`, `audit.js`,
+  `authorization.js`, `auth.js`, `http.js` (typy `Db`, `Tx`, `Actor`,
+  `Requirement` w `authorization.js`, `Grant`/`AuthContext` w `scope.js`),
   `npm run typecheck` (`tsc -p jsconfig.json --noEmit`) i job `typecheck` w CI
   (wymagany przez `ci-ok`). Kolejne pliki dopisuje się do `include`.
 
