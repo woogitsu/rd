@@ -386,5 +386,9 @@
   {
     "name": "0170_rd_app_role.sql",
     "sha256": "333cbaaa6f38dbac666905991c020518ed914da030676cabb6a618bbb6545fe7"
+  },
+  {
+    "name": "0180_net_views_lateral.sql",
+    "sha256": "6d4fec8334fda9f37d685de82160990e8f61ff781e02bc75a6ebacf305c55269"
   }
 ]
