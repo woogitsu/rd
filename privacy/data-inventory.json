@@ -4086,13 +4086,13 @@
       "data_type": "text"
     },
     "description": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "opis rewizji wydarzenia",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     },
@@ -4163,13 +4163,13 @@
       "data_type": "text"
     },
     "title": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "tytuł rewizji wydarzenia",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": true,
       "data_type": "text"
     }
@@ -8668,13 +8668,13 @@
   },
   "news_post_revisions": {
     "body": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "treść rewizji aktualności",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     },
@@ -8734,13 +8734,13 @@
       "data_type": "integer"
     },
     "title": {
-      "personal": "none",
-      "subject": null,
-      "category": null,
-      "purpose": null,
-      "retention_category": null,
+      "personal": "direct",
+      "subject": "third_party",
+      "category": "wolny tekst",
+      "purpose": "tytuł rewizji aktualności",
+      "retention_category": "audit_event",
       "visible_to": [],
-      "free_text": false,
+      "free_text": true,
       "exportable": false,
       "data_type": "text"
     }
