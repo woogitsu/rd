@@ -453,8 +453,68 @@ describe('anonimizacja gospodarstwa (#91)', () => {
       assert.equal(await personalDump(db), dumpBefore);
       // Inna metoda trasy: 405 z nagłówkiem Allow.
       const get = await handlePgRequest(request('/api/admin/anonymizations', { cookie: cookies.admin }), env);
-      assert.equal(get.status, 405);
-      assert.equal(get.headers.get('Allow'), 'POST');
+      assert.equal(get.status, 200);
+      const put = await handlePgRequest(request('/api/admin/anonymizations', { cookie: cookies.admin, method: 'PUT' }), env);
+      assert.equal(put.status, 405);
+      assert.equal(put.headers.get('Allow'), 'GET, POST');
+    });
+
+    test('GET lista przebiegów: tylko admin z MFA; reszta 401/403 bez danych, access.denied; bez zdarzenia audytu odczytu', async () => {
+      const list = (cookie) => call('/api/admin/anonymizations', { method: 'GET', cookie });
+      assert.equal((await list(null)).status, 401);
+      const auditBefore = await count('SELECT count(*)::int AS n FROM audit_events');
+      for (const role of ['board', 'treasurer', 'audit', 'principal', 'rep', 'adminNoMfa']) {
+        const denied = await list(cookies[role]);
+        assert.equal(denied.status, 403, role);
+        assert.ok(!denied.text.includes('planSha256'), role);
+      }
+      assert.equal(await count("SELECT count(*)::int AS n FROM audit_events WHERE action = 'access.denied'") >= 1, true);
+      // Odmowy zapisują wyłącznie access.denied (odczyt admina nic nie dopisuje).
+      const denials = await count('SELECT count(*)::int AS n FROM audit_events') - auditBefore;
+      const ok = await list(cookies.admin);
+      assert.equal(ok.status, 200, ok.text);
+      assert.equal(await count('SELECT count(*)::int AS n FROM audit_events') - auditBefore, denials);
+      // Świeże MFA nie jest wymagane (lista niczego nie zmienia), zwykłe MFA tak.
+      assert.equal((await list(cookies.adminStale)).status, 200);
+    });
+
+    test('GET lista przebiegów: pola, kolejność od najnowszego, kursor, bez danych osobowych', async () => {
+      const { rows: stored } = await db.query('SELECT id, household_id, reason_code, executed_by FROM anonymization_runs');
+      assert.ok(stored.length >= 3, 'wcześniejsze scenariusze zostawiły przebiegi');
+      const all = await call('/api/admin/anonymizations?limit=100', { method: 'GET' });
+      assert.equal(all.status, 200, all.text);
+      assert.equal(all.json.runs.length, stored.length);
+      assert.equal(all.json.nextCursor, null);
+      assert.equal(all.json.truncated, false);
+      const times = all.json.runs.map((run) => Date.parse(run.executedAt));
+      assert.ok(times.length >= 3 && times.every((time, index) => index === 0 || times[index - 1] >= time), 'niepusta, od najnowszego');
+      for (const run of all.json.runs) {
+        const row = stored.find((item) => item.id === run.id);
+        assert.ok(row, 'id istnieje w dzienniku');
+        assert.deepEqual([run.householdId, run.reasonCode, run.executedBy], [row.household_id, row.reason_code, row.executed_by]);
+        assert.match(run.planSha256, /^[0-9a-f]{64}$/);
+        assert.equal(run.totalChanged, Object.values(run.counts).reduce((sum, n) => sum + n, 0));
+        assert.ok(run.totalChanged > 0);
+        assert.deepEqual(Object.keys(run).sort(), ['counts', 'dataSubjectRequestId', 'executedAt', 'executedBy', 'householdId', 'id',
+          'planSha256', 'reasonCode', 'retentionPolicyIds', 'totalChanged']);
+      }
+      for (const marker of ['MRK-', 'Anna', 'Ola', '@example.invalid', '@anonim.invalid']) {
+        assert.ok(!all.text.includes(marker), `lista zawiera dane osobowe: ${marker}`);
+      }
+      // Strony po jednym wierszu dają te same id w tej samej kolejności.
+      const seen = [];
+      let cursor = null;
+      for (let guard = 0; guard < 20; guard += 1) {
+        const page = await call(`/api/admin/anonymizations?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { method: 'GET' });
+        assert.equal(page.status, 200, page.text);
+        assert.equal(page.json.runs.length, 1);
+        seen.push(page.json.runs[0].id);
+        cursor = page.json.nextCursor;
+        if (!cursor) break;
+      }
+      assert.deepEqual(seen, all.json.runs.map((run) => run.id));
+      assert.equal((await call('/api/admin/anonymizations?cursor=zly', { method: 'GET' })).status, 400);
+      assert.equal((await call('/api/admin/anonymizations?limit=0', { method: 'GET' })).status, 400);
     });
 
     test('bezpośredni UPDATE/DELETE poza przebiegiem nadal odrzucany; w kontekście przebiegu tylko pola tekstowe na NULL/wartość zastępczą', async () => {
