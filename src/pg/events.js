@@ -16,7 +16,7 @@ import { actorContext, authorizedClassIds, isAuthorizedForOwnClass, isAuthorized
 import { buildCalendar, icalUidDomain } from '../ical.js';
 import { insertAuditEvent } from './audit.js';
 import { recordDataAccess } from './data-access.js';
-import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
+import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { createJsonReader, isUniqueError } from './input.js';
 
 export const EVENT_TIMEZONE = 'Europe/Brussels';
@@ -356,6 +356,15 @@ export async function createDraft(db, actor, input) {
   const id = crypto.randomUUID();
   try {
     return await db.transaction(async (tx) => {
+      // #152: rewizje wydarzenia są niezmienne (event_revisions) — tytuł i opis
+      // sprawdzamy po stronie serwera przed zapisem.
+      const gate = gateFreeText([
+        ['event_revisions.title', content.title],
+        ['event_revisions.description', content.description],
+      ], {
+        confirm: input.confirmPersonalData === true, fail: piiFail,
+        knownNames: await loadKnownNames(tx, scope.school_year_id),
+      });
       const { rows } = await tx.query(
         `INSERT INTO events (id, school_year_id, class_id, title, description, begins_at, ends_at,
            location, organizer, audience, visibility, created_by, updated_by, idempotency_key)
@@ -367,7 +376,7 @@ export async function createDraft(db, actor, input) {
           actor.userId, idempotencyKey],
       );
       await audit(tx, actor.userId, 'event.created', id,
-        { schoolYearId: scope.school_year_id, revision: 1, status: 'draft' });
+        { schoolYearId: scope.school_year_id, revision: 1, status: 'draft', ...piiAuditMetadata(gate) });
       return { event: internalEvent(rows[0]), replayed: false };
     });
   } catch (error) {
@@ -413,6 +422,14 @@ export async function updateDraft(db, actor, input) {
     if (sameContent(row, content)) {
       return { event: internalEvent(row), replayed: true, tasksOutsideEventTime: await tasksOutsideEventTime(tx, row) };
     }
+    // #152: sprawdzamy tylko pola zmienione w tej rewizji.
+    const gate = gateFreeText([
+      ['event_revisions.title', content.title === row.title ? null : content.title],
+      ['event_revisions.description', content.description === row.description ? null : content.description],
+    ], {
+      confirm: input.confirmPersonalData === true, fail: piiFail,
+      knownNames: await loadKnownNames(tx, row.school_year_id),
+    });
     const { rows } = await tx.query(
       `UPDATE events SET title = $2, description = $3, begins_at = $4, ends_at = $5,
          location = $6, organizer = $7, audience = $8, updated_by = $9
@@ -421,7 +438,7 @@ export async function updateDraft(db, actor, input) {
         content.location, content.organizer, content.audience, actor.userId],
     );
     await audit(tx, actor.userId, 'event.revised', row.id,
-      { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft' });
+      { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft', ...piiAuditMetadata(gate) });
     // #142: zmiana czasu wydarzenia nie odwołuje zadań ani zapisów — wykazujemy
     // w odpowiedzi zadania, których okno wykracza poza nowy czas wydarzenia.
     return { event: internalEvent(rows[0]), replayed: false, tasksOutsideEventTime: await tasksOutsideEventTime(tx, rows[0]) };
@@ -1193,7 +1210,7 @@ export async function handle(request, env, url, json) {
       const idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
       if (!idempotencyKey || !IDEMPOTENCY_PATTERN.test(idempotencyKey)) throw new EventError('invalid_idempotency_key');
       const result = await createDraft(env.db, actor, {
-        ...pick(data, ['schoolYearId', 'classId', ...CONTENT_FIELDS]), idempotencyKey,
+        ...pick(data, ['schoolYearId', 'classId', ...CONTENT_FIELDS, 'confirmPersonalData']), idempotencyKey,
       });
       return json({ event: result.event }, result.replayed ? 200 : 201, {
         ...noStore, 'Idempotency-Replayed': String(result.replayed),
@@ -1201,7 +1218,7 @@ export async function handle(request, env, url, json) {
     }
     if (isUpdate) {
       const result = await updateDraft(env.db, actor, {
-        ...pick(data, ['revision', ...CONTENT_FIELDS]), eventId: decodeId(itemMatch[1]),
+        ...pick(data, ['revision', ...CONTENT_FIELDS, 'confirmPersonalData']), eventId: decodeId(itemMatch[1]),
       });
       return json({
         event: result.event, replayed: result.replayed, tasksOutsideEventTime: result.tasksOutsideEventTime ?? [],
