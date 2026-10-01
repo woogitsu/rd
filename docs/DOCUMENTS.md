@@ -15,6 +15,7 @@ Macierz jest **założeniem technicznym do zatwierdzenia** przez zarząd i szko�
 | `financial` | faktura, potwierdzenie przelewu, wyciąg | `admin`, `board`, `treasurer` bez ograniczenia do klasy | tak |
 | `board` | protokół zarządu, uchwała | `admin`, `board` bez ograniczenia do klasy | nie |
 | `class` | materiał jednej klasy | `admin`, `board` oraz `representative` wyłącznie przypisanej klasy | nie |
+| `council_shared` | regulamin, plan pracy, informacja o składce (#167) | przesyłanie, opis, zastąpienie, unieważnienie: `admin`, `board` bez ograniczenia do klasy; odczyt (lista, metadane, treść) także `representative` z przydziałem klasowym w roku dokumentu | nie |
 
 - Dyrekcja (`principal`) i Komisja Rewizyjna (`audit`) nie mają dostępu do czasu decyzji D-09.
 - Przydział ograniczony do klasy nie otwiera dokumentów `financial` ani `board`, także dla roli `board`.
@@ -24,7 +25,8 @@ Macierz jest **założeniem technicznym do zatwierdzenia** przez zarząd i szko�
 ### Co widzi przedstawiciel klasy (#167)
 
 - Wyłącznie dokumenty `class` przypisanej klasy i roku przydziału (odczyt, przesłanie, opis, zastąpienie/unieważnienie jak w macierzy). Dokumenty `financial` i `board` dają mu `404` (brak wyroczni istnienia), a przesłanie ich — `403 forbidden`.
-- **Brak dziś rodzaju „dokumenty Rady dla przedstawicieli wszystkich klas”** (roboczo `council_shared` z #167: regulamin, plan pracy, informacja o składce). Wymaga migracji rozszerzającej `CHECK` kolumny `documents.kind` (0006) i funkcji z 0143 (`kind = 'board'`), nowego wpisu w `DOCUMENT_POLICIES` i testu w `tests/pg-authz-matrix.test.js`; które dokumenty tam trafiają, rozstrzyga zarząd (D-08). Do tego czasu zarząd wgrywa taki materiał jako `class` osobno dla każdej klasy albo przekazuje go poza systemem. Zatwierdzone protokoły udostępnione rodzicom przedstawiciel widzi w panelu `meetings/` (docs/MEETINGS.md, „co widzi przedstawiciel”).
+- Dokumenty `council_shared` (regulamin, plan pracy, informacja o składce, szablon listy obecności; migracja 0167) czyta każdy przedstawiciel z przydziałem klasowym w roku dokumentu — niezależnie od klasy — bez MFA. Tylko odczyt: przesłanie daje mu `403 forbidden`, opis, zastąpienie i unieważnienie — `404`. Przydział z innego roku, przydział zarządu ograniczony do klasy, dyrekcja i Komisja Rewizyjna dostają `404` (brak wyroczni istnienia, SR-07). Dokument tego rodzaju nie może być źródłem zdjęcia galerii publicznej (0143).
+- Założenie do zatwierdzenia (D-08): które dokumenty Rady trafiają do `council_shared`, rozstrzyga zarząd; przedstawiciel może przekazać treść rodzicom swojej klasy. Przed wgraniem dokumentu z danymi osobowymi obowiązuje kontrola z #152. Zatwierdzone protokoły udostępnione rodzicom przedstawiciel widzi w panelu `meetings/` (docs/MEETINGS.md, „co widzi przedstawiciel”).
 
 ## API
 

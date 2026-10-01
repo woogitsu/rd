@@ -1312,3 +1312,14 @@ i ponownego zatwierdzenia (albo anulowania), zanim cokolwiek wyjdzie. ADD
 COLUMN bez DEFAULT nie przepisuje tabeli. Kampanie pozostają poza eksportem
 rocznym. Wycofanie: DROP TRIGGER, DROP FUNCTION, DROP COLUMN (wraca wiązanie
 przez metadane zdarzeń z kodu sprzed migracji).
+
+`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
+przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
+(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
+przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
+przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
+`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
+zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
+zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
+przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
+odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.

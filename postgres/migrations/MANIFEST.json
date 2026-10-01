@@ -374,5 +374,9 @@
   {
     "name": "0162_email_campaign_payment_instructions.sql",
     "sha256": "33ad0292d8f2083173ba4f3d8dedf82bca47531e008b73b70ac7f24486cfa249"
+  },
+  {
+    "name": "0167_documents_council_shared.sql",
+    "sha256": "9b4fbdd386560c71873daa22c0be4320b7193f9cf928900a382b049cf4ab97f3"
   }
 ]

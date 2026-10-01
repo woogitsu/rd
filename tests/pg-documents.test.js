@@ -1622,3 +1622,79 @@ test('pagination: 120 documents, 70 inaccessible to the representative — full 
   assert.equal(new Set(seen).size, 50);
   assertEvery(seen, (id) => id.startsWith('own-'));
 }));
+
+// #167: dokumenty Rady dla przedstawicieli (`council_shared`). Zapis tylko admin/zarząd bez klasy;
+// odczyt także przedstawiciel z przydziałem klasowym w roku dokumentu.
+test('council_shared: zarząd przesyła, przedstawiciele wszystkich klas roku czytają, nie zapisują (#167)', async () => withEnv(async (db, env, storage) => {
+  const board = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const { response, data } = await upload(env, { cookie: board, kind: 'council_shared', key: 'council-key-0001' });
+  assert.equal(response.status, 201);
+  const id = data.document.id;
+  assert.equal(data.document.kind, 'council_shared');
+  assert.equal(data.document.classId, null);
+
+  // Ten sam Idempotency-Key = jeden dokument i jeden obiekt w buckecie.
+  const again = await upload(env, { cookie: board, kind: 'council_shared', key: 'council-key-0001' });
+  assert.equal(again.data.document.id, id);
+  assert.equal(storage.keys().length, 1);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM documents WHERE kind = 'council_shared'")).rows[0].n, 1);
+
+  // Przedstawiciele 1A i 1B oraz rodzeństwo (1A i 1B jednym kontem) czytają listę, metadane i treść.
+  const sibling = await seedUserSession(db, {
+    userId: 'u-rep-ab', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }, { role: 'representative', classId: 'c-1b', schoolYearId: YEAR }],
+  });
+  for (const cookie of [await repA(db), await repB(db), sibling]) {
+    const list = await (await get(env, `/api/documents?schoolYearId=${YEAR}`, cookie)).json();
+    assert.deepEqual(list.documents.map((doc) => doc.id), [id]);
+    assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}&kind=council_shared`, cookie)).status, 200);
+    assert.equal((await get(env, `/api/documents/${id}`, cookie)).status, 200);
+    const content = await get(env, `/api/documents/${id}/content`, cookie);
+    assert.equal(content.status, 200);
+    assert.deepEqual(new Uint8Array(await content.arrayBuffer()), PDF);
+  }
+  assert.equal((await auditRows(db, 'document.downloaded')).length, 3);
+
+  // Przedstawiciel nie przesyła (403), nie unieważnia ani nie opisuje (404 jak brak obiektu).
+  const rep = await seedUserSession(db, { userId: 'u-rep-w', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }] });
+  assert.equal((await upload(env, { cookie: rep, kind: 'council_shared' })).response.status, 403);
+  const post = (path, body) => handlePgRequest(request(path, { method: 'POST', cookie: rep, body, headers: { 'Idempotency-Key': `rep-write-${++keyCounter}-xx` } }), env);
+  assert.equal((await post(`/api/documents/${id}/void`, { reason: 'Próba przedstawiciela' })).status, 404);
+  assert.equal((await post(`/api/documents/${id}/description`, { title: 'Zmiana', category: 'inne' })).status, 404);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM document_status_events')).rows[0].n, 0);
+}));
+
+test('council_shared: przydział z innego roku, rola ograniczona do klasy i inne role dają 404 bez wyroczni istnienia (#167)', async () => withEnv(async (db, env) => {
+  const board = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const id = (await upload(env, { cookie: board, kind: 'council_shared' })).data.document.id;
+
+  await seedSchoolYear(db, 'y-2025', { startsOn: '2025-09-01', endsOn: '2026-08-31' });
+  await seedClass(db, { id: 'c-5a', schoolYearId: 'y-2025' });
+  const lastYearRep = await seedUserSession(db, { userId: 'u-rep-old', roles: [{ role: 'representative', classId: 'c-5a', schoolYearId: 'y-2025' }] });
+  const boardClassOnly = await seedUserSession(db, { userId: 'u-board-class', mfa: true, roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }] });
+  const principal = await seedUserSession(db, { userId: 'u-principal', mfa: true, roles: [{ role: 'principal' }] });
+  const audit = await seedUserSession(db, { userId: 'u-audit', mfa: true, roles: [{ role: 'audit' }] });
+  const noRoles = await seedUserSession(db, { userId: 'u-noroles' });
+
+  for (const cookie of [lastYearRep, boardClassOnly, principal, audit, noRoles]) {
+    for (const path of [`/api/documents/${id}`, `/api/documents/${id}/content`]) {
+      const denied = await get(env, path, cookie);
+      const unknown = await get(env, path.replace(id, crypto.randomUUID()), cookie);
+      assert.equal(denied.status, 404);
+      assert.deepEqual(await denied.json(), await unknown.json());
+    }
+  }
+  assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}`, lastYearRep)).status, 403);
+  assert.equal((await get(env, `/api/documents?schoolYearId=${YEAR}`, principal)).status, 403);
+}));
+
+test('council_shared: zastąpiony dokument znika z domyślnej listy przedstawiciela (#167)', async () => withEnv(async (db, env) => {
+  const board = await seedUserSession(db, { userId: 'u-board', mfa: true, roles: [{ role: 'board' }] });
+  const first = (await upload(env, { cookie: board, kind: 'council_shared' })).data.document.id;
+  const second = (await upload(env, { cookie: board, kind: 'council_shared', bytes: PNG, type: 'image/png' })).data.document.id;
+  const supersede = await handlePgRequest(request(`/api/documents/${first}/supersede`, {
+    method: 'POST', cookie: board, body: { replacementDocumentId: second, reason: 'Nowa wersja planu pracy' }, headers: { 'Idempotency-Key': 'council-supersede-1' },
+  }), env);
+  assert.equal(supersede.status, 201);
+  const list = await (await get(env, `/api/documents?schoolYearId=${YEAR}`, await repA(db))).json();
+  assert.deepEqual(list.documents.map((doc) => doc.id), [second]);
+}));
