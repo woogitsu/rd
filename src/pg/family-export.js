@@ -148,6 +148,18 @@ const FAMILY_TABLES = Object.freeze([
             FROM guardian_contact_changes WHERE guardian_id = ANY($G) ORDER BY changed_at, id COLLATE "C"`,
   },
   {
+    // #100 (art. 16): historia sprostowań imienia i nazwiska osób z zakresu — poprzednie i nowe wartości
+    // należą do wnioskodawcy (opiekun) albo jego dziecka; bez powodu (wolny tekst, jak pozostałe powody).
+    key: 'identity_changes', label: 'Historia sprostowań imienia i nazwiska',
+    columns: [['id', 'Identyfikator', T], ['subject_type', 'Podmiot', T], ['student_id', 'Uczeń', T], ['guardian_id', 'Opiekun', T],
+      ['previous_first_name', 'Imię (przed)', T], ['previous_last_name', 'Nazwisko (przed)', T],
+      ['new_first_name', 'Imię (po)', T], ['new_last_name', 'Nazwisko (po)', T], ['source', 'Źródło', T], ['changed_at', 'Kiedy', T]],
+    sql: `SELECT id, subject_type, student_id, guardian_id, previous_first_name, previous_last_name,
+                 new_first_name, new_last_name, source, ${TS('changed_at')} AS changed_at
+            FROM identity_changes WHERE student_id = ANY($S) OR guardian_id = ANY($G)
+           ORDER BY changed_at, id COLLATE "C"`,
+  },
+  {
     key: 'guardian_update_requests', label: 'Prośby o aktualizację danych',
     columns: [['id', 'Identyfikator', T], ['guardian_id', 'Opiekun', T], ['status', 'Stan', T],
       ['created_at', 'Złożono', T], ['decided_at', 'Rozstrzygnięto', T]],

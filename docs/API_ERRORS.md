@@ -96,6 +96,7 @@ wpisów).
 | `data_request_identity_not_verified` | Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy. | Nie — najpierw zmień stan żądania. |
 | `data_request_kind_not_erasable` | Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_exportable` | Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych. | Nie — popraw dane żądania. |
+| `data_request_kind_not_rectification` | Sprostowanie można powiązać tylko z żądaniem sprostowania danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_restrictable` | Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw. | Nie — popraw dane żądania. |
 | `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
 | `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
@@ -142,7 +143,7 @@ wpisów).
 | `group_match_sum_mismatch` | Suma wpłat i wpisów nie równa się kwocie pozycji wyciągu. | Nie — popraw dane żądania. |
 | `guardian_not_found` | Nie znaleziono opiekuna. | Nie — popraw dane żądania. |
 | `guardian_outside_class` | Można zapisać wyłącznie opiekuna dziecka z przypisanej klasy w bieżącym roku. | Zależy od kontekstu (patrz moduł trasy). |
-| `guardian_shared_outside_scope` | Ten opiekun ma też dziecko poza Twoją klasą. Zmianę kontaktu wykonuje zarząd bez ograniczenia do klasy. | Nie — zmianę wykonuje zarząd bez zawężenia do klasy. |
+| `guardian_shared_outside_scope` | Ten opiekun ma też dziecko poza Twoją klasą. Zmianę kontaktu lub imienia i nazwiska wykonuje zarząd bez ograniczenia do klasy. | Nie — zmianę wykonuje zarząd bez zawężenia do klasy. |
 | `household_not_found` | Nie znaleziono gospodarstwa. | Nie — popraw dane żądania. |
 | `idempotency_conflict` | Ten formularz był już wysłany z innymi danymi. Odśwież widok i sprawdź, czy zapis istnieje, zanim wyślesz ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `idempotency_key_required` | Brak identyfikatora operacji. Odśwież stronę i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
@@ -244,6 +245,7 @@ wpisów).
 | `invalid_payload` | Niepoprawne dane importu. | Nie — popraw dane żądania. |
 | `invalid_payment_id` | Niepoprawny identyfikator wpłaty. | Nie — popraw dane żądania. |
 | `invalid_payment_link` | Niepoprawne powiązanie z wpłatą. | Nie — popraw dane żądania. |
+| `invalid_person_name` | Podaj imię lub nazwisko (1–100 znaków, bez znaku @ i znaków sterujących). | Nie — popraw dane żądania. |
 | `invalid_photo_id` | Niepoprawny identyfikator zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_photos` | Niepoprawna lista zdjęć. | Nie — popraw dane żądania. |
 | `invalid_plan_digest` | Brak poprawnego skrótu planu (planDigest) z podglądu. | Nie — popraw dane żądania. |

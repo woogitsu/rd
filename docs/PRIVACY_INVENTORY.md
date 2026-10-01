@@ -111,6 +111,15 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`guardians`|`email`|Opiekun|direct|kontakt|kontakt z opiekunem|guardian_contact|nie|tak|
 |`guardians`|`first_name`|Opiekun|direct|identyfikacja|identyfikacja opiekuna|guardian_contact|nie|tak|
 |`guardians`|`last_name`|Opiekun|direct|identyfikacja|identyfikacja opiekuna|guardian_contact|nie|tak|
+|`identity_changes`|`changed_by`|Członek Rady|pseudonymous|identyfikacja|aktor sprostowania imienia i nazwiska|nieustalona (D-04)|nie|nie|
+|`identity_changes`|`data_request_id`|Opiekun|pseudonymous|identyfikacja|powiązanie sprostowania z żądaniem osoby|nieustalona (D-04)|nie|nie|
+|`identity_changes`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`identity_changes`|`new_first_name`|Uczeń|direct|identyfikacja|historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)|student_identity|nie|nie|
+|`identity_changes`|`new_last_name`|Uczeń|direct|identyfikacja|historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)|student_identity|nie|nie|
+|`identity_changes`|`previous_first_name`|Uczeń|direct|identyfikacja|historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)|student_identity|nie|nie|
+|`identity_changes`|`previous_last_name`|Uczeń|direct|identyfikacja|historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)|student_identity|nie|nie|
+|`identity_changes`|`reason`|Opiekun|direct|wolny tekst|uzasadnienie sprostowania imienia i nazwiska|guardian_contact|tak|nie|
+|`identity_changes`|`student_id`|Uczeń|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`invitations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`invitations`|`revoked_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`ledger_allocation_versions`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -235,7 +244,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **222**, w tym wolnego tekstu: **64** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **231**, w tym wolnego tekstu: **65** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -1014,6 +1023,24 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `id` | none | — | tak |
 | `import_batch_id` | none | — | nie |
 | `source_ref` | none | — | nie |
+
+### `identity_changes`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `changed_at` | none | — | nie |
+| `changed_by` | pseudonymous | board_member | nie |
+| `data_request_id` | pseudonymous | guardian | nie |
+| `guardian_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `new_first_name` | direct | student | nie |
+| `new_last_name` | direct | student | nie |
+| `previous_first_name` | direct | student | nie |
+| `previous_last_name` | direct | student | nie |
+| `reason` | direct | guardian | nie |
+| `source` | none | — | nie |
+| `student_id` | pseudonymous | student | nie |
+| `subject_type` | none | — | nie |
 
 ### `import_batches`
 

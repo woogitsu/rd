@@ -1812,6 +1812,35 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
   },
   {
+    // #100: sprostowanie imienia i nazwiska ucznia (art. 16 RODO). Zakres jak przy kontakcie; macierz zmienia
+    // imię, więc sukces zostawia wpis historii (identity_changes) i zdarzenie student.identity.updated.
+    id: 'families.studentIdentity', module: 'families', method: 'PATCH', path: '/api/students/:studentId/identity',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/students/${obj.studentId}/identity`,
+      body: { firstName: 'Sprostowane', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
+    }),
+  },
+  {
+    id: 'families.guardianIdentity', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/identity',
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/identity`,
+      body: { lastName: 'Sprostowany', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
+    }),
+  },
+  {
+    // #100: jak families.guardianContactShared — opiekun z dziećmi z dwóch klas: zarząd z przydziałem
+    // klasy dostaje 403 guardian_shared_outside_scope i nic nie zapisuje.
+    id: 'families.guardianIdentityShared', variant: 'opiekun z dziećmi z dwóch klas', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/identity',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: false, ok: 200,
+    deny: familySharedGuardianDeny, fixture: 'fresh', object: { kind: 'sharedGuardianHousehold' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/identity`,
+      body: { firstName: 'Sprostowana', lastName: 'Sprostowana', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
+    }),
+  },
+  {
     id: 'families.relationContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/students/:studentId',
     targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({
