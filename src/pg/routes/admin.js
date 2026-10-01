@@ -62,6 +62,8 @@
 //        dyrekcja i przedstawiciele: 403).
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
+//        opcjonalny nagłówek Idempotency-Key: ponowienie → 200 + Idempotency-Replayed: true,
+//        inny ładunek z tym samym kluczem → 409 idempotency_conflict (migracja 0181)
 //   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
 //   POST /api/admin/data-requests/{id}/export?format=json|csv
 //        eksport danych jednej rodziny (src/pg/family-export.js, docs/DATA_REQUESTS.md):
@@ -135,7 +137,7 @@ import {
 } from '../family-export.js';
 import { csvResponse } from '../csv.js';
 import { ANONYMIZATION_REASON_CODES, AnonymizationError, anonymizeHousehold } from '../anonymization.js';
-import { createJsonReader } from '../input.js';
+import { createJsonReader, IDEMPOTENCY_KEY_PATTERN } from '../input.js';
 
 export const name = 'admin';
 
@@ -1308,7 +1310,32 @@ async function createDataRequest(env, actorId, request, json) {
   const dueOn = data.dueOn === undefined || data.dueOn === null || data.dueOn === '' ? null : data.dueOn;
   if (dueOn !== null && !validDate(dueOn)) throw new RequestError('invalid_due_on');
 
-  const result = await env.db.transaction(async (tx) => {
+  // Opcjonalny klucz: pozostałe trasy tworzące w tym module (konta, role, anonimizacje)
+  // nie wymagają go, a istniejący klienci rejestru nie wysyłają nagłówka. Zły format → 400.
+  const rawKey = request.headers.get('Idempotency-Key')?.trim();
+  if (rawKey !== undefined && !IDEMPOTENCY_KEY_PATTERN.test(rawKey)) throw new RequestError('invalid_idempotency_key');
+  const idempotencyKey = rawKey ?? null;
+
+  const { replayed, ...result } = await env.db.transaction(async (tx) => {
+    if (idempotencyKey) {
+      // Serializacja równoległych żądań z tym samym kluczem (podwójne kliknięcie).
+      await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:data-request-create:${idempotencyKey}`]);
+      const { rows: prior } = await tx.query(
+        `SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE idempotency_key = $1`, [idempotencyKey],
+      );
+      if (prior.length) {
+        const row = prior[0];
+        // Daty porównuje baza (bez zależności od mapowania DATE → JS i strefy czasowej).
+        const { rows: dates } = await tx.query(
+          'SELECT (received_on = $2::date AND due_on IS NOT DISTINCT FROM $3::date) AS same FROM data_subject_requests WHERE id = $1',
+          [row.id, data.receivedOn, dueOn],
+        );
+        const same = row.kind === data.kind && row.household_id === householdId && row.guardian_id === guardianId
+          && row.student_id === studentId && dates[0].same === true;
+        if (!same) throw new Abort('idempotency_conflict', 409);
+        return { replayed: true, request: dataRequestFromRow(row) };
+      }
+    }
     if (householdId) {
       const { rows } = await tx.query('SELECT 1 FROM households WHERE id = $1', [householdId]);
       if (!rows.length) throw new Abort('household_not_found', 404);
@@ -1323,18 +1350,19 @@ async function createDataRequest(env, actorId, request, json) {
     }
     const id = crypto.randomUUID();
     await tx.query(
-      `INSERT INTO data_subject_requests (id, kind, household_id, guardian_id, student_id, received_on, due_on, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [id, data.kind, householdId, guardianId, studentId, data.receivedOn, dueOn, actorId],
+      `INSERT INTO data_subject_requests (id, kind, household_id, guardian_id, student_id, received_on, due_on, created_by, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [id, data.kind, householdId, guardianId, studentId, data.receivedOn, dueOn, actorId, idempotencyKey],
     );
     await insertAuditEvent(tx, {
       actorId, action: 'data_subject_request.created', entityType: 'data_subject_request', entityId: id,
       metadata: { kind: data.kind },
     });
     const { rows } = await tx.query(`SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE id = $1`, [id]);
-    return dataRequestFromRow(rows[0]);
+    return { replayed: false, request: dataRequestFromRow(rows[0]) };
   });
-  return json({ request: result }, 201);
+  return json({ request: result.request }, replayed ? 200 : 201,
+    idempotencyKey ? { 'Idempotency-Replayed': replayed ? 'true' : 'false' } : {});
 }
 
 async function setDataRequestStatus(env, actorId, requestId, request, json) {

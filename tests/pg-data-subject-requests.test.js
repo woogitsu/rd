@@ -124,3 +124,45 @@ test('wiersz rejestru nie zawiera adresu e-mail ani imienia/nazwiska', async () 
   assert.doesNotMatch(text, /@/);
   assert.doesNotMatch(text, /Anna|Testowa|Ola/);
 });
+
+test('Idempotency-Key: podwójne kliknięcie i ponowienie dają jeden wiersz i jedno zdarzenie; inny ładunek to 409', async () => {
+  const { env, admin } = await setup();
+  const body = { kind: 'access', householdId: 'h-1', receivedOn: '2026-10-01', dueOn: '2026-10-31' };
+  const send = (payload, key = 'klucz-zadania-0001') => handlePgRequest(request('/api/admin/data-requests', {
+    method: 'POST', cookie: admin, body: payload, headers: key ? { 'Idempotency-Key': key } : {},
+  }), env);
+  const count = async (sql) => (await env.db.query(sql)).rows[0].n;
+
+  // Podwójne kliknięcie: dwa równoległe żądania.
+  const [a, b] = await Promise.all([send(body), send(body)]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 201]);
+  const created = a.status === 201 ? a : b;
+  const replay = a.status === 201 ? b : a;
+  assert.equal(created.headers.get('Idempotency-Replayed'), 'false');
+  assert.equal(replay.headers.get('Idempotency-Replayed'), 'true');
+  const first = (await created.json()).request;
+  assert.equal((await replay.json()).request.id, first.id);
+
+  // Ponowienie po czasie: ten sam wiersz.
+  const again = await send(body);
+  assert.equal(again.status, 200);
+  assert.equal(again.headers.get('Idempotency-Replayed'), 'true');
+  assert.equal((await again.json()).request.id, first.id);
+
+  // Inny ładunek z tym samym kluczem: 409 i brak nowego wiersza.
+  const conflict = await send({ ...body, kind: 'portability' });
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).error, 'idempotency_conflict');
+  assert.equal((await send({ ...body, receivedOn: '2026-10-02' })).status, 409);
+
+  assert.equal(await count('SELECT count(*)::int AS n FROM data_subject_requests'), 1);
+  assert.equal(await count(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'data_subject_request.created'`), 1);
+
+  // Inny klucz = nowe żądanie; zły format klucza = 400; brak nagłówka nadal działa (opcjonalny).
+  assert.equal((await send(body, 'klucz-zadania-0002')).status, 201);
+  const bad = await send(body, 'krotki');
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error, 'invalid_idempotency_key');
+  assert.equal((await send(body, null)).status, 201);
+  assert.equal(await count('SELECT count(*)::int AS n FROM data_subject_requests'), 3);
+});

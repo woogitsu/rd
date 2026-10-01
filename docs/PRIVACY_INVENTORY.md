@@ -464,6 +464,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `handled_by` | pseudonymous | board_member | nie |
 | `household_id` | pseudonymous | guardian | nie |
 | `id` | none | — | nie |
+| `idempotency_key` | none | — | nie |
 | `kind` | none | — | nie |
 | `received_on` | none | — | nie |
 | `status` | none | — | nie |
