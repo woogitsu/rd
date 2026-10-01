@@ -1517,6 +1517,20 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ obj }) => ({ path: '/api/admin/promotions/apply', body: { ...promotionBody(obj, { toClass: true }), planDigest: promotionDigest(obj) } }),
   }),
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
+  // Historia obiektu dla zarządu i skarbnika (#181): wariant zachowawczy (D-08/D-09) — board/treasurer, przydział bez klasy,
+  // rok obiektu. Admin (ma trasę /api/admin/audit/entity/...), audit, principal i przedstawiciele: 403. Obiekt roku bez przydziału: 404.
+  ...[
+    ['payment', 'payment_entry', 'recorded', 'paymentId'],
+    ['ledgerEntry', 'ledger_entry', undefined, 'ledgerEntryId'],
+    ['campaign', 'email_campaign', 'snapshot', 'campaignId'],
+    ['reconciliation', 'reconciliation', 'withLine', 'reconciliationId'],
+  ].map(([kind, entityType, stage, idKey]) => ({
+    id: `auditHistory.${entityType}`, module: 'audit-history', method: 'GET', path: `/api/audit/entity/${entityType}/:id`,
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200,
+    deny: (actor, targetKey, mfa) => (['board', 'treasurer'].includes(actor.key) && mfa && targetKey === 'Y2' ? 404 : 403),
+    fixture: 'static', object: { kind, stage },
+    build: ({ obj }) => ({ path: `/api/audit/entity/${entityType}/${obj[idKey]}` }),
+  })),
   // Przegląd dziennika odczytu danych rodzin (#133): wariant zachowawczy do D-04/D-07/D-08 — wyłącznie admin + MFA.
   adminRoute('admin.accessLog', 'GET', '/api/admin/access-log', {}),
   // Przegląd dostępu po kadencji (#133): tylko odczyt, wyłącznie admin + MFA; rok źródłowy z fixture promotionYears.

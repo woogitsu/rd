@@ -54,6 +54,7 @@ import * as guardianUpdatesRoutes from './routes/guardian-updates.js';
 import * as privacyNoticeRoutes from './routes/privacy-notice.js';
 import * as financialReportRoutes from './routes/financial-reports.js';
 import * as auditReviewRoutes from './routes/audit-reviews.js';
+import * as auditHistoryRoutes from './routes/audit-history.js';
 import * as boardRoutes from './routes/board.js';
 import { isMfaGateExempt, mfaGate } from './mfa-policy.js';
 
@@ -86,6 +87,7 @@ export const ROUTES = [
   financialReportRoutes, // #125: sprawozdanie roczne i przepływy środków
   boardRoutes, // #131: pulpit zarządu — statystyki per klasa
   auditReviewRoutes, // #137: ścieżka kontroli KR — uwagi, odpowiedzi, zamknięcia, wniosek
+  auditHistoryRoutes, // #181: historia wpłaty, wpisu księgi, uzgodnienia i kampanii dla zarządu i skarbnika
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
