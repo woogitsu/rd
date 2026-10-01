@@ -8,10 +8,9 @@
 //   i jest na ekranie;
 // - przyciski, pola i linki nawigacji mają co najmniej 24×24 px; linki w tekście
 //   i w ścieżce (breadcrumbs) też, żeby nie polegać na wyjątku odstępu.
-// documents/: pole „Pokaż też zastąpione i unieważnione” ma 13×13 px, a etykieta przy
-// 1280 px mniej niż 24 px wysokości — spełnia tylko wyjątek odstępu 2.5.8. Plik należy
-// do zakresu #124 (dokumenty), więc tu mierzymy dla documents/ tylko układ i fokus;
-// rozmiar celu w documents/ jest opisany w docs/ACCESSIBILITY.md jako do poprawy.
+// documents/: pole „Pokaż też zastąpione i unieważnione” miało 13×13 px; teraz pole ma
+// 24×24 px, a celem jest cała etykieta (min. 44 px wysokości), więc documents/ podlega
+// temu samym pomiarowi co pozostałe widoki (#124).
 // Sesja przedstawiciela klasy (bez MFA), dane wyłącznie syntetyczne (support/server.js).
 // Ten sam pomiar dla dowolnej aplikacji i danych demo: docs/a11y/audit.mjs.
 import { expect, test } from '@playwright/test';
@@ -67,7 +66,7 @@ function layout() {
 
 for (const width of [320, 1280]) {
   for (const [name, path, prepare] of VIEWS) {
-    test(`${name} przy ${width} px: bez poziomego przewijania, fokus widoczny${name === 'documents' ? '' : ', cele ≥ 24 px'}`, async ({ browser }) => {
+    test(`${name} przy ${width} px: bez poziomego przewijania, fokus widoczny, cele ≥ 24 px`, async ({ browser }) => {
       const context = await repContext(browser, width);
       const page = await context.newPage();
       await page.goto(path);
@@ -84,7 +83,7 @@ for (const width of [320, 1280]) {
 
       const { overflow, small } = await page.evaluate(layout);
       expect(overflow, 'poziome przewijanie całej strony').toBeLessThanOrEqual(0);
-      if (name !== 'documents') expect(small, 'cele mniejsze niż 24×24 px').toEqual([]);
+      expect(small, 'cele mniejsze niż 24×24 px').toEqual([]);
 
       const missing = [];
       for (let step = 0; step < 30; step += 1) {
