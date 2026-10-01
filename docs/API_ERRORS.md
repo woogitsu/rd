@@ -248,6 +248,9 @@ wpisów).
 | `invalid_plan_sha256` | Podaj skrót planu (planSha256) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_provider_pause_id` | Niepoprawny identyfikator wstrzymania wysyłki. | Nie — popraw dane żądania. |
+| `invalid_quota_count` | Niepoprawna liczba wiadomości: od 1 do 10000; korekta jest liczbą ujemną. | Nie — popraw dane żądania. |
+| `invalid_quota_day` | Niepoprawna doba limitu: wpis dotyczy dzisiejszej doby (UTC lub strefy konta), korekta — doby korygowanego wpisu. | Nie — popraw dane żądania. |
+| `invalid_quota_reason` | Niepoprawny kod powodu wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
 | `invalid_reason_code` | Podaj powód przebiegu: retention_policy albo data_subject_request. | Nie — popraw dane żądania. |
@@ -397,6 +400,8 @@ wpisów).
 | `privacy_notice_not_found` | Nie znaleziono tej wersji informacji. | Nie — popraw dane żądania. |
 | `production_requires_flag` | Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `production_restore_requires_allow_production` | Odtworzenie na produkcji wymaga osobnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
+| `quota_correction_exceeds` | Korekty nie mogą łącznie przekroczyć liczby z korygowanego wpisu. | Nie — popraw dane żądania. |
+| `quota_correction_target_not_found` | Nie znaleziono wpisu do skorygowania. | Nie — popraw dane żądania. |
 | `provider_pause_not_found` | Nie znaleziono tego wstrzymania wysyłki. Odśwież widok. | Nie — popraw dane żądania. |
 | `public_copy_requires_license` | Publiczna kopia wymaga zapisanej licencji lub zgody. | Zależy od kontekstu (patrz moduł trasy). |
 | `quorum_rule_source_required` | Podaj źródło reguły quorum (np. regulamin). | Nie — popraw dane żądania. |

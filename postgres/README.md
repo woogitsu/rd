@@ -1401,3 +1401,27 @@ funkcja `audit_review_notes_guard()` i triggery; żaden wiersz nie jest
 zmieniany. `body` to wolny tekst za bramką danych osobowych; w `audit_events`
 trafiają wyłącznie identyfikatory. Tabela jest w eksporcie rocznym.
 Wycofanie: DROP TABLE i DROP FUNCTION (na bazie z zapisami tylko po kopii).
+
+`0177_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
+spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
+bez zera (wiersz kampanii nadal ma dokładnie 1) i dodaje kolumny opcjonalne
+`actor_id`, `reason_code` (`manual_brevo_panel`, `invitation`, `audit_committee`,
+`other`, `correction`), `idempotency_key` (UNIQUE) i `corrects_id` (FK do
+wpisu korygowanego) oraz CHECK `email_ledger_other_manual`: wpis ręczny ma
+aktora, kod i klucz, a korekta to wyłącznie liczba ujemna z kodem `correction`
+i wskazaniem korygowanego wpisu. Dziennik nadal jest tylko do dopisywania
+(trigger z 0007) — pomyłkę poprawia nowy wpis ujemny, nic nie jest edytowane.
+Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSends`)
+pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
+SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
+Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
+`0181_data_subject_requests_idempotency.sql` (#100, idempotencja rejestracji
+żądania osoby) dodaje opcjonalną kolumnę `data_subject_requests.idempotency_key`
+(CHECK formatu jak w pozostałych trasach) i unikalny indeks częściowy
+`WHERE idempotency_key IS NOT NULL`. `POST /api/admin/data-requests` z tym samym
+`Idempotency-Key` i ładunkiem zwraca zapisany wiersz (200,
+`Idempotency-Replayed: true`); inny ładunek → 409 `idempotency_conflict`.
+Skutki dla danych: istniejące wiersze dostają NULL i nie są zmieniane; indeks
+częściowy ich nie obejmuje. Klucz to losowy token klienta, bez danych osobowych.
+Wycofanie: `DROP INDEX data_subject_requests_idempotency_key_key`, `ALTER TABLE
+data_subject_requests DROP COLUMN idempotency_key`.

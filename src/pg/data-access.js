@@ -123,7 +123,7 @@ const EXEMPT_GROUPS = [
     reason: 'agregaty i liczniki (bez imion, e-maili i identyfikatorów rodzin) albo konfiguracja',
     routes: ['families.classes', 'board.overview', 'board.overviewExportCsv', 'board.overviewExportXlsx', 'representative.overview',
       'admin.classCoverage', 'admin.retentionPreview', 'admin.opsStatus', 'yearClose.status', 'import.options',
-      'email.list', 'email.status', 'email.report', 'email.providerPause.get', 'email.workerStatus.get'],
+      'email.list', 'email.status', 'email.report', 'email.providerPause.get', 'email.workerStatus.get', 'email.quota.get'],
   },
   {
     reason: 'administracja kont Rady: dane członków Rady, nie dzieci i opiekunów',

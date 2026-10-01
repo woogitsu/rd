@@ -127,7 +127,9 @@ test('restore from a D1-built snapshot works with every current PostgreSQL migra
     assert.deepEqual(report.counts, expected.counts);
     assert.deepEqual(report.payments, { count: 6, net_cents: '16500' });
     assert.deepEqual(report.ledger, { income_cents: '7000', expense_cents: '351000' });
-    assert.deepEqual(await reconciliationReport(db), report);
+    const { fingerprints, ...reconciliation } = report;
+    assert.deepEqual(await reconciliationReport(db), reconciliation);
+    assert.deepEqual(Object.keys(fingerprints), SNAPSHOT_TABLES);
 
     // Wpłaty: przypisanie odtworzone chronionym przejściem, suma per rodzina bez statusu „dłużnik”.
     const assigned = (await db.query("SELECT household_id, status FROM payment_entries WHERE id = 'p-5'")).rows[0];
@@ -360,4 +362,70 @@ test('ambiguous or nonexistent Brussels local time is rejected with the event id
     snapshot.tables.events.find((row) => row.id === 'ev-internal').begins_at = '2026-10-25 02:30:00';
     await restoreSnapshot(db, resign(snapshot), { eventTimeZone: 'UTC' });
   } finally { await db.close(); }
+});
+
+// #182: uzgodnienie porównuje źródło z bazą docelową, a kolumny spoza mapowania nie giną po cichu.
+test('D1 ledger row with approval_id is rejected naming table and column, without the value, and nothing is written (#182)', async () => {
+  const snapshot = snapshotFromD1();
+  assert.ok('approval_id' in snapshot.tables.ledger_entries[0], 'snapshot keeps every D1 column');
+  snapshot.tables.ledger_entries[0].approval_id = 'appr-synthetic-1';
+  resign(snapshot);
+  const target = await createTestDb();
+  try {
+    await assert.rejects(restore(target, snapshot), (error) => {
+      assert.match(error.message, /ledger_entries\.approval_id \(1 rows with data, e\.g\. le-/);
+      assert.doesNotMatch(error.message, /appr-synthetic-1/);
+      return true;
+    });
+    assert.equal((await target.query('SELECT count(*)::int AS n FROM school_years')).rows[0].n, 0);
+  } finally { await target.close(); }
+});
+
+test('empty columns outside the mapping do not block restore (#182)', async () => {
+  const snapshot = snapshotFromD1();
+  snapshot.tables.ledger_entries.forEach((row) => { row.approval_id = null; });
+  snapshot.tables.students[0].extra_note = '';
+  resign(snapshot);
+  const db = await createTestDb();
+  try { await restore(db, snapshot); } finally { await db.close(); }
+});
+
+// Klient, który po wstawieniu danych (przy pierwszym odczycie schematu do odcisków) psuje jeden wiersz.
+function corruptingClient(db, sql) {
+  let done = false;
+  return {
+    async query(text, params) {
+      if (!done && /information_schema\.columns/.test(text)) { done = true; await db.query(sql); }
+      return db.query(text, params);
+    },
+  };
+}
+
+for (const [name, sql, table, id] of [
+  ['one shifted timestamp (1 h)', "UPDATE events SET begins_at = begins_at + interval '1 hour' WHERE id = 'ev-published'", 'events', 'ev-published'],
+  ['one swapped household_id', "UPDATE students SET household_id = 'h-2' WHERE id = 'st-2'", 'students', 'st-2'],
+  ['one changed date', "UPDATE student_guardians SET starts_on = '2026-09-02' WHERE student_id = 'st-1' AND guardian_id = 'g-2'", 'student_guardians', 'st-1\\|g-2'],
+  ['one changed flag', "UPDATE guardians SET contact_allowed = false WHERE id = 'g-1'", 'guardians', 'g-1'],
+]) {
+  test(`restore is rolled back when the target differs from the source: ${name} (#182)`, async () => {
+    const db = await createTestDb();
+    try {
+      let error;
+      try { await restore(corruptingClient(db, sql), snapshotFromD1()); } catch (caught) { error = caught; }
+      assert.ok(error, 'restore must fail');
+      assert.match(error.message, new RegExp(`Row fingerprint mismatch.*${table}: 1 rows \\(${id}\\)`));
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM school_years')).rows[0].n, 0);
+    } finally { await db.close(); }
+  });
+}
+
+test('two restores of the same snapshot give identical fingerprints (#182)', async () => {
+  const snapshot = snapshotFromD1();
+  const first = await createTestDb();
+  const second = await createTestDb();
+  try {
+    const a = await restore(first, structuredClone(snapshot));
+    const b = await restore(second, structuredClone(snapshot));
+    assert.deepEqual(a.fingerprints, b.fingerprints);
+  } finally { await first.close(); await second.close(); }
 });

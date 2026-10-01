@@ -396,6 +396,10 @@
     "sha256": "b2fe63b7dbe3b85a609a9fd789a9bfda8fcac5cd29fa1f5714744a6a02aaa053"
   },
   {
+    "name": "0177_email_quota_other_sends.sql",
+    "sha256": "5d152a8ff4f58d92bfa562eff7698a247baa9c3b1a23adca1e6fd0bac0addb19"
+  },
+  {
     "name": "0181_data_subject_requests_idempotency.sql",
     "sha256": "fa21675243ce50fa8c23bd23dcdd535fb71693a6dcc26dea8096a8483a897e12"
   }
