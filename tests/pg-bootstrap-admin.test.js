@@ -160,7 +160,7 @@ test('po wygaśnięciu niewykorzystanego zaproszenia można ponowić; konto jest
   });
 });
 
-test('podwójne kliknięcie: dwa równoległe uruchomienia dają co najwyżej jeden ważny token', async () => {
+test('podwójne kliknięcie: dwa równoległe uruchomienia dają co najwyżej jeden ważny token (PGlite: po kolei, nie wyścig)', async () => {
   await withDb(async (db) => {
     const results = await Promise.allSettled([
       bootstrapAdmin(db, { email: EMAIL, appEnv: 'staging' }),
