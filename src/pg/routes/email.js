@@ -23,6 +23,7 @@
 //   POST /api/email/provider-pause/lift              potwierdzenie naprawy konfiguracji: zarząd + świeże MFA (#209), idempotentne
 //   GET  /api/email/worker-status?schoolYearId=…     ostatni przebieg zadania i alarm „brak przebiegów” (#130; liczby i kody)
 //   GET  /api/email/quota?schoolYearId=…             stan dziennego limitu Brevo: doba UTC i strefa konta, dziś i jutro (#84; liczby)
+//   GET  /api/email/quota/other-sends                lista wpisów ręcznych i korekt (#84, kursor, filtr doby; bez adresów i treści)
 //   POST /api/email/quota/other-sends                ręczna ewidencja wiadomości spoza kolejki lub jej korekta (#84, Idempotency-Key, tylko dopisywanie)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //   GET  /api/email/preferences?t=…                  publiczna: podgląd wypisania (bez skutku, #110)
@@ -1363,6 +1364,49 @@ function ledgerView(row) {
   };
 }
 
+// Lista wpisów ręcznych i korekt (#84): do wyboru wpisu do korekty w panelu.
+// Wyłącznie liczby, kody i identyfikatory; wpisy sprzed migracji 0177 (bez
+// aktora) nie są ręczne, więc ich tu nie ma. `corrected` = wpis dodatni ma już
+// choć jedną korektę; `correctedCount` = suma korekt, `correctableCount` = ile
+// jeszcze można skorygować (0 dla korekt).
+async function listOtherSends(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const day = url.searchParams.get('day');
+  if (day !== null && (!DAY_PATTERN.test(day) || new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day)) {
+    throw new RequestError('invalid_quota_day');
+  }
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, schoolYearId);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['quota-other-sends', day]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [];
+  const where = ["l.source = 'other'", 'l.actor_id IS NOT NULL'];
+  if (day !== null) { values.push(day); where.push(`l.day = $${values.length}`); }
+  if (cursor) where.push(afterTimestampDescSql('l.recorded_at', 'l.id', cursor, values));
+  const { rows } = await env.db.query(
+    `SELECT l.id, to_char(l.day, 'YYYY-MM-DD') AS day, l.message_count, l.reason_code, l.corrects_id, l.actor_id,
+            l.recorded_at, ${cursorTimestampSql('l.recorded_at')} AS cursor_ts,
+            COALESCE((SELECT SUM(-c.message_count) FROM email_send_ledger c WHERE c.corrects_id = l.id), 0)::int AS corrected_count
+       FROM email_send_ledger l WHERE ${where.join(' AND ')}
+      ORDER BY l.recorded_at DESC, l.id LIMIT ${limit + 1}`,
+    values,
+  );
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  const entries = page.items.map((row) => ({
+    ...ledgerView(row),
+    corrected: row.corrected_count > 0,
+    correctedCount: row.corrected_count,
+    correctableCount: row.message_count > 0 ? row.message_count - row.corrected_count : 0,
+  }));
+  return json(
+    { entries, nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit },
+    200, { 'Cache-Control': 'no-store' },
+  );
+}
+
 async function recordOtherSend(request, env, json) {
   const key = request.headers.get('Idempotency-Key')?.trim();
   if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
@@ -2256,8 +2300,9 @@ export async function handle(request, env, url, json) {
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
     }
     if (url.pathname === '/api/email/quota/other-sends') {
+      if (method === 'GET') return await listOtherSends(request, env, url, json);
       if (method === 'POST') return await recordOtherSend(request, env, json);
-      return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     if (url.pathname === '/api/email/provider-pause/lift') {
       if (method === 'POST') return await providerPauseLift(request, env, json);

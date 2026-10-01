@@ -89,15 +89,15 @@
         </form>
 
         <div id="quota-entries-box" hidden>
-          <h3>Wpisy zapisane w tej sesji</h3>
-          <div class="table-wrap" role="region" aria-label="Wpisy zapisane w tej sesji" tabindex="0">
+          <h3>Ostatnie wpisy ręczne</h3>
+          <div class="table-wrap" role="region" aria-label="Ostatnie wpisy ręczne" tabindex="0">
             <table>
-              <caption class="sr-only">Wpisy spoza kolejki zapisane w tej sesji</caption>
-              <thead><tr><th scope="col">Doba</th><th scope="col" class="amount">Liczba</th><th scope="col">Powód</th><th scope="col">Identyfikator</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <caption class="sr-only">Ostatnie wpisy spoza kolejki i korekty, od najnowszych</caption>
+              <thead><tr><th scope="col">Doba</th><th scope="col" class="amount">Liczba</th><th scope="col">Powód</th><th scope="col">Korekta</th><th scope="col">Identyfikator</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
               <tbody id="quota-entries-body"></tbody>
             </table>
           </div>
-          <p class="context">Identyfikator wpisu potrzebny do korekty widać tylko tutaj i w dzienniku zdarzeń; lista wcześniejszych wpisów nie jest jeszcze udostępniana przez API.</p>
+          <p class="context">Lista pochodzi z serwera (do 50 najnowszych wpisów); korekta nie może razem przekroczyć liczby z wpisu korygowanego.</p>
         </div>
       </section>
 

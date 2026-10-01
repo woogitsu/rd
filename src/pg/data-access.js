@@ -126,6 +126,10 @@ const EXEMPT_GROUPS = [
       'email.list', 'email.status', 'email.report', 'email.providerPause.get', 'email.workerStatus.get', 'email.quota.get'],
   },
   {
+    reason: 'ewidencja wiadomości spoza kolejki (#84): liczby, kody powodu, doba i identyfikator aktora z Rady; bez adresów i treści wiadomości',
+    routes: ['email.quota.otherSends.list'],
+  },
+  {
     reason: 'administracja kont Rady: dane członków Rady, nie dzieci i opiekunów',
     routes: ['admin.users', 'admin.accountRequests', 'admin.grantRequests', 'admin.grants', 'admin.invitations', 'admin.schoolYears', 'privacyNotice.list'],
   },

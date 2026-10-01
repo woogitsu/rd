@@ -1256,6 +1256,12 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/email/quota?schoolYearId=${target.schoolYearId}` }),
   },
   {
+    // Lista wpisów ręcznych i korekt (#84): odczyt jak stan limitu; liczby i kody.
+    id: 'email.quota.otherSends.list', module: 'email', method: 'GET', path: '/api/email/quota/other-sends?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/quota/other-sends?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
     // Ewidencja wiadomości spoza kolejki (#84): dziennik tylko do dopisywania, Idempotency-Key.
     id: 'email.quota.otherSends', module: 'email', method: 'POST', path: '/api/email/quota/other-sends',
     targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: null,
