@@ -242,3 +242,7 @@ body:has(> header.shell-header) main h1 {
   #shared-confirm-dialog form { padding: 1rem; }
   #shared-confirm-dialog .actions button { flex: 1 1 100%; }
 }
+
+/* #181: zwijana sekcja „Historia” obiektu w oknach i szczegółach. */
+.entity-history { margin: 1rem 0; }
+.entity-history summary { cursor: pointer; font-weight: 600; }

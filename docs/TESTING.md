@@ -29,6 +29,7 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 | import | import | ✓ | ✓ | ✓ | n/d (import nie zapisuje kwot) | ✓ | ✓ | ✓ | ~ (#98) |
 | wplaty | payments, payment-references, payment-instructions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (wpłata nie ma adresu; powód korekty z adresem: #152) | ✓ |
 | ksiega | ledger, ledger-cash, ledger-budget, ledger-cost-centers, financial-reports | ✓ | n/d (księga nie zna rodzin) | n/d (księga nie zna rodzin) | ~ (powiązana wpłata księgowana raz, bez wpłat częściowych rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
+| kontrola KR | audit-reviews | ✓ | n/d (moduł nie zna opiekunów) | n/d (moduł nie zna rodzin) | n/d (brak kwot) | ✓ | ✓ | ✓ | ✓ |
 | uzgodnienia | reconciliation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | zamkniecie | year-close | ✓ | n/d (bilans księgi, nie rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | email | email | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -89,6 +90,10 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | ksiega | Podw. kliknięcie | tests/pg-ledger-api.test.js | double click with the same Idempotency-Key creates one entry |
 | ksiega | Ponowienie | tests/pg-ledger-api.test.js | audit events are atomic with the write and carry no amounts, descriptions or documents |
 | ksiega | Korekty | tests/pg-real-double-click.test.js | dwie korekty wpisu księgi 70 + 70 € przy 100 € |
+| kontrola KR | Podw. kliknięcie | tests/pg-audit-reviews.test.js | podwójne kliknięcie i ponowienie: jeden zapis i jedno zdarzenie; ten sam klucz z inną treścią to 409 |
+| kontrola KR | Ponowienie | tests/pg-audit-reviews.test.js | podwójne kliknięcie odpowiedzi i zamknięcia: jeden zapis każdego rodzaju |
+| kontrola KR | Błędny e-mail | tests/pg-audit-reviews.test.js | bramka danych osobowych: e-mail odrzucony, telefon wymaga potwierdzenia; audyt bez treści |
+| kontrola KR | Korekty | tests/pg-audit-reviews.test.js | wątek: pytanie KR → odpowiedź skarbnika → zamknięcie; wniosek końcowy; lista i raport KR |
 | uzgodnienia | 2 opiekunów | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Rodzeństwo | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Wpł. częściowe | tests/pg-reconciliation.test.js | a correction after matching blocks confirmation with a list of inconsistent matches |

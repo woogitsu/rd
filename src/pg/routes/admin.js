@@ -80,6 +80,12 @@
 //                                                 wyłącznie liczności per kategoria i rok/rok szkolny
 //                                                 + zarejestrowane polityki (`retention_policies`, bez PII).
 //                                                 Nie usuwa ani nie anonimizuje żadnych danych — sam odczyt.
+//   POST /api/admin/anonymizations              { householdId, reasonCode, dataRequestId?, dryRun?, expectedPlanSha256?, confirm? }
+//                                                 anonimizacja gospodarstwa z zachowaniem księgi i sum wpłat (#91);
+//                                                 krok w górę MFA (#150). `dryRun` (domyślnie true) zwraca plan i
+//                                                 planSha256 (liczniki, bez danych osobowych); wykonanie wymaga
+//                                                 dryRun:false, confirm = id gospodarstwa i expectedPlanSha256 z podglądu.
+//                                                 201 applied / 200 replayed (nic do zmiany) / 409 retention_policy_missing…
 //
 // Dostęp: wyłącznie rola `admin` z potwierdzonym MFA, także do odczytu.
 // #181: docelowo domeny finance/email mają też role zarządu/skarbnika/kampanii
@@ -104,7 +110,7 @@ import {
   freshMfaForbiddenCode, isAuthorizedScoped, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess,
 } from '../authorization.js';
 import { auditMetadataForView, insertAuditEvent } from '../audit.js';
-import { AUDIT_DOMAINS, auditActionDomain, auditDomainActions } from '../../../shared/audit-actions.js';
+import { AUDIT_DOMAINS, auditActionDomain, auditDomainActions, auditEventSource } from '../../../shared/audit-actions.js';
 import { auditYearByObjectSql } from '../export.js';
 import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
@@ -128,6 +134,7 @@ import {
   FAMILY_EXPORT_FORMAT_VERSION, FamilyExportError,
 } from '../family-export.js';
 import { csvResponse } from '../csv.js';
+import { ANONYMIZATION_REASON_CODES, AnonymizationError, anonymizeHousehold } from '../anonymization.js';
 import { createJsonReader } from '../input.js';
 
 export const name = 'admin';
@@ -396,7 +403,7 @@ async function mfaResetRoute(env, actorId, userId, request, json) {
 async function recoveryRequestsList(env, url, json) {
   const status = url.searchParams.get('status') || 'pending';
   try {
-    return json({ requests: await listRecoveryRequests(env, { status }) });
+    return json(await listRecoveryRequests(env, { status }));
   } catch (error) {
     if (error instanceof LoginError) throw new RequestError(error.code, error.status);
     throw error;
@@ -867,7 +874,7 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
 
 async function grantRequestsList(env, url, json) {
   try {
-    return json({ requests: await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }) });
+    return json(await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }));
   } catch (error) {
     if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
     throw error;
@@ -1068,6 +1075,8 @@ function auditEventForView(row, { withEntity = true } = {}) {
   const { metadata, redactedFields } = auditMetadataForView(row.metadata_json ?? {});
   const event = {
     id: row.id, actorId: row.actor_id ?? null, action: row.action, domain: auditActionDomain(row.action),
+    // #181 pkt 3: zdarzenia bez aktora rozróżnione pochodną z akcji (bez migracji).
+    ...auditEventSource(row.action, row.actor_id, row.metadata_json ?? {}),
   };
   if (withEntity) Object.assign(event, { entityType: row.entity_type, entityId: row.entity_id });
   // #184: `access.denied` — liczba odmów w oknie 5 minut od tego zdarzenia (0160).
@@ -1515,6 +1524,38 @@ async function retentionPreview(env, json) {
   });
 }
 
+// Anonimizacja gospodarstwa (#91, src/pg/anonymization.js). Podgląd domyślny:
+// wykonanie wymaga jawnego dryRun:false, potwierdzenia identyfikatorem
+// gospodarstwa i skrótu planu z podglądu (zatwierdzenie dokładnie tego planu).
+async function anonymizationRoute(env, actorId, request, json) {
+  const data = await readJson(request);
+  const householdId = optionalId(data.householdId, 'invalid_household_id');
+  if (!householdId) throw new RequestError('invalid_household_id');
+  if (!ANONYMIZATION_REASON_CODES.includes(data.reasonCode)) throw new RequestError('invalid_reason_code');
+  const dataRequestId = optionalId(data.dataRequestId, 'invalid_data_request_id');
+  if (data.reasonCode === 'data_subject_request' && !dataRequestId) throw new RequestError('invalid_data_request_id');
+  if (data.reasonCode === 'retention_policy' && dataRequestId) throw new RequestError('invalid_data_request_id');
+  if (data.dryRun !== undefined && typeof data.dryRun !== 'boolean') throw new RequestError('invalid_dry_run');
+  const dryRun = data.dryRun !== false;
+  let expectedPlanSha256 = null;
+  if (!dryRun) {
+    if (data.confirm !== householdId) throw new RequestError('confirmation_required');
+    if (typeof data.expectedPlanSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(data.expectedPlanSha256)) {
+      throw new RequestError('invalid_plan_sha256');
+    }
+    expectedPlanSha256 = data.expectedPlanSha256;
+  }
+  try {
+    const result = await anonymizeHousehold(env.db, {
+      actorId, householdId, reasonCode: data.reasonCode, dataRequestId, dryRun, expectedPlanSha256,
+    });
+    return json(result, result.status === 'applied' ? 201 : 200, { 'Cache-Control': 'no-store' });
+  } catch (error) {
+    if (error instanceof AnonymizationError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+}
+
 // #181: historia jednego obiektu. Wariant zachowawczy — tylko admin (jak cały
 // moduł); role finansowe/kampanii własnego zakresu (skarbnik widzi historię
 // swojej wpłaty) zostają do decyzji D-08/D-09, kiedy dojdzie osobna trasa
@@ -1621,6 +1662,7 @@ function allowedMethodsFor(section, pathLength, action, path) {
     return null;
   }
   if (section === 'retention' && pathLength === 2) return ['GET'];
+  if (section === 'anonymizations' && pathLength === 1) return ['POST'];
   if (section === 'ops-status' && pathLength === 1) return ['GET'];
   return null;
 }
@@ -1732,11 +1774,16 @@ async function route(request, env, url, json, actorId, context) {
   if (section === 'retention' && rawId === 'preview' && path.length === 2 && method === 'GET') {
     return retentionPreview(env, json);
   }
+  // #91: anonimizacja zmienia dane osobowe nieodwracalnie — krok w górę MFA (#150), także dla podglądu.
+  if (section === 'anonymizations' && path.length === 1 && method === 'POST') {
+    requireFreshMfa(context);
+    return anonymizationRoute(env, actorId, request, json);
+  }
   if (section === 'ops-status' && path.length === 1 && method === 'GET') return opsStatus(env, json);
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'anonymizations', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

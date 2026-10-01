@@ -345,6 +345,10 @@ export const EXPORT_TABLES = Object.freeze([
   { table: 'financial_report_snapshots', where: () => 'school_year_id = $1' },
   { table: 'financial_report_snapshot_approvals', requires: ['financial_report_snapshots'], where: () => 'school_year_id = $1' },
 
+  // 0176 (#137): niezmienne uwagi, odpowiedzi, zamknięcia i wnioski Komisji Rewizyjnej (wolny tekst za
+  // bramką PII). Cel wskazuje wpis księgi/uzgodnienie roku (po odtworzeniu klucze obce są wyłączone).
+  { table: 'audit_review_notes', requires: ['ledger_entries', 'bank_reconciliations'], where: () => 'school_year_id = $1' },
+
   // 0017: stan zamknięcia roku i lista kontrolna.
   { table: 'school_year_closures', where: () => 'school_year_id = $1' },
   { table: 'school_year_closure_checklist', requires: ['school_year_closures'],
@@ -377,6 +381,7 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   account_recovery_requests: 'wnioski o reset hasła/MFA kont chronionych (#146) — operacje na kontach, nie dane roku; poza paczką jak role_grants i tokeny resetu',
   role_grant_requests: 'wnioski o nadanie roli chronionej (#146) — operacje na kontach z adresem zapraszanego, nie dane roku; poza paczką jak role_grants i account_recovery_requests',
   role_grants: 'przydziały ról — konta, nie dane roku (D-08)',
+  anonymization_runs: 'dziennik przebiegów anonimizacji (0174, #91) — same identyfikatory i liczniki; wyłączony zachowawczo do D-04/D-07 (procedura długu anonimizacji: docs/RETENTION.md), ślad także w audit_events',
   retention_policies: 'rejestr polityk retencji (D-04) — konfiguracja/decyzje zarządu, nie dane roku do odtworzenia (0074, #91)',
   privacy_notices: 'wersjonowana informacja o przetwarzaniu danych (D-06) — dokument organizacji, nie zawsze przypisany do jednego roku (school_year_id nullable); zakres i retencja do decyzji D-06 (0075, #145)',
   privacy_notice_deliveries: 'ewidencja przekazania informacji o przetwarzaniu per gospodarstwo/kanał — jak wyżej, zależy od privacy_notices (0075, #145)',

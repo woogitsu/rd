@@ -423,6 +423,10 @@ function renderGrantRequests() {
   byId("grant-requests-summary").textContent = status === "pending"
     ? `Oczekujące wnioski: ${pending}.`
     : `${state.grantRequests.length} wniosków w widoku.`;
+  // #159: serwer pokazuje najnowsze 200 wniosków i jawnie sygnalizuje obcięcie.
+  if (state.grantRequestsTruncated) {
+    byId("grant-requests-summary").textContent += " Lista jest obcięta do najnowszych wniosków; starsze nie są pokazane.";
+  }
   if (!state.grantRequests.length) return emptyRow(tbody, 7, status === "pending" ? "Brak oczekujących wniosków." : "Brak wniosków dla wybranego statusu.");
   const context = requestRowContext();
   tbody.replaceChildren(...state.grantRequests.map((request) => {
@@ -527,6 +531,7 @@ rejectForm.addEventListener("submit", async (event) => {
 async function loadGrantRequests() {
   const result = await api(grantRequestsPath(byId("grant-request-filters").elements.status.value));
   state.grantRequests = result.requests ?? [];
+  state.grantRequestsTruncated = result.truncated === true;
   renderGrantRequests();
 }
 

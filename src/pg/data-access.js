@@ -111,7 +111,7 @@ const EXEMPT_GROUPS = [
       'ledgerCostCenters.report', 'ledgerCostCenters.allocations', 'ledgerCostCenters.eventFinance',
       'ledgerCash.transfers', 'ledgerCash.openingBalance', 'reconciliation.list', 'reconciliation.get',
       'reconciliation.suggestions', 'reconciliation.auditReport', 'reconciliation.auditReportXlsx', 'financialReports.annual', 'financialReports.cashFlow',
-      'financialReports.snapshotList', 'financialReports.snapshotRead', 'payment-instructions.get', 'yearClose.handover'],
+      'auditReviews.list', 'financialReports.snapshotList', 'financialReports.snapshotRead', 'payment-instructions.get', 'yearClose.handover'],
   },
   {
     reason: 'zebrania, uchwały, wydarzenia, aktualności i metadane dokumentów Rady (zgody na wizerunek jako numery i referencje, bez imion)',

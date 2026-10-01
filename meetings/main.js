@@ -272,8 +272,17 @@ async function loadList() {
   try {
     const url = buildMeetingsUrl(yearInput.value);
     state.schoolYearId = yearInput.value.trim();
-    const result = await api(url);
-    state.meetings = Array.isArray(result.meetings) ? result.meetings : [];
+    // #159: serwer stronicuje kursorem (strona domyślnie 500); panel dociąga kolejne
+    // strony, żeby lista roku była kompletna (zabezpieczenie: najwyżej 20 stron).
+    const meetings = [];
+    let cursor = null;
+    for (let pageNo = 0; pageNo < 20; pageNo += 1) {
+      const result = await api(cursor ? `${url}&${new URLSearchParams({ cursor })}` : url);
+      if (Array.isArray(result.meetings)) meetings.push(...result.meetings);
+      cursor = typeof result.nextCursor === "string" ? result.nextCursor : null;
+      if (!cursor) break;
+    }
+    state.meetings = meetings;
     renderList();
     rememberLocation();
   } catch (error) {
@@ -312,7 +321,7 @@ function renderSharedList() {
   )));
   sharedWrap.hidden = state.sharedMinutes.length === 0;
   setMessage(sharedMessage, state.sharedMinutes.length
-    ? `Udostępnione protokoły w roku ${formatSchoolYear(state.schoolYearId)}: ${state.sharedMinutes.length}.`
+    ? `Udostępnione protokoły w roku ${formatSchoolYear(state.schoolYearId)}: ${state.sharedMinutes.length}.${state.sharedTruncated ? " Lista jest obcięta do najnowszych protokołów; starsze nie są pokazane." : ""}`
     : `Brak udostępnionych protokołów w roku ${formatSchoolYear(state.schoolYearId)}.`);
 }
 
@@ -328,6 +337,7 @@ async function loadSharedList() {
     state.sharedClassNames = new Map(classesOfYear(classes?.classes, state.schoolYearId)
       .map((entry) => [entry.id, entry.name || entry.id]));
     state.sharedMinutes = Array.isArray(result.minutes) ? result.minutes : [];
+    state.sharedTruncated = result.truncated === true;
     renderSharedList();
     rememberLocation();
   } catch (error) {

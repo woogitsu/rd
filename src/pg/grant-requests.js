@@ -165,10 +165,11 @@ export async function listGrantRequests(env, { status = 'pending' } = {}) {
   if (!STATUSES.has(status)) throw new GrantRequestError('invalid_status');
   const { rows } = await env.db.query(
     `SELECT ${COLUMNS} FROM role_grant_requests
-      WHERE ($1 = 'all' OR status = $1) ORDER BY created_at DESC, id LIMIT ${MAX_LIST}`,
+      WHERE ($1 = 'all' OR status = $1) ORDER BY created_at DESC, id LIMIT ${MAX_LIST + 1}`,
     [status],
   );
-  return rows.map(presentGrantRequest);
+  // #159: o jeden wiersz więcej = jawny sygnał obcięcia zamiast cichego LIMIT.
+  return { requests: rows.slice(0, MAX_LIST).map(presentGrantRequest), truncated: rows.length > MAX_LIST };
 }
 
 // Blokada wiersza wniosku: podwójne kliknięcie „Zatwierdź” albo „Zatwierdź”
