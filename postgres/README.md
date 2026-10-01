@@ -1314,6 +1314,18 @@ rocznym. Wycofanie: DROP TRIGGER, DROP FUNCTION, DROP COLUMN (wraca wiązanie
 przez metadane zdarzeń z kodu sprzed migracji).
 
 <<<<<<< HEAD
+`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
+przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
+(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
+przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
+przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
+`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
+zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
+zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
+przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
+odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
+>>>>>>> origin/main
+
 `0169_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
 spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
 bez zera (wiersz kampanii nadal ma dokładnie 1) i dodaje kolumny opcjonalne
@@ -1341,15 +1353,3 @@ jak dla `student_households.ended_reason`); trafia do eksportu rocznego razem
 z całym wierszem `guardian_households`, jak powody członkostwa ucznia.
 Wycofanie: na pustej bazie DROP CONSTRAINT i DROP COLUMN; na bazie z danymi
 tylko po kopii.
-
-`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
-przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
-(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
-przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
-przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
-`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
-zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
-zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
-przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
-odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
->>>>>>> origin/main
