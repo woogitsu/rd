@@ -21,7 +21,7 @@
       <div class="message" id="message" role="status"></div>
 
       <section id="classes-view" hidden>
-        <div class="page-heading"><div><p class="eyebrow">Katalog</p><h1>Klasy</h1><p>Widoczne są wyłącznie klasy z Twojego zakresu uprawnień.</p></div><a id="overview-link" href="#/overview" hidden>Statystyki klas</a></div>
+        <div class="page-heading"><div><p class="eyebrow">Katalog</p><h1>Klasy</h1><p>Widoczne są wyłącznie klasy z Twojego zakresu uprawnień.</p></div><span><a id="overview-link" href="#/overview" hidden>Statystyki klas</a> <a id="guardian-updates-link" href="#/guardian-updates" hidden>Wnioski opiekunów</a></span></div>
         <div id="years"></div>
         <p class="empty" id="classes-empty" hidden>Brak klas w Twoim zakresie.</p>
         <section class="card" id="overview-card" hidden>
@@ -67,6 +67,19 @@
         </section>
       </section>
 
+      <section id="guardian-updates-view" hidden>
+        <div class="page-heading"><div><p class="eyebrow">Zarząd</p><h1>Wnioski opiekunów o zmianę kontaktu</h1><p>Wnioski z jednorazowego linku. Widać wyłącznie proponowany e-mail i zgodę; obecnych wartości API nie zwraca — sprawdź je na karcie gospodarstwa. Zatwierdzenie zapisuje zmianę w historii kontaktu, odrzucenie niczego nie zmienia. Odrzucenie nie ma pola powodu.</p></div></div>
+        <section class="card">
+          <label for="gu-status">Status wniosków <select id="gu-status"></select></label>
+          <button type="button" id="gu-reload">Odśwież</button>
+          <p id="gu-summary" role="status" aria-live="polite"></p>
+          <p class="form-error" id="gu-error" role="alert"></p>
+          <div class="table-wrap"><table><caption class="sr-only">Wnioski opiekunów o zmianę kontaktu</caption><thead><tr><th scope="col">Opiekun (imię)</th><th scope="col">Klasa</th><th scope="col">Proponowana zmiana</th><th scope="col">Uwaga opiekuna</th><th scope="col">Złożono</th><th scope="col" class="col-actions"><span class="sr-only">Akcje</span></th></tr></thead><tbody id="gu-body"></tbody></table></div>
+          <p class="empty" id="gu-empty" hidden>Brak wniosków w tym statusie.</p>
+          <button type="button" id="gu-more" hidden>Pokaż więcej</button>
+        </section>
+      </section>
+
       <section id="household-view" hidden>
         <div class="page-heading"><div><p class="eyebrow">Karta gospodarstwa</p><h1 id="household-title">Gospodarstwo</h1><p>Rodzeństwo spoza Twojego zakresu klas nie jest pokazywane.</p></div></div>
         <section class="card">
@@ -106,6 +119,13 @@
       <div class="form-error" id="enrollment-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Zapisz</button></div>
     </form></dialog>
+    <dialog id="gu-dialog" aria-labelledby="gu-dialog-title"><form method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Decyzja zapisywana w dzienniku zdarzeń</p><h2 id="gu-dialog-title">Wniosek</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
+      <p id="gu-dialog-text"></p>
+      <div class="form-error" id="gu-dialog-error" role="alert"></div>
+      <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit">Potwierdź</button></div>
+    </form></dialog>
+
     <dialog id="end-dialog" aria-labelledby="end-dialog-title"><form method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">Zmiana zapisywana w historii</p><h2 id="end-dialog-title">Zakończenie</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
       <p class="context"></p>
