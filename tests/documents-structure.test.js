@@ -6,21 +6,13 @@ import assert from 'node:assert/strict';
 
 import { deflateSync } from 'node:zlib';
 
+import { syntheticJpeg, syntheticPng, pngChunk } from './helpers/synthetic-images.js';
 import { detectType, PDF_OBJECT_STREAM_MAX_BYTES, validateStructure } from '../src/documents.js';
 
 const encoder = new TextEncoder();
 
-function validPng() {
-  return Uint8Array.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, ...new Array(13).fill(0), 0, 0, 0, 0,
-    0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0, 0, 0, 0,
-  ]);
-}
-
-function validJpeg() {
-  return Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
-}
+const validPng = () => syntheticPng();
+const validJpeg = () => syntheticJpeg();
 
 test('poprawny PDF z %%EOF przechodzi kontrolę', () => {
   const bytes = encoder.encode('%PDF-1.4\n1 0 obj <<>> endobj\n%%EOF\n');
@@ -198,4 +190,44 @@ test('strumień obiektów z długością pośrednią (/Length 12 0 R) jest rozpa
   };
   assert.deepEqual(validateStructure(build('<< /Type /Page >>'), 'application/pdf'), { ok: true });
   assert.deepEqual(validateStructure(build('<< /S /JavaScript >>'), 'application/pdf'), { ok: false, code: 'document_active_content' });
+});
+
+test('PNG: wymiary w IHDR muszą być dodatnie i w limicie, typ koloru i głębia spójne (#89)', () => {
+  const bad = { ok: false, code: 'document_malformed' };
+  assert.deepEqual(validateStructure(syntheticPng({ width: 1, height: 1 }), 'image/png'), { ok: true });
+  for (const opts of [{ width: 0 }, { height: 0 }, { width: 30001 }, { width: 20000, height: 20000 },
+    { bitDepth: 3 }, { colorType: 5 }, { colorType: 2, bitDepth: 4 }]) {
+    assert.deepEqual(validateStructure(syntheticPng(opts), 'image/png'), bad, JSON.stringify(opts));
+  }
+});
+
+test('PNG: błędna suma CRC chunku, brak IDAT albo zła długość IHDR są odrzucone (#89)', () => {
+  const bad = { ok: false, code: 'document_malformed' };
+  const png = syntheticPng();
+  const flipped = png.slice();
+  flipped[19] ^= 0x01; // bajt szerokości w IHDR, CRC przestaje pasować
+  assert.deepEqual(validateStructure(flipped, 'image/png'), bad);
+  assert.deepEqual(validateStructure(syntheticPng({ idat: false }), 'image/png'), bad);
+  const shortIhdr = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ...pngChunk('IHDR', new Array(12).fill(1)), ...pngChunk('IDAT', [1, 2]), ...pngChunk('IEND')]);
+  assert.deepEqual(validateStructure(shortIhdr, 'image/png'), bad);
+});
+
+test('JPEG: nagłówek ramki z dodatnimi wymiarami przed SOS jest wymagany, segmenty muszą mieścić się w pliku (#89)', () => {
+  const bad = { ok: false, code: 'document_malformed' };
+  assert.deepEqual(validateStructure(syntheticJpeg(), 'image/jpeg'), { ok: true });
+  for (const opts of [{ width: 0 }, { height: 0 }, { precision: 0 }, { width: 30001 }, { width: 20000, height: 20000 }]) {
+    assert.deepEqual(validateStructure(syntheticJpeg(opts), 'image/jpeg'), bad, JSON.stringify(opts));
+  }
+  const jpeg = syntheticJpeg();
+  const sofAt = jpeg.findIndex((byte, i) => byte === 0xff && jpeg[i + 1] === 0xc0);
+  assert.ok(sofAt > 0);
+  // Bez SOF: wycinamy segment ramki (13 bajtów) — SOS bez nagłówka ramki.
+  assert.deepEqual(validateStructure(Uint8Array.from([...jpeg.subarray(0, sofAt), ...jpeg.subarray(sofAt + 13)]), 'image/jpeg'), bad);
+  // Segment dłuższy niż plik.
+  const long = jpeg.slice();
+  long[4] = 0xff; long[5] = 0xff;
+  assert.deepEqual(validateStructure(long, 'image/jpeg'), bad);
+  // Dwa nagłówki ramki.
+  assert.deepEqual(validateStructure(Uint8Array.from([...jpeg.subarray(0, sofAt + 13), ...jpeg.subarray(sofAt)]), 'image/jpeg'), bad);
 });
