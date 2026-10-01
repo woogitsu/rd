@@ -1401,3 +1401,22 @@ funkcja `audit_review_notes_guard()` i triggery; żaden wiersz nie jest
 zmieniany. `body` to wolny tekst za bramką danych osobowych; w `audit_events`
 trafiają wyłącznie identyfikatory. Tabela jest w eksporcie rocznym.
 Wycofanie: DROP TABLE i DROP FUNCTION (na bazie z zapisami tylko po kopii).
+
+`0182_identity_changes.sql` (#100, art. 16 RODO) dodaje tabelę
+`identity_changes`: historię sprostowań imienia i nazwiska ucznia lub opiekuna
+(`subject_type`, poprzednie i nowe imię/nazwisko, powód 3–500 znaków, `source`
+`api`/`direct`, aktor, czas z zegara bazy, opcjonalne `data_request_id` z
+rejestru żądań osób). Wpis tworzą triggery `students_identity_history` i
+`guardians_identity_history` (wzorem `guardians_contact_history`; aktor, powód i
+żądanie z `rd.actor_id`/`rd.change_reason`/`rd.data_request_id`), tylko przy
+faktycznej zmianie wartości i nie w kontekście przebiegu anonimizacji. Tabela
+jest tylko do dopisywania (`identity_changes_no_change`, `identity_changes_no_truncate`
+z `deny_truncate()`); jedyny wyjątek to UPDATE w przebiegu anonimizacji,
+zastępujący imiona wartością `[zanonimizowano]` i zerujący powód (własny strażnik
+`identity_changes_immutable()`, funkcja `rd_anonymization_update_allowed` bez zmian).
+Skutki dla danych: tylko nowa tabela, funkcje i triggery; żaden wiersz nie jest
+zmieniany, historia zaczyna się od wdrożenia, a bezpośredni UPDATE imienia (import)
+zostawia odtąd wpis `direct`. Tabela zawiera dane osobowe (retencja — D-04), jest poza
+eksportem rocznym, a w audycie są wyłącznie identyfikatory i nazwy pól. Wycofanie:
+DROP TRIGGER na `students`/`guardians`, DROP FUNCTION trzech funkcji, DROP TABLE
+(na bazie z wpisami tylko po kopii zapasowej).

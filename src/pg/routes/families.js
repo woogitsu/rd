@@ -4,6 +4,8 @@
 //   GET   /api/classes/{id}/students               uczniowie klasy z gospodarstwami
 //   GET   /api/households/{id}                     karta gospodarstwa
 //   PATCH /api/guardians/{id}/contact              zmiana e-maila / zgody na kontakt (admin, zarząd)
+//   PATCH /api/students/{id}/identity              sprostowanie imienia/nazwiska ucznia z historią (admin, zarząd; #100)
+//   PATCH /api/guardians/{id}/identity             sprostowanie imienia/nazwiska opiekuna z historią (admin, zarząd; #100)
 //   PATCH /api/guardians/{id}/students/{studentId} zgoda na kontakt w relacji z dzieckiem (admin, zarząd; #190)
 //   POST  /api/students/{id}/enrollments           przypisanie lub zmiana klasy w roku (admin, zarząd)
 //   POST  /api/students/{id}/enrollments/{eid}/end zakończenie przypisania — odejście ze szkoły (admin, zarząd; #86)
@@ -27,7 +29,7 @@
 // wyłącznie role finansowe z MFA. Jednostka ewidencji składki — decyzja D-11.
 
 import { isSameOrigin } from '../../auth.js';
-import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
+import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, withDeferredAccessDenied } from '../authorization.js';
 import { resolveScope, scopeSqlFragment, scopeSqlParams } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
@@ -404,6 +406,131 @@ async function updateGuardianContact(request, env, guardianId, json) {
   });
   return json({
     guardian: { id: guardianId, email: result.next.email, contactAllowed: result.next.contactAllowed },
+    changed: result.changed,
+  });
+}
+
+// Sprostowanie imienia i nazwiska (#100, art. 16 RODO). Role jak przy zmianie
+// kontaktu opiekuna: admin i zarząd; zakres klasowy — uczeń z zakresu, opiekun
+// z aktywną relacją wyłącznie z uczniami z zakresu (opiekun z dziećmi także
+// poza zakresem: 403 guardian_shared_outside_scope, jak przy kontakcie — imię
+// opiekuna jest jedno dla całej szkoły). Historia: tabela identity_changes
+// (trigger z 0182; aktor, powód i opcjonalne żądanie z rd.* przez
+// setChangeContext). Poprzednie i nowe imię są danymi osobowymi, więc trafiają
+// WYŁĄCZNIE do tej tabeli; zdarzenie audytu niesie identyfikatory i nazwy pól.
+// Brak zmiany (podwójne kliknięcie): 200 changed:false, bez wpisu i bez audytu.
+// Powiązanie z żądaniem z rejestru (`dataRequestId`, tylko admin — rejestr jest
+// widoczny wyłącznie dla admina, D-07): rodzaj `rectification`, tożsamość
+// zweryfikowana, żądanie nie zamknięte, dotyczy tego ucznia/opiekuna lub jego
+// gospodarstwa/dziecka/opiekuna.
+const NAME_MAX = 100;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function readName(value) {
+  if (typeof value !== 'string') throw new RequestError('invalid_person_name');
+  const name = value.normalize('NFC').replace(/\s+/g, ' ').trim();
+  // '@' i znaki sterujące: imię nie jest adresem e-mail ani wielolinijkowym tekstem.
+  // eslint-disable-next-line no-control-regex
+  if (!name.length || name.length > NAME_MAX || /[\u0000-\u001f\u007f-\u009f@]/.test(name)) throw new RequestError('invalid_person_name');
+  return name;
+}
+
+function parseIdentityInput(data) {
+  const input = { reason: readReason(data.reason) };
+  if (Object.hasOwn(data, 'firstName')) input.firstName = readName(data.firstName);
+  if (Object.hasOwn(data, 'lastName')) input.lastName = readName(data.lastName);
+  if (!Object.hasOwn(input, 'firstName') && !Object.hasOwn(input, 'lastName')) throw new RequestError('invalid_request');
+  input.dataRequestId = null;
+  if (Object.hasOwn(data, 'dataRequestId') && data.dataRequestId !== null) {
+    if (typeof data.dataRequestId !== 'string' || !UUID_PATTERN.test(data.dataRequestId)) throw new RequestError('invalid_data_request_id');
+    input.dataRequestId = data.dataRequestId;
+  }
+  return input;
+}
+
+const DATA_REQUEST_SUBJECT_SQL = {
+  student: `r.student_id = $2
+    OR r.household_id IN (SELECT household_id FROM students WHERE id = $2
+                          UNION SELECT household_id FROM student_households WHERE student_id = $2)
+    OR r.guardian_id IN (SELECT guardian_id FROM student_guardians WHERE student_id = $2)`,
+  guardian: `r.guardian_id = $2
+    OR r.household_id IN (SELECT household_id FROM guardians WHERE id = $2
+                          UNION SELECT household_id FROM guardian_households WHERE guardian_id = $2)
+    OR r.student_id IN (SELECT student_id FROM student_guardians WHERE guardian_id = $2)`,
+};
+
+async function checkRectificationRequest(tx, dataRequestId, subjectType, subjectId) {
+  const { rows } = await tx.query('SELECT id, kind, status FROM data_subject_requests WHERE id = $1 FOR SHARE', [dataRequestId]);
+  const request = rows[0];
+  if (!request) throw new RequestError('data_request_not_found', 404);
+  if (request.kind !== 'rectification') throw new RequestError('data_request_kind_not_rectification', 409);
+  if (['answered', 'rejected'].includes(request.status)) throw new RequestError('data_request_closed', 409);
+  if (!['identity_verified', 'in_progress'].includes(request.status)) throw new RequestError('data_request_identity_not_verified', 409);
+  const { rows: link } = await tx.query(
+    `SELECT 1 FROM data_subject_requests r WHERE r.id = $1 AND (${DATA_REQUEST_SUBJECT_SQL[subjectType]})`,
+    [dataRequestId, subjectId],
+  );
+  if (!link.length) throw new RequestError('data_request_subject_mismatch', 409);
+}
+
+async function updateIdentity(request, env, subjectType, subjectId, json) {
+  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const identityData = await readJson(request);
+  const input = parseIdentityInput(identityData);
+  const actorId = context.session.user.id;
+  if (input.dataRequestId && !isAuthorizedScoped(context, { roles: ['admin'] })) {
+    await logAccessDenied(env, context, { roles: ['admin'] }, request);
+    throw new RequestError('forbidden', 403);
+  }
+  const isStudent = subjectType === 'student';
+  const table = isStudent ? 'students' : 'guardians';
+  const action = isStudent ? 'student.identity.updated' : 'guardian.identity.updated';
+  const result = await env.db.transaction(async (tx) => {
+    let current;
+    if (isStudent) {
+      ({ rows: [current] } = await tx.query(
+        `SELECT s.id, s.first_name, s.last_name FROM students s
+          WHERE s.id = $5 AND ${STUDENT_IN_SCOPE('s.id')} FOR UPDATE OF s`,
+        [...scopeParams(scope), subjectId],
+      ));
+    } else {
+      ({ rows: [current] } = await tx.query(
+        `SELECT g.id, g.first_name, g.last_name,
+                ${isClassScoped(scope) ? GUARDIAN_HAS_RELATION_OUTSIDE_SCOPE : 'false'} AS shared_outside_scope
+           FROM guardians g
+          WHERE g.id = $5 AND ${isClassScoped(scope) ? GUARDIAN_RELATED_IN_SCOPE : GUARDIAN_IN_SCOPE}
+          FOR UPDATE OF g`,
+        [...scopeParams(scope), subjectId],
+      ));
+    }
+    if (!current) throw notFound();
+    // Przed jakimkolwiek zapisem: bez zmiany w tabeli podmiotu, historii i audycie.
+    if (current.shared_outside_scope) {
+      throw withDeferredAccessDenied(new RequestError('guardian_shared_outside_scope', 403), context, { roles: EDIT_ROLES });
+    }
+    const next = {
+      firstName: Object.hasOwn(input, 'firstName') ? input.firstName : current.first_name,
+      lastName: Object.hasOwn(input, 'lastName') ? input.lastName : current.last_name,
+    };
+    const fields = [];
+    if (next.firstName !== current.first_name) fields.push('firstName');
+    if (next.lastName !== current.last_name) fields.push('lastName');
+    if (!fields.length) return { changed: false, next };
+    // Powód trafia do niezmiennej historii — bramka na e-mail/IBAN i inne dane osobowe (#152).
+    const gate = gateFreeText([['identity_changes.reason', input.reason]], { confirm: identityData.confirmPersonalData === true, fail: piiFail });
+    if (input.dataRequestId) await checkRectificationRequest(tx, input.dataRequestId, subjectType, subjectId);
+    await setChangeContext(tx, { actorId, reason: input.reason });
+    await tx.query("SELECT set_config('rd.data_request_id', $1, true)", [input.dataRequestId ?? '']);
+    await tx.query(`UPDATE ${table} SET first_name = $2, last_name = $3 WHERE id = $1`, [subjectId, next.firstName, next.lastName]);
+    await tx.query("SELECT set_config('rd.data_request_id', '', true)");
+    await insertAuditEvent(tx, {
+      actorId, action, entityType: subjectType, entityId: subjectId,
+      metadata: { fields, ...(input.dataRequestId ? { dataSubjectRequestId: input.dataRequestId } : {}), ...piiAuditMetadata(gate) },
+    });
+    return { changed: true, next };
+  });
+  return json({
+    [subjectType]: { id: subjectId, firstName: result.next.firstName, lastName: result.next.lastName },
     changed: result.changed,
   });
 }
@@ -828,6 +955,8 @@ export async function handle(request, env, url, json) {
   const studentsMatch = path.match(/^\/api\/classes\/([^/]+)\/students$/);
   const householdMatch = path.match(/^\/api\/households\/([^/]+)$/);
   const contactMatch = path.match(/^\/api\/guardians\/([^/]+)\/contact$/);
+  const guardianIdentityMatch = path.match(/^\/api\/guardians\/([^/]+)\/identity$/);
+  const studentIdentityMatch = path.match(/^\/api\/students\/([^/]+)\/identity$/);
   const relationMatch = path.match(/^\/api\/guardians\/([^/]+)\/students\/([^/]+)$/);
   const relationEndMatch = path.match(/^\/api\/guardians\/([^/]+)\/students\/([^/]+)\/end$/);
   const householdEndMatch = path.match(/^\/api\/students\/([^/]+)\/households\/([^/]+)\/end$/);
@@ -841,6 +970,12 @@ export async function handle(request, env, url, json) {
   else if (method === 'GET' && studentsMatch) action = () => listClassStudents(request, env, decodeId(studentsMatch[1]), json);
   else if (method === 'GET' && householdMatch) action = () => getHousehold(request, env, decodeId(householdMatch[1]), json);
   else if (method === 'PATCH' && contactMatch) action = () => updateGuardianContact(request, env, decodeId(contactMatch[1]), json);
+  else if (method === 'PATCH' && guardianIdentityMatch) {
+    action = () => updateIdentity(request, env, 'guardian', decodeId(guardianIdentityMatch[1]), json);
+  }
+  else if (method === 'PATCH' && studentIdentityMatch) {
+    action = () => updateIdentity(request, env, 'student', decodeId(studentIdentityMatch[1]), json);
+  }
   else if (method === 'PATCH' && relationMatch) {
     action = () => updateRelationContact(request, env, decodeId(relationMatch[1]), decodeId(relationMatch[2]), json);
   }
@@ -864,7 +999,10 @@ export async function handle(request, env, url, json) {
   try {
     return await action();
   } catch (error) {
-    if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
+    if (error instanceof RequestError) {
+      await logDeferredAccessDenied(env, error, request);
+      return json({ error: error.code, ...error.extra }, error.status);
+    }
     // Odmowy triggerów bazy (#86): zamknięty rok i nakładające się członkostwo to 409, nie 503.
     const message = String(error?.message ?? '');
     if (message.includes('school_year_closed')) return json({ error: 'school_year_closed' }, 409);

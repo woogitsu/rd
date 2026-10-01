@@ -5419,6 +5419,151 @@
       "data_type": "text"
     }
   },
+  "identity_changes": {
+    "changed_at": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "timestamp with time zone"
+    },
+    "changed_by": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "aktor sprostowania imienia i nazwiska",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "data_request_id": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "powiązanie sprostowania z żądaniem osoby",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "guardian_id": {
+      "personal": "pseudonymous",
+      "subject": "guardian",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "id": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "new_first_name": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "identyfikacja",
+      "purpose": "historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)",
+      "retention_category": "student_identity",
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "new_last_name": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "identyfikacja",
+      "purpose": "historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)",
+      "retention_category": "student_identity",
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "previous_first_name": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "identyfikacja",
+      "purpose": "historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)",
+      "retention_category": "student_identity",
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "previous_last_name": {
+      "personal": "direct",
+      "subject": "student",
+      "category": "identyfikacja",
+      "purpose": "historia sprostowań imienia i nazwiska (uczeń lub opiekun wg subject_type)",
+      "retention_category": "student_identity",
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "reason": {
+      "personal": "direct",
+      "subject": "guardian",
+      "category": "wolny tekst",
+      "purpose": "uzasadnienie sprostowania imienia i nazwiska",
+      "retention_category": "guardian_contact",
+      "visible_to": [],
+      "free_text": true,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "source": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "student_id": {
+      "personal": "pseudonymous",
+      "subject": "student",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z osobą",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "subject_type": {
+      "personal": "none",
+      "subject": null,
+      "category": null,
+      "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    }
+  },
   "import_batches": {
     "actor_id": {
       "personal": "none",

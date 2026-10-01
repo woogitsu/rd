@@ -420,6 +420,8 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   news_photo_consent_withdrawals: 'wycofania zgód na wizerunek — jak news_photo_consents, osobny zakres (D-04)',
   news_photo_files: 'pliki wariantów zdjęć (#96) — jak news_photos, osobny zakres (D-04); metadane pliku w prywatnym Storage Bucket, nie dane roku',
   // 0087: wniosek rodzica o aktualizację kontaktu przez jednorazowy link (#140).
+  identity_changes: 'historia sprostowań imienia i nazwiska (0182, #100) — poprzednie i nowe imię to dane osobowe, a sprostowane '
+    + '(błędne) wartości nie powinny wracać do archiwów; wariant zachowawczy do decyzji D-03/D-04; ślad: audit_events (identyfikatory i pola)',
   guardian_update_links: 'jednorazowy token linku do aktualizacji kontaktu (token_hash) — sekret, nigdy w paczce',
   guardian_update_requests: 'wniosek niesie proponowany e-mail rodzica — jak guardian_contact_changes (D-03) dane '
     + 'przed decyzją zarządu o zakresie retencji; wariant zachowawczy do czasu decyzji (D-04)',

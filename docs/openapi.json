@@ -8376,6 +8376,120 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/guardians/{guardianId}/identity": {
+      "patch": {
+        "description": "Ta ścieżka i metoda ma kilka wpisów macierzy (rodzaj obiektu wybiera treść żądania); x-rd-roles to suma, szczegóły w x-rd-variants.",
+        "operationId": "families_guardianIdentity",
+        "parameters": [
+          {
+            "name": "guardianId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "families.guardianIdentity",
+        "tags": [
+          "families"
+        ],
+        "x-rd-access": "role",
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "families.guardianIdentity",
+          "families.guardianIdentityShared"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia",
+        "x-rd-variants": [
+          {
+            "id": "families.guardianIdentity",
+            "roles": [
+              "admin",
+              "board",
+              "board:class"
+            ],
+            "actorScopes": {
+              "admin": [
+                "A",
+                "B"
+              ],
+              "board": [
+                "A",
+                "B"
+              ],
+              "boardA": [
+                "A"
+              ]
+            }
+          },
+          {
+            "id": "families.guardianIdentityShared",
+            "roles": [
+              "admin",
+              "board",
+              "board:class"
+            ],
+            "actorScopes": {
+              "admin": [
+                "A",
+                "B"
+              ],
+              "board": [
+                "A",
+                "B"
+              ],
+              "boardA": []
+            }
+          }
+        ]
+      }
+    },
     "/api/guardians/{guardianId}/students/{studentId}": {
       "patch": {
         "operationId": "families_relationContact",
@@ -17923,6 +18037,89 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/students/{studentId}/identity": {
+      "patch": {
+        "operationId": "families_studentIdentity",
+        "parameters": [
+          {
+            "name": "studentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "families.studentIdentity",
+        "tags": [
+          "families"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "A",
+            "B"
+          ],
+          "board": [
+            "A",
+            "B"
+          ],
+          "boardA": [
+            "A"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "families.studentIdentity"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board",
+          "board:class"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/year-close/{schoolYearId}": {
       "get": {
         "operationId": "yearClose_status",
@@ -18342,6 +18539,7 @@
           "data_request_identity_not_verified",
           "data_request_kind_not_erasable",
           "data_request_kind_not_exportable",
+          "data_request_kind_not_rectification",
           "data_request_not_found",
           "data_request_status_cannot_go_back",
           "data_request_subject_mismatch",
@@ -18488,6 +18686,7 @@
           "invalid_payload",
           "invalid_payment_id",
           "invalid_payment_link",
+          "invalid_person_name",
           "invalid_photo_id",
           "invalid_photos",
           "invalid_plan_digest",
@@ -19076,6 +19275,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "data_request_kind_not_rectification",
+        "meaning": "Sprostowanie można powiązać tylko z żądaniem sprostowania danych.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "data_request_not_found",
         "meaning": "Nie znaleziono żądania.",
         "retry": "Nie — popraw dane żądania."
@@ -19297,7 +19501,7 @@
       },
       {
         "code": "guardian_shared_outside_scope",
-        "meaning": "Ten opiekun ma też dziecko poza Twoją klasą. Zmianę kontaktu wykonuje zarząd bez ograniczenia do klasy.",
+        "meaning": "Ten opiekun ma też dziecko poza Twoją klasą. Zmianę kontaktu lub imienia i nazwiska wykonuje zarząd bez ograniczenia do klasy.",
         "retry": "Nie — zmianę wykonuje zarząd bez zawężenia do klasy."
       },
       {
@@ -19803,6 +20007,11 @@
       {
         "code": "invalid_payment_link",
         "meaning": "Niepoprawne powiązanie z wpłatą.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_person_name",
+        "meaning": "Podaj imię lub nazwisko (1–100 znaków, bez znaku @ i znaków sterujących).",
         "retry": "Nie — popraw dane żądania."
       },
       {

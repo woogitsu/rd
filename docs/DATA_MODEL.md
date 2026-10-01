@@ -60,6 +60,7 @@ Migracja `postgres/migrations/0014_households.sql` dodaje:
 - `student_households` — uczeń może należeć do kilku gospodarstw (np. opieka dzielona). Najwyżej jedno gospodarstwo jest **główne** w danym okresie: przedziały `[starts_on, ends_on)` głównych członkostw jednego ucznia nie mogą się nakładać (trigger), a otwarte główne jest tylko jedno (indeks unikalny). To samo gospodarstwo nie może mieć dwóch nakładających się członkostw ucznia.
 - `guardian_households` — opiekun może należeć do kilku gospodarstw (bez pojęcia „głównego”).
 - `guardian_contact_changes` — historia zmian e-maila i zgody na kontakt opiekuna (poprzednia i nowa wartość, powód, aktor). Tabela zawiera dane osobowe jak `guardians`; retencja wymaga decyzji D-04. Do `audit_events` trafia wyłącznie identyfikator opiekuna i nazwy zmienionych pól.
+- `identity_changes` (0182, #100) — historia sprostowań imienia i nazwiska ucznia lub opiekuna (art. 16 RODO): `subject_type` (`student`/`guardian`), poprzednie i nowe imię i nazwisko, powód (3–500 znaków, przez bramkę danych osobowych #152), `source` (`api`/`direct`), aktor, czas z zegara bazy i opcjonalne `data_request_id` z rejestru żądań. Wpis tworzy trigger na `students`/`guardians` (`UPDATE OF first_name, last_name`; aktor i powód z `rd.actor_id`/`rd.change_reason`, żądanie z `rd.data_request_id`), tylko gdy wartość się zmienia. Tylko do dopisywania (UPDATE/DELETE/TRUNCATE odrzucane); jedyny wyjątek to przebieg anonimizacji, który zastępuje imiona wartością `[zanonimizowano]` i zeruje powód. Zawiera dane osobowe; retencja — D-04. Do `audit_events` trafiają wyłącznie identyfikatory i nazwy pól (`student.identity.updated`, `guardian.identity.updated`, `fields`), nigdy imiona. Poza eksportem rocznym (`EXPORT_EXCLUDED_TABLES`), w eksporcie danych rodziny (bez powodu).
 - `enrollment_history` — każde przypisanie do klasy (`enrolled`) i każda zmiana klasy w roku (`class_changed`) z datą, powodem i aktorem.
 - widoki `student_households_current` i `guardian_households_current` — członkostwa obowiązujące dziś.
 
@@ -138,6 +139,7 @@ Model nie rozstrzyga, czy składkę ewidencjonujemy na rodzinę czy na dziecko. 
 | `GET /api/classes/{id}/students` | jw. | przedstawiciel tylko własna klasa |
 | `GET /api/households/{id}` | jw. | tylko gdy co najmniej jeden uczeń gospodarstwa jest w zakresie; rodzeństwo spoza zakresu pomijane |
 | `PATCH /api/guardians/{id}/contact` | admin, board | historia + audyt; wymagany powód |
+| `PATCH /api/students/{id}/identity`, `PATCH /api/guardians/{id}/identity` | admin, board | sprostowanie imienia/nazwiska `{ firstName?, lastName?, reason, dataRequestId?, confirmPersonalData? }`; historia `identity_changes` + audyt; brak zmiany: `changed: false`; opiekun z dziećmi także poza zakresem klasowym: `403 guardian_shared_outside_scope`; `dataRequestId` tylko admin |
 | `POST /api/students/{id}/enrollments` | admin, board | przypisanie lub zmiana klasy w roku; historia + audyt |
 | `POST /api/students/{id}/enrollments/{enrollmentId}/end` | admin, board | odejście ze szkoły (#86); wymagany powód i data; ponowienie: `changed: false` |
 

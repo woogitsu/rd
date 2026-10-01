@@ -209,6 +209,8 @@ const CATALOG = {
   'student_guardian.ended': ['families', 'Zakończenie powiązania ucznia z opiekunem'],
   'student_guardian.contact.updated': ['families', 'Zmiana kontaktu powiązania ucznia z opiekunem'],
   'guardian.contact.updated': ['families', 'Zmiana danych kontaktowych opiekuna'],
+  'guardian.identity.updated': ['families', 'Sprostowanie imienia i nazwiska opiekuna'],
+  'student.identity.updated': ['families', 'Sprostowanie imienia i nazwiska ucznia'],
   'guardian_update_link.created': ['families', 'Utworzenie linku aktualizacji danych opiekuna'],
   'guardian_update_request.created': ['families', 'Prośba opiekuna o aktualizację danych'],
   'guardian_update_request.approved': ['families', 'Zatwierdzenie aktualizacji danych opiekuna'],
