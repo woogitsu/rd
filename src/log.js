@@ -171,6 +171,9 @@ export function createRequestMetrics() {
 
 // Co intervalMs zapisuje zdarzenie `http_metrics` i zeruje liczniki; pomija
 // okresy bez ruchu. Timer nie blokuje zamknięcia procesu (unref).
+/**
+ * @param {{metrics?: ReturnType<typeof createRequestMetrics>, logger?: any, intervalMs?: number, extraFields?: (() => object) | null}} [options]
+ */
 export function startMetricsReporter({ metrics, logger = log, intervalMs = 5 * 60 * 1000, extraFields = null } = {}) {
   const timer = setInterval(() => {
     const counters = metrics.reset();

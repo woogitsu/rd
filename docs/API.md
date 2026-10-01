@@ -28,6 +28,7 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/admin/data-requests` (#543) | `received_on`, `created_at`, `id` rosnąco | 500 / 500 | `status`, `kind` |
 | `GET /api/meetings/public-notices?schoolYearId=` (publiczna) | `scheduled_at`, `id` rosnąco | 200 / 200 | rok szkolny |
 | `GET /api/news-photos` | `uploaded_at` malejąco, `id` | 200 / 200 | `status` |
+| `GET /api/public/events` (publiczna) | `begins_at`, `id` rosnąco | 100 / 200 | rok szkolny, `from` |
 | `GET /api/ledger/reviews?schoolYearId=` | `occurred_on` malejąco, `id` malejąco | 500 / 500 | rok szkolny, `reviewStatus` |
 
 Uprawnienia tras nie zmieniły się: kursor niczego nie odblokowuje, a każde
@@ -129,6 +130,10 @@ niepełna; panel wtedy pokazuje komunikat o obcięciu:
 | Trasa | Pokazane | Pole |
 | --- | --- | --- |
 | `GET /api/meetings/shared-minutes` | 200 najnowszych | `truncated` |
+
+Kanał `GET /api/public/events.ics` nie ma kursora (format iCal nie niesie sygnału
+obcięcia): zwraca najwyżej `limit` (domyślnie 200) najbliższych wydarzeń. Pełną
+listę daje `GET /api/public/events` z kursorem.
 
 `GET /api/ledger/reviews` (#159) miał wcześniej `LIMIT 20000` bez sygnału; domyślna
 strona to teraz 500 wierszy, a klient czytający tylko `reviews` ma sprawdzić

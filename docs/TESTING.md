@@ -287,7 +287,51 @@ wpisu księgi i przeksięgowanie kontra korekta tego wpisu. Każdy test sprawdza
 `pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z kodu trasy. Mutanty:
 `payments-refund`, `payments-reassign`, `payments-allocation`,
 `payments-allocation-reversal`, `ledger-transfer-reversal`, `ledger-replacement`. Test nie ujawnił błędu
-współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria), `ledger-budget.js`, bilans otwarcia i `ledger-cost-centers.js`.
+współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria).
+
+`tests/pg-real-cost-center-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
+przypisania wpisu księgi do centrów kosztów (`ledger-cost-centers.js`) — dwa pierwsze
+przypisania tego samego wpisu pod różnymi kluczami (drugie: `409 allocation_version_conflict`,
+jedna wersja i jeden wpis audytu) oraz korekta wpisu 70 € w toku kontra przypisanie 100 €
+(`409 allocation_exceeds_net`, zero wersji). Test sprawdza w `pg_stat_activity`, że drugie
+żądanie czeka na `SELECT id FROM ledger_entries WHERE id = $1 FOR UPDATE` z `loadEntry`.
+Mutant: `cost-center-allocation`.
+
+`tests/pg-real-budget-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
+preliminarza i poprawek bilansu otwarcia — dwie dezaktywacje tej samej kategorii pod różnymi
+kluczami (`409 category_inactive`, jedna dezaktywacja i jeden wpis audytu), dwie rewizje tej
+samej linii (`409 budget_line_superseded`, jedna rewizja) oraz dwie poprawki kasy -60 € przy
+100 € w bilansie otwarcia (`409 cash_below_zero`, jedna poprawka). Test sprawdza w
+`pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z `deactivateCategory`,
+`reviseLine` (`ledger-budget.js`) albo `createAdjustment` (`ledger-cash.js`). Mutanty:
+`budget-category`, `budget-revision`, `opening-adjustment`. `createOpening` używa
+`LOCK TABLE`, nie `FOR UPDATE`, więc zostaje poza listą.
+
+`tests/pg-real-idempotency-quota.test.js` (#6, #84, pomijany bez `RD_TEST_PG_URL`): dwa
+wyścigi bez odpowiednika na PGlite. (1) Dwa przypisania dwóch różnych wpłat pod tym samym
+`Idempotency-Key`: zwycięzca dostaje `201`, przegrany czeka w bazie na unikalny klucz
+(`transactionid`), dostaje `23505` i `409 idempotency_conflict` (nie `payment_already_assigned`);
+jego wpłata zostaje `unmatched`, jest jedno przypisanie i jeden wpis audytu, a ponowienie
+przegranego nadal jest konfliktem, zwycięzcy — odtworzeniem. (2) Dwa równoległe przebiegi
+workera e-mail na przełomie doby konta Brevo (22:30 UTC = 00:30 w Brukseli oraz 01:00 UTC,
+gdy doba konta liczy wpis sprzed północy UTC): A trzyma `QUOTA_LOCK_ID` po przejęciu
+wierszy, B czeka na blokadę doradczą (`advisory`) i po jej zwolnieniu liczy wiadomości „w
+locie” A; razem wychodzi dokładnie tyle, ile wynosi pula z większego zużycia (doba UTC /
+doba konta), bez drugiej wysyłki tej samej wiadomości. Kontrola: ten sam układ z kontem w
+UTC daje większą pulę. Zegar: `now` jest wstrzykiwany, ale `recorded_at` nowych wpisów
+dziennika pochodzi z zegara bazy, więc test nie robi przebiegu po zakończeniu A; wpisy
+„other” są zasiewane z jawnym `recorded_at`. Dane syntetyczne, atrapa transportu, brak sieci.
+
+`tests/pg-real-type-parity.test.js` (#208 pkt 5, część na `pg` pomijana bez `RD_TEST_PG_URL`): te same zapytania
+(kolumny `bigint`, `integer`, `numeric`, `date`, `timestamptz`, `boolean`, `jsonb`, `uuid`, `text[]`, `bigint[]`, NULL, agregaty
+`count`/`sum`/`avg`/`max`) przez adapter na PGlite i na `createPgDatabase` (`src/db.js`); porównuje typy JS.
+`src/db.js` nie ma `setTypeParser` ani normalizacji wierszy, więc test DOKUMENTUJE stan, nie naprawia go.
+Znane rozbieżności: `bigint`/`int8`, `count(*)`, `sum(integer)`, `max(bigint)`, `bigint[]` to `number` na PGlite,
+a `string` na `pg`; `date` to północ UTC na PGlite, a północ lokalna na `pg` (inny `toISOString()` poza UTC).
+`sum(bigint)`, `sum(numeric)`, `avg`, `numeric` są tekstem na obu. Test porównawczy wymaga dokładnie tej listy:
+dodanie parsera typów albo nowa rozbieżność czerwieni go i wymaga aktualizacji oczekiwań oraz tego opisu.
+Konwencja aplikacji (`::int`, `toSafeInteger`, `to_char`) daje identyczny JSON na obu backendach. Nowy kod nie
+może porównywać `rows[0].n === 0` ani dodawać wartości `bigint` bez `toSafeInteger`/rzutowania `::int`.
 
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
@@ -301,11 +345,14 @@ Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisan
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
 `rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit`, `rd_year_close`
 oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` (dokumenty)
-i `updateGuardianContact`.
+i `updateGuardianContact`, a w `tests/pg-real-cost-center-locks.test.js` blokadę wpisu przy
+przypisaniu do centrów kosztów (`loadEntry` w `ledger-cost-centers.js`), a w
+`tests/pg-real-budget-locks.test.js` blokady kategorii (dezaktywacja), linii preliminarza (rewizja)
+i bilansu otwarcia (poprawka).
 Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
 zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
 porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
-(autoryzacje uchwał) oraz blokady w triggerach migracji.
+(autoryzacje uchwał), `LOCK TABLE` w `createOpening` oraz blokady w triggerach migracji.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
 (reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z
@@ -350,8 +397,16 @@ digest obrazu `postgres:16`). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
 `scripts/test-pg-real.js` nie stawia własnego serwera, tylko używa wskazanego;
 bez zmiennej działa jak wcześniej (`initdb` w katalogu tymczasowym).
 Zwykłe shardy (`test`) nadal biegną na PGlite i pomijają testy wyścigów.
-Nocny przebieg `npm run test:pg-real -- --all` (powtarzanie testów
-współbieżności, #111) pozostaje opcją — nie jest jeszcze w `ci.yml`.
+Nocny przebieg (#111): osobny workflow `.github/workflows/nightly-pg-real.yml`
+(`schedule:` codziennie 02:17 UTC oraz ręczne `workflow_dispatch`) uruchamia
+`npm run test:pg-real -- --all` (cały zestaw `tests/*.test.js` na prawdziwym
+PostgreSQL) i `npm run test:pg-mutations`, timeout 120 min. Nie jest wymaganym
+checkiem i nie wchodzi w `ci-ok`; `ci.yml` nie ma wyzwalacza `schedule`. Te same
+przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
+`tests/ci-supply-chain.test.js` (dla wszystkich plików w `.github/workflows`);
+przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
+`tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
+z 6 shardów).
 
 ## Pokrycie dziennikiem zdarzeń (#184)
 
@@ -375,6 +430,10 @@ wpłat, operacji finansowych, zmian ról i wysyłek. Pilnują tego trzy warstwy:
   w transakcji zmiany (`insertAuditEvent(tx, …)` oraz lokalne pomocniki `audit(tx, …)`),
   a `tests/audit-actions-catalog.test.js` wymaga etykiety i domeny każdej akcji
   w `shared/audit-actions.js`.
+- `tests/audit-pii-free-text.test.js`: `assertNoPii` odrzuca w metadanych zdarzeń klucze
+  wolnego tekstu (`note`, `title`, `body`, `description`, `subject`, `author`, `comment`,
+  `message`, `content`, `text` — także jako ostatni człon, np. `correctionNote`) niezależnie
+  od wartości; tekst powodu lub treści zostaje w tabeli biznesowej.
 
 Poza zakresem sprawdzenia: tabele bez kolumny `id` (np. liczniki prób logowania, hasła),
 zmiany istniejących wierszy (UPDATE) bez nowego wiersza — te obejmuje poziom trasy — oraz

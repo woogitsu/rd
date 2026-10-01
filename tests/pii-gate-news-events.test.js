@@ -2,8 +2,8 @@
 // wydarzenia (rewizje są niezmienne). Wyłącznie dane syntetyczne.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDraft as createNews, updateDraft as updateNews } from '../src/pg/news.js';
-import { createDraft as createEvent, updateDraft as updateEvent } from '../src/pg/events.js';
+import { createDraft as createNews, updateDraft as updateNews, withdraw as withdrawNews } from '../src/pg/news.js';
+import { createDraft as createEvent, updateDraft as updateEvent, cancel as cancelEvent } from '../src/pg/events.js';
 import { createTestDb, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUser } from './helpers/pg.js';
 
 async function setup() {
@@ -110,5 +110,60 @@ test('#152 wydarzenia: tytuł i opis z danymi dziecka wymagają potwierdzenia, e
       { code: 'possible_personal_data', status: 422 },
     );
     assert.equal(await count('SELECT count(*)::int AS n FROM event_revisions'), 2);
+  } finally { await db.close(); }
+});
+
+test('#152 wycofanie aktualności: powód z imieniem i nazwiskiem dziecka wymaga potwierdzenia, e-mail jest odrzucany, ponowienie to jeden zapis', async () => {
+  const { db, classId, rep, audit } = await setup();
+  try {
+    const { post } = await createNews(db, rep, newsInput(classId, { idempotencyKey: 'news-pii-0003' }));
+    const reasonOf = async () => (await db.query('SELECT status, withdrawal_reason FROM news_posts WHERE id = $1', [post.id])).rows[0];
+    await assert.rejects(
+      withdrawNews(db, rep, { postId: post.id, revision: 1, reason: 'Rodzic prosi, tel. rodzic@example.invalid', confirmPersonalData: true }),
+      { code: 'personal_data_forbidden', status: 422 },
+    );
+    await assert.rejects(withdrawNews(db, rep, { postId: post.id, revision: 1, reason: 'Na prośbę Syntetyczny Uczeń' }), (error) => {
+      assert.equal(error.code, 'possible_personal_data');
+      assert.equal(error.status, 422);
+      assert.deepEqual(error.extra.categories, ['known_name']);
+      assert.ok(!JSON.stringify(error.extra).includes('Uczeń'));
+      return true;
+    });
+    assert.equal((await reasonOf()).status, 'draft');
+    const input = { postId: post.id, revision: 1, reason: 'Na prośbę Syntetyczny Uczeń', confirmPersonalData: true };
+    assert.equal((await withdrawNews(db, rep, input)).replayed, false);
+    assert.equal((await withdrawNews(db, rep, input)).replayed, true);
+    assert.equal((await reasonOf()).status, 'withdrawn');
+    const metadata = await audit('news_post.withdrawn');
+    assert.equal(metadata.piiConfirmed, true);
+    assert.deepEqual(metadata.piiCategories, ['known_name']);
+    assert.ok(!JSON.stringify(metadata).includes('Uczeń'));
+  } finally { await db.close(); }
+});
+
+test('#152 odwołanie wydarzenia: powód z telefonem wymaga potwierdzenia, zwykły powód przechodzi bez metadanych PII', async () => {
+  const { db, classId, rep, audit } = await setup();
+  try {
+    const base = { schoolYearId: 'y2026', classId, startsAt: '2026-11-12T10:00', audience: 'internal', title: 'Piknik klasowy' };
+    const first = await createEvent(db, rep, { ...base, idempotencyKey: 'event-pii-0002' });
+    const second = await createEvent(db, rep, { ...base, idempotencyKey: 'event-pii-0003' });
+    await assert.rejects(
+      cancelEvent(db, rep, { eventId: first.event.id, revision: 1, reason: 'Pisz na rodzic@example.invalid', confirmPersonalData: true }),
+      { code: 'personal_data_forbidden', status: 422 },
+    );
+    await assert.rejects(
+      cancelEvent(db, rep, { eventId: first.event.id, revision: 1, reason: 'Pytania: +32 470 12 34 56' }),
+      { code: 'possible_personal_data', status: 422 },
+    );
+    const status = async (id) => (await db.query('SELECT status FROM events WHERE id = $1', [id])).rows[0].status;
+    assert.equal(await status(first.event.id), 'draft');
+    const input = { eventId: first.event.id, revision: 1, reason: 'Pytania: +32 470 12 34 56', confirmPersonalData: true };
+    assert.equal((await cancelEvent(db, rep, input)).replayed, false);
+    assert.equal((await cancelEvent(db, rep, input)).replayed, true);
+    assert.equal(await status(first.event.id), 'cancelled');
+    assert.equal((await audit('event.cancelled')).piiConfirmed, true);
+    await cancelEvent(db, rep, { eventId: second.event.id, revision: 1, reason: 'Zła pogoda' });
+    assert.equal(await status(second.event.id), 'cancelled');
+    assert.equal((await audit('event.cancelled')).piiConfirmed, undefined);
   } finally { await db.close(); }
 });

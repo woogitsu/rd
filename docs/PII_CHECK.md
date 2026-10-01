@@ -27,6 +27,8 @@ Każda zmiana treści aktualności (`news_post_revisions`) i wydarzenia (`event_
 - `audit_events` dostaje `piiConfirmed` i `piiCategories` (bez treści); ponowienie tego samego żądania z kluczem idempotencji nie tworzy drugiego wpisu;
 - zatwierdzenie i publikacja nadal wymagają osobnej osoby z zarządu (cztery oczy) — bramka ich nie zastępuje.
 
+Powody **odwołania wydarzenia** (`POST /api/events/{eventId}/cancel`, kolumna `events.cancellation_reason`) i **wycofania aktualności** (`POST /api/news/{postId}/withdraw`, kolumna `news_posts.withdrawal_reason`) przechodzą tę samą bramkę (znane imiona z roku szkolnego wpisu, `confirmPersonalData: true` w treści żądania, metadane `piiConfirmed`/`piiCategories` w `audit_events`). Bramka działa dopiero po sprawdzeniu roli, zakresu i stanu, więc ponowienie odwołania/wycofania (już wykonanego) nie wymaga ponownego potwierdzenia i nie tworzy drugiego zapisu.
+
 Założenie zachowawcze (do decyzji zarządu/IOD): publiczny kontakt e-mail w treści aktualności lub wydarzenia jest odrzucany tak samo jak w polach finansowych; adres kontaktowy Rady podaje się przez stałe dane strony, nie w treści. Pola `location` i `organizer` wydarzenia nie są objęte bramką (nazwy miejsc i organizacji; nie są polem wolnego tekstu o osobach) — do rewizji, jeśli zarząd uzna inaczej. Wydłużenie okresu przechowywania i `reference_hash` dla `payment_entries.reference` nadal czekają na D-04.
 
 ## Wydajność

@@ -551,12 +551,14 @@ async function transition(db, actor, input, spec) {
     if (row.status === 'withdrawn') throw new NewsError('post_withdrawn', 409);
     if (row.revision_no !== expected) throw new NewsError('revision_conflict', 409);
     if (!spec.from.includes(row.status)) throw new NewsError('invalid_transition', 409);
+    // #152: powód wycofania trafia do niezmiennego wiersza — bramka przed zapisem.
+    const gate = spec.gate ? await spec.gate(tx, row) : null;
     const { sql, params } = spec.update(row, actor);
     const { rows } = await tx.query(
       `UPDATE news_posts SET ${sql} WHERE id = $1 RETURNING ${POST_COLUMNS}`, [row.id, ...params],
     );
     await audit(tx, actor.userId, spec.action, 'news_post', row.id,
-      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status });
+      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status, ...piiAuditMetadata(gate) });
     return { post: internalPost(rows[0]), replayed: false };
   });
 }
@@ -616,6 +618,10 @@ export async function withdraw(db, actor, input) {
     // także osoba, która może go edytować.
     allowed: (a, row) => canReview(a, row) || (row.published_revision_no === null && canEdit(a, row)),
     alreadyDone: (row) => row.status === 'withdrawn',
+    gate: async (tx, row) => gateFreeText([['news_posts.withdrawal_reason', reason]], {
+      confirm: input?.confirmPersonalData === true, fail: piiFail,
+      knownNames: await loadKnownNames(tx, row.school_year_id),
+    }),
     update: (_row, a) => ({
       sql: `status = 'withdrawn', withdrawn_by = $2, withdrawn_at = now(), withdrawal_reason = $3`,
       params: [a.userId, reason],
@@ -1253,7 +1259,7 @@ export async function handle(request, env, url, json) {
       }
       const operations = { submit, approve, publish, withdraw };
       const result = await operations[action[2]](env.db, actor, {
-        ...pick(data, ['revision', 'reason']), postId: decodeId(action[1], 'invalid_post_id'),
+        ...pick(data, ['revision', 'reason', 'confirmPersonalData']), postId: decodeId(action[1], 'invalid_post_id'),
       });
       return json({ post: result.post, replayed: result.replayed }, 200, noStore);
     }

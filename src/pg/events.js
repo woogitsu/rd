@@ -18,6 +18,7 @@ import { insertAuditEvent } from './audit.js';
 import { recordDataAccess } from './data-access.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { createJsonReader, isUniqueError } from './input.js';
+import { afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf } from './list-cursor.js';
 
 export const EVENT_TIMEZONE = 'Europe/Brussels';
 export const EVENT_POLICY = Object.freeze({
@@ -463,12 +464,14 @@ async function transition(db, actor, input, spec) {
     if (row.revision_no !== expected) throw new EventError('revision_conflict', 409);
     if (!spec.from.includes(row.status)) throw new EventError('invalid_transition', 409);
     spec.validate?.(actor, row);
+    // #152: powód odwołania trafia do niezmiennego wiersza — bramka przed zapisem.
+    const gate = spec.gate ? await spec.gate(tx, row) : null;
     const { sql, params } = spec.update(row, actor);
     const { rows } = await tx.query(
       `UPDATE events SET ${sql} WHERE id = $1 RETURNING ${EVENT_COLUMNS}`, [row.id, ...params],
     );
     await audit(tx, actor.userId, spec.action, row.id,
-      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status });
+      { schoolYearId: row.school_year_id, revision: row.revision_no, status: rows[0].status, ...piiAuditMetadata(gate) });
     return { event: internalEvent(rows[0]), replayed: false };
   });
 }
@@ -531,6 +534,10 @@ export async function cancel(db, actor, input) {
     // one also by whoever may edit it (e.g. withdrawing a class proposal).
     allowed: (a, row) => canReview(a, row) || (row.published_revision_no === null && canEdit(a, row)),
     alreadyDone: (row) => row.status === 'cancelled',
+    gate: async (tx, row) => gateFreeText([['events.cancellation_reason', reason]], {
+      confirm: input?.confirmPersonalData === true, fail: piiFail,
+      knownNames: await loadKnownNames(tx, row.school_year_id),
+    }),
     update: (_row, actor) => ({
       sql: `status = 'cancelled', cancelled_by = $2, cancelled_at = now(), cancellation_reason = $3`,
       params: [actor.userId, reason],
@@ -950,6 +957,10 @@ const PUBLIC_ICS_COLUMNS = `id, title, description, begins_at, ends_at, location
                FROM events e WHERE e.id = public_events.id) AS pending_change,
             (SELECT e.published_revision_no FROM events e WHERE e.id = public_events.id) AS sequence_no`;
 
+// Strona wydarzeń publicznych. #159: kolejność (begins_at, id) rosnąco, kursor
+// keyset związany z filtrem (rok szkolny + data „od”) — kursor z innego filtru
+// daje 400 invalid_cursor. Kanał iCal nie przekazuje kursora: dostaje najwyżej
+// `limit` najbliższych wydarzeń (format .ics nie niesie sygnału obcięcia).
 async function publicEventRows(db, input = {}) {
   const conditions = [];
   const params = [];
@@ -964,23 +975,29 @@ async function publicEventRows(db, input = {}) {
   }
   const limit = input.limit ?? 100;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new EventError('invalid_limit');
-  params.push(limit);
+  const scope = JSON.stringify(['public-events', input.schoolYearId ?? null, input.from ?? null]);
+  const cursor = decodeListCursor(input.cursor ?? null, { kind: 'timestamp', scope }, (code) => { throw new EventError(code); });
+  if (cursor) conditions.push(afterTupleAscSql(['begins_at', 'id'], [cursor.key, cursor.id], params, ['::timestamptz', '']));
+  params.push(limit + 1);
   const { rows } = await db.query(
-    `SELECT ${PUBLIC_ICS_COLUMNS}
+    `SELECT ${PUBLIC_ICS_COLUMNS}, ${cursorTimestampSql('begins_at')} AS cursor_ts
        FROM public_events
       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
       ORDER BY begins_at, id LIMIT $${params.length}`,
     params,
   );
-  return rows;
+  return pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
 }
 
 export async function listPublic(db, input = {}) {
-  const rows = await publicEventRows(db, input);
-  const tasks = await publicTasksFor(db, rows.filter((row) => row.public_status !== 'cancelled').map((row) => row.id));
+  const page = await publicEventRows(db, input);
+  const tasks = await publicTasksFor(db, page.items.filter((row) => row.public_status !== 'cancelled').map((row) => row.id));
   return {
     timezone: EVENT_TIMEZONE,
-    events: rows.map((row) => ({ ...publicEvent(row), volunteerTasks: tasks.get(row.id) ?? [] })),
+    events: page.items.map((row) => ({ ...publicEvent(row), volunteerTasks: tasks.get(row.id) ?? [] })),
+    nextCursor: page.nextCursor,
+    truncated: page.truncated,
+    limit: page.limit,
   };
 }
 
@@ -1000,7 +1017,7 @@ export async function getPublic(db, input = {}) {
 // Wewnętrzne: to samo źródło co listPublic, do budowy kalendarza iCal
 // (src/ical.js). Nigdy nie ujawnia autorów, klas ani powodu odwołania.
 async function listPublicForIcs(db, input) {
-  const rows = await publicEventRows(db, input);
+  const rows = (await publicEventRows(db, input)).items;
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
@@ -1112,6 +1129,7 @@ export async function handle(request, env, url, json) {
         schoolYearId: url.searchParams.get('schoolYearId') ?? undefined,
         from: from ?? undefined,
         limit: limitText === null ? undefined : Number(limitText),
+        cursor: url.searchParams.get('cursor'),
       });
       return json(result, 200, { 'Cache-Control': 'public, max-age=60' });
     }
@@ -1230,7 +1248,7 @@ export async function handle(request, env, url, json) {
     }
     const operations = { submit, approve, publish, cancel };
     const result = await operations[actionMatch[2]](env.db, actor, {
-      ...pick(data, ['revision', 'reason']), eventId: decodeId(actionMatch[1]),
+      ...pick(data, ['revision', 'reason', 'confirmPersonalData']), eventId: decodeId(actionMatch[1]),
     });
     return json({ event: result.event, replayed: result.replayed }, 200, noStore);
   } catch (error) {
