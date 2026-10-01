@@ -31,6 +31,7 @@ import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { createJsonReader } from '../input.js';
 import { emailHash, normalizeEmail } from '../../email/content.js';
+import { afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from '../list-cursor.js';
 
 export const name = 'guardian-updates';
 
@@ -261,15 +262,24 @@ async function listRequests(request, env, url, json) {
   const context = await requireBoardContext(request, env);
   const status = url.searchParams.get('status') ?? 'pending';
   if (!['pending', 'approved', 'rejected'].includes(status)) throw new RequestError('invalid_request');
-  const { rows } = await env.db.query(
+  // #159: keyset (created_at, id) zamiast LIMIT 200 bez sygnału obcięcia.
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 200, maxLimit: 200 }, fail);
+  const scope = JSON.stringify(['guardian-update-requests', status]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [status];
+  const after = cursor ? `AND ${afterTupleAscSql(['created_at', 'id'], [cursor.key, cursor.id], values, ['::timestamptz', ''])}` : '';
+  const { rows: fetched } = await env.db.query(
     `SELECT id, guardian_id, proposed_email, proposed_email_set, proposed_contact_allowed,
-            proposed_contact_allowed_set, note, created_at
+            proposed_contact_allowed_set, note, created_at, ${cursorTimestampSql('created_at')} AS cursor_ts
        FROM guardian_update_requests
-      WHERE status = $1
+      WHERE status = $1 ${after}
       ORDER BY created_at, id
-      LIMIT 200`,
-    [status],
+      LIMIT ${limit + 1}`,
+    values,
   );
+  const page = pageOf(fetched, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  const rows = page.items;
   const suppressed = await suppressionsByEmail(env, rows
     .filter((row) => row.proposed_email_set && row.proposed_email)
     .map((row) => row.proposed_email));
@@ -296,7 +306,7 @@ async function listRequests(request, env, url, json) {
     actorId: context.session.user.id, action: 'guardian_update_request.list_viewed',
     entityType: 'guardian_update_request', entityId: status, metadata: { status, count: requests.length },
   });
-  return json({ requests });
+  return json({ requests, nextCursor: page.nextCursor, truncated: page.truncated, limit });
 }
 
 // ---------- POST /api/admin/guardian-update-requests/{id}/(approve|reject) ----------

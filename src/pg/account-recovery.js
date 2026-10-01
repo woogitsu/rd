@@ -98,10 +98,11 @@ export async function listRecoveryRequests(env, { status = 'pending' } = {}) {
   if (!STATUSES.has(status)) throw new LoginError('invalid_status', 400);
   const { rows } = await database(env).query(
     `SELECT ${COLUMNS} FROM account_recovery_requests
-      WHERE ($1 = 'all' OR status = $1) ORDER BY created_at DESC, id LIMIT ${MAX_LIST}`,
+      WHERE ($1 = 'all' OR status = $1) ORDER BY created_at DESC, id LIMIT ${MAX_LIST + 1}`,
     [status],
   );
-  return rows.map(present);
+  // #159: o jeden wiersz więcej = jawny sygnał obcięcia zamiast cichego LIMIT.
+  return { requests: rows.slice(0, MAX_LIST).map(present), truncated: rows.length > MAX_LIST };
 }
 
 async function lockRequest(tx, requestId) {

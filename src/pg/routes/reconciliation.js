@@ -28,6 +28,7 @@ import {
   withDeferredAccessDenied,
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
+import { listReviews } from '../audit-reviews.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { toSafeInteger } from './payments.js';
 import { PROTECTED_ACCOUNT_ROLES } from '../account-recovery.js';
@@ -2380,6 +2381,8 @@ export async function buildAuditReport(executor, schoolYearId) {
   balance.closingBankCents = balance.closingBalanceCents - balance.closingCashCents;
   const checks = await buildCrossChecks(executor, year, balance, confirmed.at(-1) ?? null);
   const accountOperations = await buildAccountOperations(executor, year);
+  // #137: ścieżka kontroli KR (pytania, odpowiedzi, zamknięcia, wniosek) — ta sama migawka co reszta raportu.
+  const reviewNotes = await listReviews(executor, schoolYearId);
 
   return {
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },
@@ -2419,6 +2422,7 @@ export async function buildAuditReport(executor, schoolYearId) {
     },
     evidence,
     accountOperations,
+    reviewNotes,
   };
 }
 
