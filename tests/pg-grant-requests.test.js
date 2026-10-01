@@ -117,7 +117,7 @@ test('zatwierdzenie: wnioskodawca i adresat nie mogą; drugi administrator nadaj
   }
 });
 
-test('równoległe podwójne kliknięcie „Zatwierdź”: jeden przydział i jedno zdarzenie', async () => {
+test('równoległe podwójne kliknięcie „Zatwierdź”: jeden przydział i jedno zdarzenie (PGlite: po kolei, nie wyścig)', async () => {
   const { db, env, cookies } = await setup();
   try {
     const requested = await post(env, '/api/admin/grants', cookies['u-admin-a'], { userId: 'u-target', role: 'admin' });

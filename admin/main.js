@@ -36,6 +36,12 @@ import {
   attentionStudents, canApplyPromotion, MAP_FINAL, MAP_SKIP, missingRepresentativeNote, newPromotionKey, promotionBody,
   promotionConfirmation, promotionResultMessage, promotionRows, promotionSummary,
 } from "./promotion.js";
+import {
+  FILTER_KIND_OPTIONS, FILTER_STATUS_OPTIONS, KIND_LABELS, STATUS_LABELS as DR_STATUS_LABELS, SUBJECT_LABELS,
+  canExport, createBody as dataRequestBody, dataRequestsPath, dueState, exportBlocker, exportConfirmation, exportFileName,
+  listSummary as dataRequestsSummary, newRequestKey, nextStatuses, omittedNote, statusBody as dataRequestStatusBody,
+  statusConfirmation, subjectOf,
+} from "./data-requests.js";
 import { api as apiRequest } from "../shared/api.js";
 import { buildEffectsHtml, confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
@@ -54,7 +60,7 @@ const byId = (id) => document.getElementById(id);
 const globalMessage = byId("global-message");
 
 // Wspólny klient (#99): polskie komunikaty, 401/403 MFA → /login/ z powrotem.
-const api = (url, { method = "GET", body, idempotencyKey } = {}) => apiRequest(url, { method, body, idempotencyKey, messages: ERROR_MESSAGES });
+const api = (url, { method = "GET", body, idempotencyKey, binary, withMeta } = {}) => apiRequest(url, { method, body, idempotencyKey, binary, withMeta, messages: ERROR_MESSAGES });
 
 function showMessage(text, isError = false) {
   globalMessage.textContent = text;
@@ -1257,6 +1263,185 @@ byId("reload-audit").addEventListener("click", () => loadAudit().catch((error) =
   });
 }
 
+// --- Żądania osób (RODO, #100; trasy GET/POST /api/admin/data-requests, wyłącznie admin) ---
+// Eksport zawiera dane osobowe: plik trafia tylko do pobrania (Blob w pamięci karty,
+// zwalniany zaraz po kliknięciu); nic nie jest logowane, zapisywane w pamięci przeglądarki ani wyświetlane.
+
+const dr = { requests: [], cursor: null, status: "", kind: "", createKey: null, createSignature: "", busy: false, selected: null };
+
+function drToday() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Brussels" });
+}
+
+function renderDataRequests() {
+  byId("dr-summary").textContent = dataRequestsSummary(dr.requests.length, Boolean(dr.cursor));
+  const tbody = byId("dr-body");
+  if (!dr.requests.length) return emptyRow(tbody, 7, "Brak żądań w tym widoku.");
+  const today = drToday();
+  tbody.replaceChildren(...dr.requests.map((item) => {
+    const tr = document.createElement("tr");
+    const subject = subjectOf(item);
+    const due = cell(item.dueOn ? formatDateOrTimestamp(item.dueOn, "Europe/Brussels") ?? "—" : "—");
+    if (dueState(item, today) === "overdue") due.append(" (po terminie)");
+    const subjectCell = cell(subject.type ? `${SUBJECT_LABELS[subject.type]} ${shortId(subject.id)}` : "—");
+    if (subject.id) subjectCell.title = subject.id;
+    const idCell = cell(KIND_LABELS[item.kind] ?? item.kind);
+    idCell.title = item.id;
+    tr.append(idCell, subjectCell, cell(formatDateOrTimestamp(item.receivedOn, "Europe/Brussels") ?? "—"), due,
+      statusCell(item.status, DR_STATUS_LABELS[item.status] ?? item.status), cell(item.decisionNoteRef));
+    const blocker = exportBlocker(item);
+    const buttons = [];
+    if (nextStatuses(item).length) buttons.push(button("Zmień stan", () => openDataRequestStatus(item)));
+    for (const format of ["json", "csv"]) {
+      buttons.push(button(`Eksport ${format.toUpperCase()}`, (event) => exportDataRequest(event.currentTarget, item, format), {
+        disabled: dr.busy || !canExport(item), title: blocker,
+      }));
+    }
+    tr.append(actionsCell(buttons));
+    return tr;
+  }));
+}
+
+async function loadDataRequests({ append = false } = {}) {
+  const result = await api(dataRequestsPath({ status: dr.status, kind: dr.kind, cursor: append ? dr.cursor : "" }));
+  dr.requests = append ? [...dr.requests, ...result.requests] : result.requests;
+  dr.cursor = result.nextCursor ?? null;
+  toggleMore("dr-more", dr.cursor);
+  renderDataRequests();
+}
+
+function setDataRequestsBusy(busy) {
+  dr.busy = busy;
+  for (const element of byId("dr-body").querySelectorAll("button")) {
+    if (busy) element.disabled = true;
+  }
+  if (!busy) renderDataRequests();
+}
+
+function closeDataRequestStatus() {
+  dr.selected = null;
+  byId("dr-status-form").hidden = true;
+  byId("dr-status-error").textContent = "";
+}
+
+function openDataRequestStatus(item) {
+  dr.selected = item;
+  const form = byId("dr-status-form");
+  fillSelect(byId("dr-status-select"), nextStatuses(item).map((status) => [status, DR_STATUS_LABELS[status]]));
+  form.elements.decisionNoteRef.value = "";
+  byId("dr-status-error").textContent = "";
+  byId("dr-status-subject").textContent = `Żądanie: ${KIND_LABELS[item.kind] ?? item.kind}, stan obecny: ${DR_STATUS_LABELS[item.status] ?? item.status}. Stanu nie da się cofnąć.`;
+  form.hidden = false;
+  form.elements.status.focus();
+}
+
+async function exportDataRequest(element, item, format) {
+  if (dr.busy || !canExport(item)) return;
+  const confirmed = await confirmAction(exportConfirmation(item, format));
+  if (!confirmed || dr.busy) return;
+  const message = byId("dr-message");
+  message.textContent = "";
+  setDataRequestsBusy(true); // podwójne kliknięcie: jeden przebieg naraz (serwer też blokuje drugi)
+  try {
+    const { blob, headers } = await withStepUp(() => api(
+      `/api/admin/data-requests/${encodeURIComponent(item.id)}/export?format=${format}`,
+      { method: "POST", binary: true },
+    ));
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = exportFileName(headers.get("Content-Disposition"), item.id, format);
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showMessage(`Pobrano plik ${format.toUpperCase()}. ${omittedNote(headers)}`.trim());
+    await loadAudit();
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    setDataRequestsBusy(false);
+  }
+}
+
+byId("dr-create-kind").replaceChildren(...Object.entries(KIND_LABELS).map(([value, label]) => new Option(label, value)));
+byId("dr-create-form").elements.subjectType.replaceChildren(...Object.entries(SUBJECT_LABELS).map(([value, label]) => new Option(label, value)));
+byId("dr-filter-status").replaceChildren(...FILTER_STATUS_OPTIONS.map(([value, label]) => new Option(label, value)));
+byId("dr-filter-kind").replaceChildren(...FILTER_KIND_OPTIONS.map(([value, label]) => new Option(label, value)));
+byId("dr-create-form").elements.receivedOn.value = drToday();
+
+byId("dr-create-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const errorBox = byId("dr-create-error");
+  const submit = form.querySelector("button[type=submit]");
+  errorBox.textContent = "";
+  let body;
+  try {
+    body = dataRequestBody(Object.fromEntries(new FormData(form)));
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  // Ten sam formularz po błędzie sieci = ten sam klucz; zmiana treści = nowy klucz.
+  const signature = JSON.stringify(body);
+  if (dr.createSignature !== signature) { dr.createKey = newRequestKey(); dr.createSignature = signature; }
+  submit.disabled = true;
+  try {
+    const result = await api("/api/admin/data-requests", { method: "POST", body, idempotencyKey: dr.createKey, withMeta: true });
+    dr.createKey = null;
+    dr.createSignature = "";
+    form.elements.subjectId.value = "";
+    form.elements.dueOn.value = "";
+    showMessage(`Żądanie zarejestrowane: ${KIND_LABELS[result.data.request?.kind] ?? "ok"}.`);
+    await Promise.all([loadDataRequests(), loadAudit()]);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+byId("dr-status-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const item = dr.selected;
+  const errorBox = byId("dr-status-error");
+  const submit = form.querySelector("button[type=submit]");
+  errorBox.textContent = "";
+  if (!item) return;
+  let body;
+  try {
+    body = dataRequestStatusBody(form.elements.status.value, form.elements.decisionNoteRef.value);
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  const confirmed = await confirmAction(statusConfirmation(item, body.status));
+  if (!confirmed) return;
+  submit.disabled = true;
+  try {
+    await api(`/api/admin/data-requests/${encodeURIComponent(item.id)}/status`, { method: "POST", body });
+    showMessage(`Stan żądania zmieniony: ${DR_STATUS_LABELS[body.status]}.`);
+    closeDataRequestStatus();
+    await Promise.all([loadDataRequests(), loadAudit()]);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+byId("dr-status-cancel").addEventListener("click", closeDataRequestStatus);
+byId("dr-more").addEventListener("click", () => loadDataRequests({ append: true }).catch((error) => { byId("dr-message").textContent = error.message; }));
+byId("reload-dr").addEventListener("click", () => loadDataRequests().catch((error) => { byId("dr-message").textContent = error.message; }));
+for (const [id, key] of [["dr-filter-status", "status"], ["dr-filter-kind", "kind"]]) {
+  byId(id).addEventListener("change", (event) => {
+    dr[key] = event.currentTarget.value;
+    loadDataRequests().catch((error) => { byId("dr-message").textContent = error.message; });
+  });
+}
+
 // --- Start ----------------------------------------------------------------------
 
 async function start() {
@@ -1269,6 +1454,7 @@ async function start() {
     byId("coverage-year").value = defaultYearId();
     byId("batch-form").elements.schoolYearId.value = defaultYearId();
     await Promise.all([loadGrantRequests(), loadGrants(), loadInvitations(), loadAudit(), loadCoverage()]);
+    await loadDataRequests().catch((error) => { byId("dr-message").textContent = error.message; byId("dr-summary").textContent = ""; });
   } catch (error) {
     showMessage(error.message, true);
   }

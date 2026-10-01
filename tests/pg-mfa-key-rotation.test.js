@@ -232,7 +232,7 @@ test('#134: przerwanie rotacji w połowie cofa konto w całości, wznowienie ko�
   assert.equal(ok.status, 200);
 });
 
-test('#134: równoległe uruchomienia rotacji — konto rotuje się raz, zostaje jeden aktywny czynnik', async () => {
+test('#134: równoległe uruchomienia rotacji — konto rotuje się raz, zostaje jeden aktywny czynnik (PGlite: po kolei, nie wyścig)', async () => {
   const account = await enrollAndConfirm('u-rot-parallel');
   const reports = await Promise.all([
     rotateMfaKeys(envRing(), { apply: true }),
