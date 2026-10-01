@@ -287,7 +287,15 @@ wpisu księgi i przeksięgowanie kontra korekta tego wpisu. Każdy test sprawdza
 `pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z kodu trasy. Mutanty:
 `payments-refund`, `payments-reassign`, `payments-allocation`,
 `payments-allocation-reversal`, `ledger-transfer-reversal`, `ledger-replacement`. Test nie ujawnił błędu
-współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria), `ledger-budget.js`, bilans otwarcia i `ledger-cost-centers.js`.
+współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria), `ledger-budget.js` i bilans otwarcia.
+
+`tests/pg-real-cost-center-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
+przypisania wpisu księgi do centrów kosztów (`ledger-cost-centers.js`) — dwa pierwsze
+przypisania tego samego wpisu pod różnymi kluczami (drugie: `409 allocation_version_conflict`,
+jedna wersja i jeden wpis audytu) oraz korekta wpisu 70 € w toku kontra przypisanie 100 €
+(`409 allocation_exceeds_net`, zero wersji). Test sprawdza w `pg_stat_activity`, że drugie
+żądanie czeka na `SELECT id FROM ledger_entries WHERE id = $1 FOR UPDATE` z `loadEntry`.
+Mutant: `cost-center-allocation`.
 
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
@@ -301,7 +309,8 @@ Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisan
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
 `rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit`, `rd_year_close`
 oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` (dokumenty)
-i `updateGuardianContact`.
+i `updateGuardianContact`, a w `tests/pg-real-cost-center-locks.test.js` blokadę wpisu przy
+przypisaniu do centrów kosztów (`loadEntry` w `ledger-cost-centers.js`).
 Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
 zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
 porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
