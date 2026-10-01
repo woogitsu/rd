@@ -63,7 +63,11 @@ export async function createRealTestDb() {
   const name = `rd_t_${process.pid}_${++realSeq}_${Date.now()}`;
   await adminQuery(`CREATE DATABASE ${name} TEMPLATE ${template}`);
   const url = withDatabaseName(process.env.RD_TEST_PG_URL, name);
-  const pool = new pg.Pool(poolConfig({ connectionString: url, max: 10, statement_timeout: 30_000 }));
+  // SR-05 (#101): RD_TEST_PG_APP_ROLE=rd_app uruchamia CAŁĄ aplikację i dane testowe
+  // rolą bez własności tabel (parametr startowy `-c role=…`); migracje szablonu
+  // nadal idą rolą właściciela. Dowód braku ukrytych zależności od uprawnień właściciela.
+  const appRole = process.env.RD_TEST_PG_APP_ROLE;
+  const pool = new pg.Pool(poolConfig({ connectionString: url, max: 10, statement_timeout: 30_000, ...(appRole ? { options: `-c role=${appRole}` } : {}) }));
   const db = createPgDatabase(pool);
   const closePool = db.close.bind(db);
   return {

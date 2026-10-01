@@ -1336,6 +1336,30 @@ zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
 przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
 odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
 
+`0170_rd_app_role.sql` (#101, SR-05) tworzy — warunkowo i idempotentnie —
+rolę `rd_app` (NOLOGIN, bez hasła, bez SUPERUSER/CREATEROLE/CREATEDB/
+BYPASSRLS) i nadaje jej uprawnienia aplikacji: USAGE na schemacie `public`
+(bez CREATE, zabrane także PUBLIC), SELECT/INSERT/UPDATE na istniejących
+tabelach, USAGE/SELECT na sekwencjach, EXECUTE na funkcjach, a DELETE
+wyłącznie na `login_rate_limits`, `mfa_rate_limits`,
+`email_campaign_recipients`, `email_campaign_exclusions`. Brak TRUNCATE,
+REFERENCES i TRIGGER; `schema_migrations` tylko do odczytu. `ALTER DEFAULT
+PRIVILEGES` nadaje to samo przyszłym obiektom roli uruchamiającej migracje
+(bez DELETE). Rola jest tworzona tylko wtedy, gdy nie istnieje, a
+użytkownik migracji ma SUPERUSER lub CREATEROLE; inaczej krok jest pomijany z
+`NOTICE` (operator tworzy rolę ręcznie i powtarza GRANT-y). PGlite obsługuje
+role, więc migracja przechodzi w testach bez zmian. Skutki dla danych: żaden
+wiersz nie jest zmieniany ani usuwany; zmieniają się tylko uprawnienia.
+Dotychczasowy użytkownik działa bez zmian, dopóki operator nie przełączy
+`DATABASE_URL` aplikacji na `rd_app` (osobny `DATABASE_MIGRATION_URL` dla
+migratora i odtworzenia: `docs/RAILWAY_OPERATIONS.md`, sekcja „Role bazy”).
+UPDATE jest nadane szeroko celowo (`SELECT … FOR UPDATE` i `LOCK TABLE` go
+wymagają), a niezmienność historii nadal pilnują triggery. Rola nie ogranicza
+trybu odtworzenia `SET LOCAL rd.restore` (zwykły parametr sesji).
+Dowód: `tests/pg-real-app-role.test.js` (`npm run test:pg-real`). Wycofanie:
+REVOKE ALL na tabelach/sekwencjach/funkcjach schematu i `ALTER DEFAULT
+PRIVILEGES … REVOKE`, REVOKE USAGE na schemacie, `DROP ROLE rd_app`.
+
 `0174_anonymization_runs.sql` (issue #91, D-04/D-07) dodaje mechanizm
 anonimizacji gospodarstwa z zachowaniem księgi (opis: `docs/RETENTION.md`).
 Tabela `anonymization_runs` (tylko dopisywanie; `UPDATE`/`DELETE`/`TRUNCATE`
