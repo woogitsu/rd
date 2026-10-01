@@ -201,6 +201,17 @@ realne ryzyka wdrożenia na Railway. Pełny przebieg trwa kilkanaście minut.
 
 ### Testy wyścigów
 
+`tests/pg-real-domain-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera jak w
+`pg-real-double-click` dla modułów domenowych — dwa zapisy na ostatnie miejsce zadania
+wydarzenia (`409 task_full`), dwie edycje szkicu wydarzenia z tej samej rewizji, wycofanie
+wpisu aktualności kontra zatwierdzenie (`409 post_withdrawn`), dwie zmiany terminu zebrania
+z tej samej rewizji, zastąpienie dokumentu dwoma różnymi dokumentami i dwie identyczne zmiany
+kontaktu opiekuna (druga: `changed: false`, jeden wpis historii i audytu). Test sprawdza w
+`pg_stat_activity`, że drugie żądanie czeka na blokadę wiersza z kodu trasy (tekst zapytania
+jest obcinany do 1024 znaków, więc wzorce opisują jego początek). Usunięcie blokady w
+`lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` i `updateGuardianContact` czerwieni
+odpowiedni test (`npm run test:pg-mutations`).
+
 `tests/pg-real-concurrency.test.js` (pomijany bez `RD_TEST_PG_URL`): podwójne kliknięcie
 zapisu wpłaty (aż do wykonania gałęzi 23505), dwoje opiekunów płacących równolegle,
 trzy równoległe korekty 40/40/40 €, dwa i pięć równoległych wydatków na jedną uchwałę
@@ -269,9 +280,12 @@ jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
 Obecnie lista obejmuje: korektę i przypisanie wpłaty, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
-`rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit` i `rd_year_close`.
-Poza listą (brak testu z barierą, #208): `FOR UPDATE` w `families.js`, `events.js`,
-`news.js`, `meetings.js`, `documents.js`, pozostałe w `payments.js`/`ledger.js`
+`rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit`, `rd_year_close`
+oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` (dokumenty)
+i `updateGuardianContact`.
+Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
+zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
+porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
 (zwroty, przeksięgowania, części wpłat, autoryzacje) oraz blokady w triggerach migracji.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
