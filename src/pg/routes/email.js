@@ -575,6 +575,11 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
                                  JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
                                 WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
                 THEN 'student_withdrawn'
+              WHEN $4::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id AND en.class_id = $4)
+                THEN 'student_left_class'
               WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
                                  JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
                                  JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
@@ -585,7 +590,7 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
             END AS reason
        FROM email_campaign_recipients r
       WHERE r.campaign_id = $1`,
-    [campaign.id, campaign.school_year_id, on],
+    [campaign.id, campaign.school_year_id, on, campaign.audience === 'class_households' ? campaign.class_id : null],
   );
   const counts = {};
   for (const row of rows) if (row.reason) counts[row.reason] = (counts[row.reason] ?? 0) + 1;
