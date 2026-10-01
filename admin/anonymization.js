@@ -31,7 +31,7 @@ export const COUNT_LABELS = Object.freeze({
   payment_allocation_reversals: "Powody odwróceń przypisań",
 });
 
-export const HISTORY_ACTION = "household.anonymized";
+export const HISTORY_PATH = "/api/admin/anonymizations?limit=50";
 const PLAN_DIGEST = /^[0-9a-f]{64}$/;
 
 // Treść podglądu: dryRun zawsze jawnie true (serwer domyślnie też, ale nie polegamy na tym).
@@ -126,23 +126,19 @@ export function resultMessage(result) {
   return "Podgląd gotowy. Dane nie zostały zmienione.";
 }
 
-// Historia z dziennika zdarzeń (domena „privacy”): serwer nie ma osobnej listy przebiegów,
-// a metadane audytu zawierają tylko identyfikatory i liczniki.
-export function historyRows(events) {
-  return (Array.isArray(events) ? events : [])
-    .filter((event) => event?.action === HISTORY_ACTION)
-    .map((event) => {
-      const meta = event.metadata ?? {};
-      return {
-        id: event.id, runId: event.entityId ?? null, occurredAt: event.occurredAt, actorId: event.actorId ?? null,
-        householdId: meta.householdId ?? null, reasonCode: meta.reasonCode ?? null,
-        total: meta.counts && typeof meta.counts === "object" ? totalCount(meta.counts) : null,
-        planSha256: typeof meta.planSha256 === "string" ? meta.planSha256 : null,
-      };
-    });
+// Historia z GET /api/admin/anonymizations (od najnowszego, kursor keyset): tylko identyfikatory
+// i liczniki, bez filtrowania po stronie klienta.
+export function historyRows(runs) {
+  return (Array.isArray(runs) ? runs : []).map((run) => ({
+    id: run?.id ?? null, occurredAt: run?.executedAt ?? null, actorId: run?.executedBy ?? null,
+    householdId: run?.householdId ?? null, reasonCode: run?.reasonCode ?? null,
+    dataSubjectRequestId: run?.dataSubjectRequestId ?? null,
+    total: Number.isSafeInteger(run?.totalChanged) ? run.totalChanged : (run?.counts && typeof run.counts === "object" ? totalCount(run.counts) : null),
+    planSha256: typeof run?.planSha256 === "string" ? run.planSha256 : null,
+  }));
 }
 
 export function historySummary(count, hasMore) {
   const more = hasMore ? " Lista jest niepełna — użyj „Pokaż więcej”." : "";
-  return count ? `Przebiegów na wczytanych stronach dziennika: ${count}.${more}` : `Brak przebiegów na wczytanych stronach dziennika.${more}`;
+  return count ? `Wczytane przebiegi: ${count}.${more}` : `Brak przebiegów.${more}`;
 }
