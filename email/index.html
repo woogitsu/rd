@@ -54,6 +54,53 @@
         <p class="context">Sprawdzenie i uruchomienie zadania należy do administratora technicznego (usługa cron, zmienne wysyłki). Ten ekran niczego nie wysyła ani nie uruchamia.</p>
       </section>
 
+      <section class="card" id="quota" aria-labelledby="quota-title" hidden>
+        <div class="section-heading"><div><h2 id="quota-title">Dzienny limit Brevo</h2></div></div>
+        <p class="context">Pula wiadomości doby jest wspólna dla całego konta Brevo: kampanie, wiadomości testowe i wiadomości wysłane poza kolejką. Doba UTC i doba w strefie konta liczone są osobno; zadanie wysyłki bierze mniej korzystny wynik. Ten ekran niczego nie wysyła.</p>
+        <div class="message" id="quota-message" role="status"></div>
+        <p class="context" id="quota-summary"></p>
+        <div class="table-wrap" id="quota-table" role="region" aria-labelledby="quota-title" tabindex="0" hidden>
+          <table>
+            <caption class="sr-only">Zużycie dziennego limitu wiadomości</caption>
+            <thead><tr><th scope="col">Doba</th><th scope="col">Data</th><th scope="col" class="amount">Kampanie</th><th scope="col" class="amount">Spoza kolejki</th><th scope="col" class="amount">Razem</th><th scope="col" class="amount">Pozostało</th></tr></thead>
+            <tbody id="quota-body"></tbody>
+          </table>
+        </div>
+
+        <form id="quota-form" aria-labelledby="quota-form-title">
+          <h3 id="quota-form-title">Ewidencja wiadomości spoza kolejki</h3>
+          <p class="context">Wpisz wiadomości wysłane z konta Brevo poza kolejką aplikacji (np. ręcznie z panelu Brevo), żeby kampanie nie przekroczyły limitu. Wpis jest trwały i nie podlega edycji — pomyłkę poprawia korekta (nowy wpis ujemny, historia zostaje). Nowy wpis dotyczy bieżącej doby UTC lub konta. Zapisują zarząd i skarbnik (z MFA); inne role dostaną odmowę serwera.</p>
+          <fieldset>
+            <legend>Rodzaj zapisu</legend>
+            <label><input type="radio" name="kind" value="record" checked /> Wpis: wiadomości wysłane</label>
+            <label><input type="radio" name="kind" value="correction" /> Korekta wcześniejszego wpisu</label>
+          </fieldset>
+          <label>Doba (RRRR-MM-DD; korekta — doba korygowanego wpisu) <input name="day" type="date" required /></label>
+          <label>Liczba wiadomości (1–10000) <input name="count" type="number" min="1" max="10000" step="1" inputmode="numeric" required /></label>
+          <label id="quota-reason-label">Powód <select name="reasonCode" required>
+            <option value="manual_brevo_panel">Wysłano ręcznie z panelu Brevo</option>
+            <option value="invitation">Zaproszenia do konta</option>
+            <option value="audit_committee">Wiadomość Komisji Rewizyjnej</option>
+            <option value="other">Inny powód</option>
+          </select></label>
+          <label id="quota-target-label" hidden>Identyfikator korygowanego wpisu <input name="correctsId" maxlength="128" autocomplete="off" /></label>
+          <div class="form-error" id="quota-form-error" role="alert"></div>
+          <p><button type="submit" class="primary" id="quota-submit">Zapisz</button></p>
+        </form>
+
+        <div id="quota-entries-box" hidden>
+          <h3>Ostatnie wpisy ręczne</h3>
+          <div class="table-wrap" role="region" aria-label="Ostatnie wpisy ręczne" tabindex="0">
+            <table>
+              <caption class="sr-only">Ostatnie wpisy spoza kolejki i korekty, od najnowszych</caption>
+              <thead><tr><th scope="col">Doba</th><th scope="col" class="amount">Liczba</th><th scope="col">Powód</th><th scope="col">Korekta</th><th scope="col">Identyfikator</th><th scope="col"><span class="sr-only">Akcje</span></th></tr></thead>
+              <tbody id="quota-entries-body"></tbody>
+            </table>
+          </div>
+          <p class="context">Lista pochodzi z serwera (do 50 najnowszych wpisów); korekta nie może razem przekroczyć liczby z wpisu korygowanego.</p>
+        </div>
+      </section>
+
       <section class="card" aria-labelledby="campaigns-title">
         <div class="section-heading"><div><h2 id="campaigns-title">Kampanie</h2></div><span id="campaigns-count" aria-live="polite"></span></div>
         <div class="table-wrap" id="campaigns-table" role="region" aria-labelledby="campaigns-title" tabindex="0">

@@ -70,6 +70,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   class: "Klasa",
   data_access_log: "Dziennik dostępu do danych",
   data_subject_request: "Wniosek osoby, której dane dotyczą",
+  processing_restriction: "Ograniczenie przetwarzania danych",
   document: "Dokument",
   email_campaign: "Kampania e-mail",
   email_outbox: "Wiadomość w kolejce",
@@ -140,11 +141,14 @@ export const REASON_LABELS = Object.freeze({
   idle: "bezczynność",
   invalid_password: "błędne hasło",
   invitation: "zaproszenie",
+  reads_without_valid_grant: "odczyty bez ważnego przydziału",
+  school_year_ended: "rok szkolny się zakończył",
   login_succeeded: "udane logowanie",
   logout: "wylogowanie",
   malformed: "błędny adres",
   mfa_reset: "reset weryfikacji dwuetapowej",
   no_consent: "brak zgody",
+  processing_restricted: "ograniczenie przetwarzania (art. 18 RODO)",
   no_payment_reference: "brak aktywnej komunikacji strukturalnej rodziny",
   no_other_admin: "brak innego administratora do zatwierdzenia",
   no_password: "konto bez hasła",
@@ -330,6 +334,24 @@ export function formatDateTime(value) {
 // (przegląd demo 5). Pełny identyfikator zostaje w wartości opcji.
 export function userOptionLabel(user) {
   return `${user?.email ?? "—"} (${shortId(user?.id)})`;
+}
+
+// #128: filtr kont po stronie klienta na już wczytanej liście (e-mail i nazwa bez
+// rozróżniania wielkości liter i polskich znaków diakrytycznych, stan konta).
+const foldText = (value) => String(value ?? "").normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase();
+
+export function filterUsers(users = [], { q = "", state = "" } = {}) {
+  const needle = foldText(q).trim();
+  return users.filter((user) => {
+    if (state === "active" && user.disabledAt) return false;
+    if (state === "disabled" && !user.disabledAt) return false;
+    return !needle || foldText(user.email).includes(needle) || foldText(user.displayName).includes(needle);
+  });
+}
+
+export function usersSummary(shown, loaded, hasMore, filtered) {
+  const head = filtered ? `${shown} z ${loaded} wczytanych kont` : `${loaded} kont`;
+  return `${head}. Konta tworzy wyłącznie przyjęcie zaproszenia.${hasMore ? " Lista jest niepełna — użyj „Pokaż więcej”; filtr działa tylko na wczytanych kontach." : ""}`;
 }
 
 // Podpowiedź w UI (serwer i tak odmawia): czy wycofanie tego przydziału

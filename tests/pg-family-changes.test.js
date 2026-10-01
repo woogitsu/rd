@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { computeSnapshot } from '../src/pg/routes/email.js';
 import { runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 import { SYNTHETIC_PHONE_IN_TEXT } from './helpers/assertions.js';
 
 const realFetch = globalThis.fetch;
@@ -25,6 +25,7 @@ const REASON = 'Zmiana opieki (syntetyczne)';
 // h-2: Jan (s-2, 1B), opiekun g-2; g-1b opiekuje się także Janem (rodzeństwo w dwóch gospodarstwach).
 async function setup() {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
   await seedUser(db, { userId: 'u-seed' });
   await seedSchoolYear(db, OLD_YEAR, { startsOn: '2025-09-01', endsOn: '2026-08-31' });
   await seedClass(db, { id: 'c-1a', schoolYearId: YEAR, name: '1A' });

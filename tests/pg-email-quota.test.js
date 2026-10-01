@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { emailConfig } from '../src/email/brevo.js';
 import { addDays, quotaOverview, remainingQuota, runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const NOW = new Date('2026-10-05T10:00:00Z');
@@ -16,6 +16,7 @@ const BODY = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok
 
 async function setup(extraEnv = {}, now = NOW) {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const users = {
     treasurer: await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),
@@ -25,6 +26,7 @@ async function setup(extraEnv = {}, now = NOW) {
     classBoard: await seedUserSession(db, { userId: 'u-cb', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR, classId: 'c1' }] }),
     representative: await seedUserSession(db, { userId: 'u-rp', mfa: true, roles: [{ role: 'representative', schoolYearId: YEAR, classId: 'c1' }] }),
     admin: await seedUserSession(db, { userId: 'u-ad', mfa: true, roles: [{ role: 'admin', schoolYearId: YEAR }] }),
+    audit: await seedUserSession(db, { userId: 'u-kr', mfa: true, roles: [{ role: 'audit', schoolYearId: YEAR }] }),
   };
   const env = {
     db, APP_ENV: 'development', EMAIL_SENDING_ENABLED: 'true', EMAIL_TEST_ALLOWLIST: '*@example.invalid',
@@ -205,6 +207,77 @@ test('#84 DST transitions: each entry is counted once in its account day, never 
     }
     assert.equal(addDays('2026-10-25', 1), '2026-10-26');
     assert.equal(addDays('2026-12-31', 1), '2027-01-01');
+  } finally { await t.close(); }
+});
+
+test('#84 GET other-sends: role boundaries (admin, board, treasurer with/without MFA, representative, KR)', async () => {
+  const t = await setup();
+  try {
+    assert.equal((await t.post(t.users.treasurer, entry())).status, 201);
+    const path = `/api/email/quota/other-sends?schoolYearId=${YEAR}`;
+    for (const who of ['representative', 'classTreasurer', 'classBoard', 'admin', 'audit', 'noMfa']) {
+      const res = await t.call(t.users[who], path);
+      assert.equal(res.status, 403, `GET ${who}`);
+      assert.equal(res.body.entries, undefined, `no data for ${who}`);
+    }
+    assert.equal((await t.call(null, path)).status, 401);
+    assert.equal((await t.call(t.users.treasurer, `/api/email/quota/other-sends`)).status, 400);
+    for (const who of ['treasurer', 'board']) {
+      const res = await t.call(t.users[who], path);
+      assert.equal(res.status, 200, `GET ${who}`);
+      assert.equal(res.body.entries.length, 1);
+    }
+    assert.equal((await t.call(t.users.treasurer, path, { method: 'DELETE' })).status, 405);
+    assert.equal(networkGuardCalls(), 0);
+  } finally { await t.close(); }
+});
+
+test('#84 GET other-sends: list with corrections, day filter and cursor; no addresses or message content', async () => {
+  const t = await setup();
+  try {
+    const path = `/api/email/quota/other-sends?schoolYearId=${YEAR}`;
+    assert.deepEqual((await t.call(t.users.board, path)).body.entries, []);
+    const a = await t.post(t.users.treasurer, entry({ count: 30 }));
+    const b = await t.post(t.users.board, entry({ count: 5, reasonCode: 'audit_committee' }));
+    const fix = await t.post(t.users.board, { day: TODAY, count: -10, reasonCode: 'correction', correctsId: a.body.entry.id });
+    assert.equal(fix.status, 201);
+    // Wpis sprzed 0177 (bez aktora) oraz wiersz kampanii nie należą do listy ręcznej.
+    await t.db.query(`INSERT INTO email_send_ledger (id, day, source, message_count) VALUES ('legacy', '2026-10-05', 'other', 4)`);
+    await t.db.query(`INSERT INTO email_send_ledger (id, day, source, message_count, actor_id, reason_code, idempotency_key, recorded_at)
+      VALUES ('old', '2026-10-01', 'other', 1, 'u-tr', 'other', 'old-entry-0001', '2026-10-01T10:00:00Z')`);
+    const all = await t.call(t.users.treasurer, path);
+    assert.equal(all.status, 200);
+    const byId = new Map(all.body.entries.map((e) => [e.id, e]));
+    assert.equal(all.body.entries.length, 4);
+    assert.ok(!byId.has('legacy'));
+    assert.deepEqual(Object.keys(byId.get(a.body.entry.id)).sort(),
+      ['correctableCount', 'corrected', 'correctedCount', 'correctsId', 'count', 'day', 'id', 'reasonCode', 'recordedAt', 'recordedBy']);
+    assert.deepEqual([byId.get(a.body.entry.id).corrected, byId.get(a.body.entry.id).correctedCount, byId.get(a.body.entry.id).correctableCount], [true, 10, 20]);
+    assert.equal(byId.get(b.body.entry.id).corrected, false);
+    assert.equal(byId.get(b.body.entry.id).correctableCount, 5);
+    assert.equal(byId.get(fix.body.entry.id).correctsId, a.body.entry.id);
+    assert.equal(byId.get(fix.body.entry.id).correctableCount, 0);
+    assert.equal(byId.get(fix.body.entry.id).recordedBy, 'u-bd');
+    assert.doesNotMatch(JSON.stringify(all.body), /@/);
+    // Filtr doby.
+    const day = await t.call(t.users.treasurer, `${path}&day=2026-10-01`);
+    assert.deepEqual(day.body.entries.map((e) => e.id), ['old']);
+    assert.equal((await t.call(t.users.treasurer, `${path}&day=2026-02-30`)).body.error, 'invalid_quota_day');
+    assert.equal((await t.call(t.users.treasurer, `${path}&day=jutro`)).body.error, 'invalid_quota_day');
+    // Kursor: strony po 2, bez powtórzeń; kursor z innym filtrem doby jest odrzucany.
+    const first = await t.call(t.users.treasurer, `${path}&limit=2`);
+    assert.equal(first.body.entries.length, 2);
+    assert.equal(first.body.truncated, true);
+    assert.ok(first.body.nextCursor);
+    const second = await t.call(t.users.treasurer, `${path}&limit=2&cursor=${encodeURIComponent(first.body.nextCursor)}`);
+    assert.equal(second.body.entries.length, 2);
+    assert.equal(second.body.nextCursor, null);
+    const ids = [...first.body.entries, ...second.body.entries].map((e) => e.id);
+    assert.equal(new Set(ids).size, 4);
+    assert.deepEqual([...ids].sort(), [...byId.keys()].sort());
+    assert.equal((await t.call(t.users.treasurer, `${path}&day=2026-10-05&cursor=${encodeURIComponent(first.body.nextCursor)}`)).status, 400);
+    assert.equal((await t.call(t.users.treasurer, `${path}&limit=0`)).status, 400);
+    assert.equal(await t.count("SELECT count(*) AS n FROM audit_events WHERE action = 'email.quota.other_recorded'"), 2);
   } finally { await t.close(); }
 });
 

@@ -197,6 +197,8 @@ export const MESSAGES = Object.freeze({
   data_request_status_cannot_go_back: "Nie można cofnąć stanu żądania.",
   data_request_identity_not_verified: "Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy.",
   data_request_kind_not_exportable: "Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych.",
+  data_request_kind_not_restrictable: "Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw.",
+  data_request_subject_not_restrictable: "Żądanie nie wskazuje gospodarstwa ani opiekuna, więc nie można nałożyć ograniczenia. Popraw wpis w rejestrze.",
   data_request_closed: "Żądanie jest już zamknięte (udzielono odpowiedzi albo odrzucono).",
   data_request_subject_mismatch: "Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze.",
   data_request_export_in_progress: "Eksport dla tego żądania już trwa. Poczekaj na jego zakończenie.",
@@ -399,7 +401,7 @@ export const MESSAGES = Object.freeze({
   fingerprint_mismatch: "Dane różnią się od podglądu. Wyślij podgląd ponownie.",
   import_has_conflicts: "Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy.",
   idempotency_key_reused: "Ten podgląd był już użyty dla innych danych. Wyślij podgląd ponownie.",
-  privacy_notice_missing: "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import.",
+  privacy_notice_missing: "Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie.",
 
   // --- Informacja o przetwarzaniu danych (D-06) --------------------------------------------------
   invalid_body_text: "Podaj treść informacji (1–20000 znaków).",

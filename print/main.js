@@ -32,6 +32,8 @@ const state = {
   households: [],
   selected: new Set(),
   paymentInstructions: null,
+  // #145 (D-06): { id, version, url } opublikowanej informacji o przetwarzaniu danych z serwera.
+  privacyNotice: null,
   configTouched: false,
 };
 const byId = (id) => document.getElementById(id);
@@ -68,6 +70,7 @@ const API_ERRORS = {
   school_year_not_found: "Nie znaleziono roku szkolnego.",
   invalid_request: "Niepoprawny identyfikator roku szkolnego lub klasy.",
   too_many_rows: "Za dużo wierszy — wybierz klasę.",
+  privacy_notice_missing: "Brak opublikowanej informacji o przetwarzaniu danych. Kartek nie można wczytać, dopóki zarząd jej nie opublikuje.",
 };
 
 // Rok i klasa to listy wyboru (jak w Wpłatach): lata z przydziałów konta (/api/access),
@@ -260,7 +263,7 @@ function renderPreview() {
     return;
   }
   try {
-    const result = renderCardsHtml(state.households, state.selected, readConfig(), state.paymentInstructions);
+    const result = renderCardsHtml(state.households, state.selected, readConfig(), state.paymentInstructions, state.privacyNotice);
     // HTML powstaje w core.js z escapowaniem każdej wartości (test XSS).
     preview.innerHTML = result.html;
     preview.dataset.layout = result.layout;
@@ -297,6 +300,7 @@ function resetData() {
   state.households = [];
   state.selected.clear();
   applyPaymentInstructions(null);
+  state.privacyNotice = null;
   fileErrors.hidden = true;
   fileErrors.replaceChildren();
   selectSection.hidden = true;
@@ -383,6 +387,7 @@ async function handleApiLoad() {
   try {
     const data = await loadFromApi(schoolYearId, classId);
     applyPaymentInstructions(data.paymentInstructions ?? null);
+    state.privacyNotice = data.privacyNotice ?? null;
     loadParsed(() => parseInputRows(data), "Odpowiedź serwera");
     if (state.households.length && !data.paymentInfoIncluded) {
       fileMessage.textContent += " Informacja o wpisach wpłat nie jest dostępna dla tej roli lub sesji.";

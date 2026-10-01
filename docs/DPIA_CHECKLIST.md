@@ -91,6 +91,10 @@ odpowiedzialności osoby zapisującej.
 | `news_photos.rights_note` | treść zgody/licencji, może zawierać imię i nazwisko |
 | `news_photos.license_text` | jw. |
 | `news_photos.alt_text` | opis zdjęcia może zawierać imiona dzieci |
+| `news_post_revisions.title` | tytuł rewizji aktualności — może wymienić dziecko lub rodzica; rewizja niezmienna, bramka #152 |
+| `news_post_revisions.body` | treść rewizji aktualności, jw. (szkic przedstawiciela klasy też przechodzi bramkę) |
+| `event_revisions.title` | tytuł rewizji wydarzenia — może wymienić osobę; rewizja niezmienna, bramka #152 |
+| `event_revisions.description` | opis rewizji wydarzenia, jw. |
 | `news_photos.revocation_reason` | powód wycofania zgody, może zawierać dane osoby wycofującej |
 | `email_campaigns.subject` | temat kampanii — do przeglądu przy zatwierdzeniu treści |
 | `email_campaigns.body_text` | treść kampanii — do przeglądu przy zatwierdzeniu treści |

@@ -1256,6 +1256,12 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/email/quota?schoolYearId=${target.schoolYearId}` }),
   },
   {
+    // Lista wpisów ręcznych i korekt (#84): odczyt jak stan limitu; liczby i kody.
+    id: 'email.quota.otherSends.list', module: 'email', method: 'GET', path: '/api/email/quota/other-sends?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/quota/other-sends?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
     // Ewidencja wiadomości spoza kolejki (#84): dziennik tylko do dopisywania, Idempotency-Key.
     id: 'email.quota.otherSends', module: 'email', method: 'POST', path: '/api/email/quota/other-sends',
     targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: null,
@@ -1513,6 +1519,10 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
   // Przegląd dziennika odczytu danych rodzin (#133): wariant zachowawczy do D-04/D-07/D-08 — wyłącznie admin + MFA.
   adminRoute('admin.accessLog', 'GET', '/api/admin/access-log', {}),
+  // Przegląd dostępu po kadencji (#133): tylko odczyt, wyłącznie admin + MFA; rok źródłowy z fixture promotionYears.
+  adminRoute('admin.accessReview', 'GET', '/api/admin/access-review', {
+    object: 'promotionYears', build: ({ obj }) => ({ path: `/api/admin/access-review?schoolYearId=${obj.fromSchoolYearId}` }),
+  }),
   // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).
   adminRoute('admin.dataRequests', 'GET', '/api/admin/data-requests', {}),
   adminRoute('admin.dataRequestCreate', 'POST', '/api/admin/data-requests', {
@@ -1531,10 +1541,25 @@ export const ROUTE_MATRIX = Object.freeze([
     object: 'dataRequestVerified',
     build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/export`, body: {} }),
   }),
+  // #100 (art. 18 RODO): ograniczenie przetwarzania — wyłącznie admin + MFA; żądanie `restriction` po weryfikacji tożsamości (hh-1).
+  adminRoute('admin.dataRequestRestrict', 'POST', '/api/admin/data-requests/:requestId/restrict', {
+    object: 'restrictionRequestVerified',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/restrict`, body: {} }),
+  }),
+  adminRoute('admin.dataRequestLiftRestriction', 'POST', '/api/admin/data-requests/:requestId/lift-restriction', {
+    object: 'restrictionRequestVerified',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/lift-restriction`, body: {} }),
+  }),
+  adminRoute('admin.dataRequestRestrictions', 'GET', '/api/admin/data-requests/:requestId/restrictions', {
+    object: 'restrictionRequestVerified',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/restrictions` }),
+  }),
   // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Anonimizacja gospodarstwa (#91): wariant zachowawczy — admin + krok w górę MFA. Macierz wywołuje tylko podgląd
   // (dryRun), który niczego nie zmienia; wykonanie i odmowy: tests/pg-anonymization.test.js.
+  // Lista przebiegów anonimizacji (#91): identyfikatory i liczniki z `anonymization_runs`, bez danych osobowych.
+  adminRoute('admin.anonymizations', 'GET', '/api/admin/anonymizations', {}),
   adminRoute('admin.anonymizationPreview', 'POST', '/api/admin/anonymizations', {
     object: 'dataRequestErasure',
     build: ({ obj }) => ({

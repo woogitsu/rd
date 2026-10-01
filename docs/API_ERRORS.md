@@ -96,9 +96,11 @@ wpisów).
 | `data_request_identity_not_verified` | Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy. | Nie — najpierw zmień stan żądania. |
 | `data_request_kind_not_erasable` | Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_exportable` | Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych. | Nie — popraw dane żądania. |
+| `data_request_kind_not_restrictable` | Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw. | Nie — popraw dane żądania. |
 | `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
 | `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
 | `data_request_subject_mismatch` | Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze. | Nie — popraw dane żądania. |
+| `data_request_subject_not_restrictable` | Żądanie nie wskazuje gospodarstwa ani opiekuna, więc nie można nałożyć ograniczenia. Popraw wpis w rejestrze. | Nie — popraw dane żądania. |
 | `date_outside_school_year` | Data wpisu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `difference_requires_note` | Różnica wymaga wpisania wyjaśnienia. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_active_content` | Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady. | Zależy od kontekstu (patrz moduł trasy). |
@@ -394,7 +396,7 @@ wpisów).
 | `preview_campaign_limit` | Wyczerpano limit wiadomości testowych dla tej kampanii. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
 | `preview_stale` | Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
-| `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import. | Zależy od kontekstu (patrz moduł trasy). |
+| `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie. | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_approved` | Najpierw zatwierdź tę wersję (inna osoba niż autor). | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_draft` | Tę wersję już zatwierdzono albo opublikowano. | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_found` | Nie znaleziono tej wersji informacji. | Nie — popraw dane żądania. |
