@@ -677,6 +677,9 @@ export async function createTask(db, actor, input) {
       if (!sameTaskContent(existing, content, eventId)) throw new EventError('idempotency_conflict', 409);
       return { task: toTask(existing), replayed: true };
     }
+    // Wydarzenie odwołane jest stanem końcowym: nowe zadania nie powstają
+    // (zapisy do istniejących blokuje trigger event_task_signup_capacity).
+    if (event.status === 'cancelled') throw new EventError('event_cancelled', 409);
     const gate = gateFreeText([['event_tasks.title', content.title]], { confirm: input?.confirmPersonalData === true, fail: piiFail });
     const id = crypto.randomUUID();
     const { rows } = await tx.query(

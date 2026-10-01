@@ -428,3 +428,109 @@ test('public events list carries only public tasks as { id, title, stillNeeded }
     assert.deepEqual(afterCancel[0].volunteerTasks, []);
   } finally { await db.close(); }
 });
+
+// ---- Granice zadań i zapisów: zadanie musi należeć do wydarzenia z adresu ----
+
+async function taskCounts(db) {
+  const cancelled = (await db.query('SELECT count(*)::int AS n FROM event_tasks WHERE cancelled_at IS NOT NULL')).rows[0].n;
+  const signups = (await db.query('SELECT count(*)::int AS n FROM event_task_signups')).rows[0].n;
+  return { cancelled, signups };
+}
+
+test('task of another event in the URL: signup and cancel are refused with 404 and change nothing (board and representative)', async () => {
+  const db = await tasksDb();
+  try {
+    const eventA = await draftClassEvent(db, board, 'c1a');
+    const eventB = await draftClassEvent(db, board, 'c1b');
+    const taskB = (await createTask(db, board, { eventId: eventB.id, title: 'Zadanie klasy B', slotsNeeded: 2, idempotencyKey: key() })).task;
+    const before = await taskCounts(db);
+    const notFound = (error) => error.code === 'event_task_not_found' && error.status === 404;
+
+    // repA widzi wydarzenie A (własna klasa), ale podaje zadanie wydarzenia B (cudza klasa).
+    await assert.rejects(createSignup(db, repA, { eventId: eventA.id, taskId: taskB.id, guardianId: 'g1', idempotencyKey: key() }), notFound);
+    await assert.rejects(createSignup(db, board, { eventId: eventA.id, taskId: taskB.id, guardianId: 'g3', idempotencyKey: key() }), notFound);
+    await assert.rejects(cancelTask(db, repA, { eventId: eventA.id, taskId: taskB.id, reason: 'Próba z cudzego wydarzenia' }), notFound);
+    await assert.rejects(cancelTask(db, board, { eventId: eventA.id, taskId: taskB.id, reason: 'Próba z cudzego wydarzenia' }), notFound);
+
+    assert.deepEqual(await taskCounts(db), before, 'no signup created, no task cancelled');
+    // Adres wydarzenia B jest niedostępny dla repA — ten sam 404 co dla nieistniejącego.
+    await assert.rejects(
+      createSignup(db, repA, { eventId: eventB.id, taskId: taskB.id, guardianId: 'g3', idempotencyKey: key() }),
+      (error) => error.code === 'event_not_found' && error.status === 404,
+    );
+    // Lista zadań wydarzenia A nie zawiera zadania wydarzenia B.
+    const listed = await listTasks(db, repA, { eventId: eventA.id });
+    assert.equal(listed.tasks.some((task) => task.id === taskB.id), false);
+  } finally { await db.close(); }
+});
+
+test('a task idempotency key reused for another event does not return the foreign task', async () => {
+  const db = await tasksDb();
+  try {
+    const eventA = await draftClassEvent(db, board, 'c1a');
+    const eventB = await draftClassEvent(db, board, 'c1b');
+    const sharedKey = key('shared');
+    await createTask(db, board, { eventId: eventB.id, title: 'Zadanie klasy B', slotsNeeded: 1, idempotencyKey: sharedKey });
+    await assert.rejects(
+      createTask(db, repA, { eventId: eventA.id, title: 'Zadanie klasy B', slotsNeeded: 1, idempotencyKey: sharedKey }),
+      (error) => error.code === 'idempotency_conflict' && error.status === 409,
+    );
+    assert.equal((await listTasks(db, repA, { eventId: eventA.id })).tasks.length, 0);
+  } finally { await db.close(); }
+});
+
+test('cancelled event accepts no new tasks (409 event_cancelled); replay of an earlier task creation still works', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, 'c1a');
+    const replayKey = key();
+    await createTask(db, board, { eventId: event.id, title: 'Parking', slotsNeeded: 1, idempotencyKey: replayKey });
+    await cancel(db, board, { eventId: event.id, revision: 1, reason: 'Odwołane z powodu pogody' });
+
+    await assert.rejects(
+      createTask(db, board, { eventId: event.id, title: 'Nowe zadanie', slotsNeeded: 1, idempotencyKey: key() }),
+      (error) => error.code === 'event_cancelled' && error.status === 409,
+    );
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM event_tasks')).rows[0].n, 1);
+    const replay = await createTask(db, board, { eventId: event.id, title: 'Parking', slotsNeeded: 1, idempotencyKey: replayKey });
+    assert.equal(replay.replayed, true);
+  } finally { await db.close(); }
+});
+
+test('re-signup of a withdrawn person is refused for a full task, a cancelled task and a cancelled event', async () => {
+  const db = await tasksDb();
+  try {
+    const event = await draftClassEvent(db, board, 'c1a');
+    const full = (await createTask(db, board, { eventId: event.id, title: 'Jedno miejsce', slotsNeeded: 1, idempotencyKey: key() })).task;
+    const toCancel = (await createTask(db, board, { eventId: event.id, title: 'Do odwołania', slotsNeeded: 2, idempotencyKey: key() })).task;
+    const open = (await createTask(db, board, { eventId: event.id, title: 'Do końca', slotsNeeded: 2, idempotencyKey: key() })).task;
+
+    const g1Full = (await createSignup(db, repA, { eventId: event.id, taskId: full.id, guardianId: 'g1', idempotencyKey: key() })).signup;
+    await withdrawSignup(db, repA, { eventId: event.id, taskId: full.id, signupId: g1Full.id });
+    await createSignup(db, repA, { eventId: event.id, taskId: full.id, guardianId: 'g2', idempotencyKey: key() });
+    await assert.rejects(
+      createSignup(db, repA, { eventId: event.id, taskId: full.id, guardianId: 'g1', idempotencyKey: key() }),
+      (error) => error.code === 'task_full' && error.status === 409,
+    );
+
+    const g1Cancel = (await createSignup(db, repA, { eventId: event.id, taskId: toCancel.id, guardianId: 'g1', idempotencyKey: key() })).signup;
+    await withdrawSignup(db, repA, { eventId: event.id, taskId: toCancel.id, signupId: g1Cancel.id });
+    await cancelTask(db, board, { eventId: event.id, taskId: toCancel.id, reason: 'Nie ma już potrzeby' });
+    await assert.rejects(
+      createSignup(db, repA, { eventId: event.id, taskId: toCancel.id, guardianId: 'g1', idempotencyKey: key() }),
+      (error) => error.code === 'event_cancelled' && error.status === 409,
+    );
+
+    const g1Open = (await createSignup(db, repA, { eventId: event.id, taskId: open.id, guardianId: 'g1', idempotencyKey: key() })).signup;
+    await withdrawSignup(db, repA, { eventId: event.id, taskId: open.id, signupId: g1Open.id });
+    await cancel(db, board, { eventId: event.id, revision: 1, reason: 'Odwołane z powodu pogody' });
+    await assert.rejects(
+      createSignup(db, repA, { eventId: event.id, taskId: open.id, guardianId: 'g1', idempotencyKey: key() }),
+      (error) => error.code === 'event_cancelled' && error.status === 409,
+    );
+
+    const states = (await db.query("SELECT task_id, guardian_id, status FROM event_task_signups WHERE guardian_id = 'g1' ORDER BY task_id")).rows;
+    assert.equal(states.length, 3);
+    assert.equal(states.filter((row) => row.status === 'withdrawn').length, 3, 'refused re-signups leave the withdrawn rows untouched');
+  } finally { await db.close(); }
+});
