@@ -62,6 +62,7 @@ export const BUSINESS_STATE_CODES = new Set([
   'email_campaign_meeting_audience_mismatch',
   'email_campaign_meeting_requires_approved_notice',
   'email_campaign_pause_fields_locked',
+  'email_campaign_payment_instructions_year_mismatch',
   'email_campaign_resume_fields_locked',
   'email_campaign_sending_locked',
   'email_campaigns_status_check_not_found',

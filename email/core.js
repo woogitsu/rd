@@ -181,6 +181,7 @@ export const WARNING_LABELS = Object.freeze({
   template_requires_board_decision_d16: 'Szablon czeka na decyzję zarządu o treści (D-16) — nie jest „zatwierdzonym” wzorem.',
   // #92: dodawane przez podgląd (nie contentWarnings) — blokuje zatwierdzenie.
   payment_instructions_missing: 'Treść zawiera {rachunek} lub {odbiorca}, a rok nie ma zatwierdzonych danych do wpłaty — kampanii nie da się zatwierdzić.',
+  payment_instructions_changed: 'Dane do wpłaty zmieniono po zatwierdzeniu kampanii — podgląd pokazuje rachunek z zatwierdzonej wersji, ale kampania nie zostanie wysłana bez nowej migawki i ponownego zatwierdzenia.',
 });
 
 export function formatWarnings(warnings) {

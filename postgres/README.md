@@ -1290,3 +1290,25 @@ niezmienny (0006), więc wersja nie jest podbijana po późniejszym sprawdzeniu.
 ADD COLUMN bez DEFAULT nie przepisuje tabeli. `documents` pozostaje poza
 eksportem rocznym. Wycofanie: DROP COLUMN (znika tylko ślad wersji; podgląd
 wraca do ponownej kontroli każdego pliku).
+
+`0162_email_campaign_payment_instructions.sql` (#92, część: wiązanie kampanii
+z danymi do wpłaty) dodaje kolumnę `email_campaigns.approved_payment_instructions_id`
+(TEXT, FK do `payment_instructions`, NULL dla treści bez `{rachunek}`/`{odbiorca}`),
+CHECK `email_campaigns_draft_without_payment_instructions` (szkic nie nosi
+wersji) oraz trigger `email_campaigns_payment_instructions_guard` (nowa funkcja
+`email_campaign_payment_instructions_guard`): kolumnę ustawia się tylko przy
+przejściu draft → approved, czyści tylko przy cofnięciu approved → draft,
+wersja musi należeć do roku kampanii, a w każdym innym UPDATE i przy INSERT
+kolumna jest niezmienna (`email_campaign_payment_instructions_immutable`).
+Podgląd zatwierdzonej kampanii, wiadomość testowa i worker renderują rachunek
+z tej wersji, nie z „bieżącej”; korekta danych do wpłaty po zatwierdzeniu
+nadal wymaga ponownego zatwierdzenia (kolejka/wznowienie 409
+`payment_instructions_changed`, worker pomija kampanię). Wiązanie nie jest już
+odczytywane z metadanych zdarzenia `email.campaign.approved` (zdarzenie nadal
+zapisuje `paymentInstructionsId`). Skutki dla danych: istniejące kampanie
+dostają NULL, nic nie jest uzupełniane wstecznie z `audit_events`; kampania
+z `{rachunek}`/`{odbiorca}` zatwierdzona przed migracją wymaga nowej migawki
+i ponownego zatwierdzenia (albo anulowania), zanim cokolwiek wyjdzie. ADD
+COLUMN bez DEFAULT nie przepisuje tabeli. Kampanie pozostają poza eksportem
+rocznym. Wycofanie: DROP TRIGGER, DROP FUNCTION, DROP COLUMN (wraca wiązanie
+przez metadane zdarzeń z kodu sprzed migracji).
