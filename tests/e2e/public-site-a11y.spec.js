@@ -63,8 +63,8 @@ test('site/: tytuł z <img onerror> jest tekstem, strona ma poprawny język i uk
   for (let i = 1; i < levels.length; i += 1) {
     expect(levels[i], `przeskok poziomu nagłówka h${levels[i - 1]} → h${levels[i]}`).toBeLessThanOrEqual(levels[i - 1] + 1);
   }
-  // Nawigacja jest stała (WCAG 3.2.3): cztery pozycje także po wczytaniu.
-  await expect(page.locator('header nav a')).toHaveCount(4);
+  // Nawigacja jest stała (WCAG 3.2.3): pięć pozycji (z „Informacja o danych”, #145) także po wczytaniu.
+  await expect(page.locator('header nav a')).toHaveCount(5);
 });
 
 test('site/ przy 320 px: klawiatura — skip link, widoczny fokus, cele co najmniej 24 px', async ({ page }) => {

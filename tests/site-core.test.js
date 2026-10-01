@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
+  PRIVACY_NOTICE_UNAVAILABLE_MESSAGE,
   RADA_NAME,
+  normalizePrivacyNotice,
   brusselsDate,
   cleanText,
   defaultSchoolYearId,
@@ -323,4 +325,20 @@ test("volunteer tasks: only title and stillNeeded, nothing for cancelled events,
   assert.deepEqual(event.volunteerTasks.map(volunteerTaskLabel), ["potrzebni jeszcze: 2", "komplet chętnych"]);
   assert.deepEqual(normalizeEvent({ ...raw, status: "cancelled" }).volunteerTasks, []);
   assert.deepEqual(volunteerTasks(undefined), []);
+});
+
+test("informacja o przetwarzaniu danych: tylko treść z API, bez własnej treści prawnej (#145)", async () => {
+  const notice = normalizePrivacyNotice({ version: 3, bodyText: "  Treść syntetyczna.\nDruga linia.  ", publishedAt: "2026-09-20T10:00:00Z" });
+  assert.equal(notice.version, 3);
+  assert.equal(notice.bodyText, "Treść syntetyczna.\nDruga linia.");
+  assert.equal(notice.publishedAt.toISOString(), "2026-09-20T10:00:00.000Z");
+  assert.equal(normalizePrivacyNotice({ version: 1, bodyText: "x", publishedAt: "nie-data" }).publishedAt, null);
+  for (const bad of [null, "x", {}, { version: 0, bodyText: "x" }, { version: 1, bodyText: "  " }, { error: "privacy_notice_not_found" }]) {
+    assert.equal(normalizePrivacyNotice(bad), null);
+  }
+  assert.match(PRIVACY_NOTICE_UNAVAILABLE_MESSAGE, /nie została jeszcze opublikowana/);
+  const html = await readFile(new URL("../site/index.html", import.meta.url), "utf8");
+  const section = html.match(/<section id="informacja-o-danych"[\s\S]*?<\/section>/)[0];
+  assert.doesNotMatch(section, /administrator|RODO|art\./i, "szablon nie zawiera treści prawnej");
+  assert.match(html, /<a href="#informacja-o-danych">Informacja o danych<\/a>/);
 });

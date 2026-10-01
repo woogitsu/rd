@@ -20,6 +20,7 @@ npm run build:site    # dist/site, serwowane przez serwer Node pod /site/
 | Wpis pod stałym adresem | `GET /api/public/news/{id}` | adres `/site/aktualnosci/<id>` (strona serwera, #116); dawne `/site/#wpis-<id>` nadal działa; wycofany, nieopublikowany i nieznany: 404 i komunikat bez treści |
 | Archiwum aktualności | `GET /api/public/news?schoolYearId=&limit=50&cursor=` | `/site/?rok=RRRR-RRRR#aktualnosci` i „Starsze wpisy” (`?kursor=`, `nextCursor` z API) do najstarszego wpisu |
 | Lata w archiwum | `GET /api/public/school-years` | tylko lata z treściami publicznymi; gdy API nie odpowie — bieżący i 5 poprzednich (założenie awaryjne) |
+| Informacja o przetwarzaniu danych (#145) | `GET /api/public/privacy-notice` | `{ version, bodyText, publishedAt }` wyłącznie opublikowanej wersji; treść i numer wersji tylko z API (kod nie ma własnej treści prawnej), tekst bez HTML; 404 = neutralny komunikat „nie została jeszcze opublikowana”; sekcja `#informacja-o-danych`, link w nawigacji i stopce (także na stronach serwera) |
 | Zdjęcia w aktualnościach | `GET /api/public/news-photos/{id}/{thumb\|web}` | adres budowany wyłącznie z `id` z `photos[]`; `alt` z bazy (dekoracyjne: `alt=""`), `loading="lazy"`, podpis: autor, źródło, licencja. Zdjęcie bez zgody/weryfikacji nie jest w `photos[]`, a plik daje 404 — figura znika bez komunikatu. |
 
 Strona nie ma własnego API i nie zmienia danych.
@@ -30,7 +31,7 @@ W trybie PostgreSQL serwer Node (`src/pg/public-site.js`, wpięty w `src/server.
 
 | Adres | Treść |
 |---|---|
-| `/site/` | zbudowany `dist/site/index.html` z wypełnionymi sekcjami (aktualności, wydarzenia, zawiadomienia, protokoły), `canonical` i Open Graph; znaczniki podmiany: `INDEX_MARKERS` (test w `tests/public-site.test.js`) |
+| `/site/` | zbudowany `dist/site/index.html` z wypełnionymi sekcjami (aktualności, wydarzenia, zawiadomienia, protokoły, informacja o przetwarzaniu danych), `canonical` i Open Graph; znaczniki podmiany: `INDEX_MARKERS` (test w `tests/public-site.test.js`) |
 | `/site/aktualnosci/<id>` | strona wpisu: tytuł, treść, zdjęcia dopuszczone przez `public_news`, `canonical`, `meta description`, Open Graph bez `og:image` |
 | `/site/wydarzenia/<id>` | strona wydarzenia z mikrodanymi schema.org/Event |
 | `/site/feed.xml` | kanał Atom (20 wpisów, bez zdjęć) |

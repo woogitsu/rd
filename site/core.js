@@ -345,6 +345,26 @@ export const NEWS_UNAVAILABLE_MESSAGE =
 export const EVENT_UNAVAILABLE_MESSAGE =
   "To wydarzenie nie jest dostępne. Mogło nie zostać opublikowane albo adres jest nieprawidłowy.";
 
+// Informacja o przetwarzaniu danych (D-06, #145): treść i numer wersji pochodzą
+// wyłącznie z GET /api/public/privacy-notice (opublikowana wersja); kod nie
+// zawiera żadnej treści prawnej. 404 = nic nie opublikowano.
+export const PRIVACY_NOTICE_URL = "/api/public/privacy-notice";
+export const PRIVACY_NOTICE_UNAVAILABLE_MESSAGE =
+  "Informacja o przetwarzaniu danych nie została jeszcze opublikowana.";
+
+export function normalizePrivacyNotice(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const version = Number(payload.version);
+  const bodyText = typeof payload.bodyText === "string" ? payload.bodyText.trim() : "";
+  if (!Number.isInteger(version) || version < 1 || !bodyText) return null;
+  const published = payload.publishedAt ? new Date(payload.publishedAt) : null;
+  return {
+    version,
+    bodyText,
+    publishedAt: published && !Number.isNaN(published.getTime()) ? published : null,
+  };
+}
+
 export const SITE_PATH = "/site/";
 export const FEED_PATH = "/site/feed.xml";
 export const SITEMAP_PATH = "/site/sitemap.xml";

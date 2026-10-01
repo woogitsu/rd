@@ -109,8 +109,8 @@ test('site/: 20 wpisów z długimi tytułami — komplet, od najnowszego, tytuł
 
 test('site/: komunikaty stanu — błąd wczytywania jest role="alert", stan pusty role="status"', () => {
   assert.match(main, /setAttribute\("role", isError \? "alert" : "status"\)/);
-  for (const id of ['news-status', 'events-status', 'minutes-status', 'notices-status']) {
+  for (const id of ['news-status', 'events-status', 'minutes-status', 'notices-status', 'privacy-status']) {
     assert.match(html, new RegExp(`id="${id}" role="status"`));
   }
-  assert.equal((main.match(/Nie udało się wczytać[^"]*", true\)/g) || []).length, 4);
+  assert.equal((main.match(/Nie udało się wczytać[^"]*", true\)/g) || []).length, 5);
 });
