@@ -1453,3 +1453,14 @@ korzystał z indeksów tabel korekt i zwrotów zamiast pełnego skanu. Skutki dl
 danych: wyłącznie `CREATE OR REPLACE VIEW` — kolumny, ich kolejność i typy bez
 zmian (`p.*` zastąpione jawną listą), tabele i dane nietknięte. Wycofanie:
 przywrócenie definicji widoków z 0040 i 0038.
+
+`0181_data_subject_requests_idempotency.sql` (#100, idempotencja rejestracji
+żądania osoby) dodaje opcjonalną kolumnę `data_subject_requests.idempotency_key`
+(CHECK formatu jak w pozostałych trasach) i unikalny indeks częściowy
+`WHERE idempotency_key IS NOT NULL`. `POST /api/admin/data-requests` z tym samym
+`Idempotency-Key` i ładunkiem zwraca zapisany wiersz (200,
+`Idempotency-Replayed: true`); inny ładunek → 409 `idempotency_conflict`.
+Skutki dla danych: istniejące wiersze dostają NULL i nie są zmieniane; indeks
+częściowy ich nie obejmuje. Klucz to losowy token klienta, bez danych osobowych.
+Wycofanie: `DROP INDEX data_subject_requests_idempotency_key_key`, `ALTER TABLE
+data_subject_requests DROP COLUMN idempotency_key`.
