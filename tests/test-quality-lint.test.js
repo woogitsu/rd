@@ -79,19 +79,23 @@ const SHORT_DIGITS_NEGATIVE = [
 // RD_TEST_PG_URL), bo wtedy test nie znika po cichu przy pełnej konfiguracji.
 const TODO_ALLOWED = new Set(['pg-authz-matrix.test.js']);
 
+const PARALLEL_WORDING = /\b(?:parallel|simultaneous|concurrent)\b|równoległ|jednocześnie|jednoczesn|\bnaraz\b|równocz/i;
+const SEQUENTIAL_LABEL = /PGlite|sequential|po kolei|sekwencyjn|w procesie Node/i;
+
 // Zwraca listę naruszeń { rule, line } dla treści pliku.
 export function lintSource(name, text) {
   const violations = [];
   const lines = text.split('\n');
   const flag = (rule, index) => violations.push({ rule, line: index + 1, text: lines[index].trim() });
-  const realPg = /process\.env\.RD_TEST_PG_URL/.test(text);
+  const realPg = /process\.env\.RD_TEST_(?:PG_URL|DATABASE_URL)/.test(text);
+  const pglite = /helpers\/pg\.js/.test(text);
   lines.forEach((line, index) => {
     if (/^\s*\/\//.test(line)) return;
     if (/\bassert(?:\.ok|\.equal|\.strictEqual)?\(\s*true\s*(?:,\s*true\s*)?[,)]/.test(line)) flag('assert-true-literal', index);
     if (/\bassert\.(?:equal|strictEqual|deepEqual)\(\s*(true|false|null|0|1)\s*,\s*\1\s*[,)]/.test(line)) flag('assert-literal-equals-itself', index);
     if (/\.forEach\(\s*\(?[\w\s,]*\)?\s*=>\s*\{\s*\}\s*\)/.test(line)) flag('empty-foreach', index);
     if (/for\s*\([^)]*\)\s*\{\s*\}/.test(line)) flag('empty-for-loop', index);
-    if (/assert\.ok\(.*\.every\(/.test(line) && !EVERY_LENGTH_GUARD.test(line)) flag('every-without-nonempty', index);
+    if (/\bassert(?:\.\w+)?\(.*\.every\(/.test(line) && !EVERY_LENGTH_GUARD.test(line)) flag('every-without-nonempty', index);
     if (TRIGGER_BYPASS.test(line) && !Object.hasOwn(TRIGGER_BYPASS_ALLOWED, name)) flag('trigger-bypass-not-allowed', index);
     if (SHORT_DIGITS_NEGATIVE.some((pattern) => pattern.test(line))) flag('short-digit-negative-substring', index);
     if (/\{\s*todo\b|\.todo\(/.test(line) && !TODO_ALLOWED.has(name)) flag('todo-not-allowed', index);
@@ -101,6 +105,9 @@ export function lintSource(name, text) {
     // #208: PGlite wykonuje transakcje po kolei — nazwa testu bez prawdziwego
     // PostgreSQL nie może obiecywać wyścigu, serializacji ani braku zakleszczenia.
     if (!realPg && /^\s*(?:test|it)\(\s*['"`].*(?:truly parallel|are serialized|bez zakleszczenia)/i.test(line)) flag('pglite-race-claim', index);
+    // Nazwa obiecująca równoległość/jednoczesność na PGlite musi mówić, że to
+    // odtworzenie po kolei (idempotencja), nie wyścig; wyścig sprawdza tests/pg-real-*.
+    if (pglite && !realPg && /^\s*(?:test|it)\(\s*['"`]/.test(line) && PARALLEL_WORDING.test(line) && !SEQUENTIAL_LABEL.test(line)) flag('pglite-parallel-unlabeled', index);
   });
   return violations;
 }
@@ -125,6 +132,8 @@ test('lint testów: reguły wykrywają wzorce zakazane (kontrola pozytywna)', ()
     ['x.test.js', "assert.ok(!JSON.stringify(metadata).includes('2500'), text);", 'short-digit-negative-substring'],
     ['x.test.js', "assert.ok(audit.includes('piiConfirmed') && !audit.includes('470'));", 'short-digit-negative-substring'],
     ['x.test.js', "assert.equal(text.includes(`5390`), false);", 'short-digit-negative-substring'],
+    ['x.test.js', 'assert.equal(rows.every((row) => row.ok), true);', 'every-without-nonempty'],
+    ['x.test.js', "import { createTestDb } from './helpers/pg.js';\ntest('two parallel drafts: second gets 409', async () => {});", 'pglite-parallel-unlabeled'],
     ['x.test.js', "test('two truly parallel edits: one 409', async () => {});", 'pglite-race-claim'],
   ];
   for (const [name, source, rule] of cases) {
@@ -142,6 +151,7 @@ test('lint testów: reguły wykrywają wzorce zakazane (kontrola pozytywna)', ()
   assert.deepEqual(lintSource('pg-authz-matrix.test.js', "test('a', { todo: 'x' }, () => {});"), []);
   assert.deepEqual(lintSource('x.test.js', "const skip = !process.env.RD_TEST_PG_URL;\ntest('two truly parallel edits', { skip }, async () => {});"), [],
     'na prawdziwym PostgreSQL nazwa może mówić o wyścigu');
+  assert.deepEqual(lintSource('x.test.js', "import { createTestDb } from './helpers/pg.js';\ntest('two parallel drafts (sequential on PGlite): second gets 409', async () => {});"), []);
   assert.deepEqual(lintSource('pg-email.test.js', 'assertEvery(rows, (row) => row.ok);\nassert.equal(rows.length, 3);'), []);
 });
 
@@ -268,6 +278,11 @@ test('tests/setup.js: próba fetch poza pętlą zwrotną oblewa przebieg, nawet 
   const loopback = run("const { createServer } = await import('node:http'); const s = createServer((q, r) => r.end('ok')).listen(0, '127.0.0.1', async () => { const res = await fetch(`http://127.0.0.1:${s.address().port}/`); console.log(await res.text()); s.close(); });");
   assert.equal(loopback.status, 0, loopback.stderr);
   assert.equal(loopback.stdout.trim(), 'ok');
+
+  // Pętla zwrotna na porcie, którego nie otworzył ten proces, jest blokowana.
+  const foreign = run("await fetch('http://127.0.0.1:9/').then(() => process.exit(3), (e) => { console.log(e.message); });");
+  assert.match(foreign.stdout, /network_forbidden_in_tests/);
+  assert.equal(foreign.status, 1, 'próba połączenia z cudzym portem pętli zwrotnej oblewa przebieg');
 
   const env = run("console.log(process.env.APP_ENV)");
   assert.equal(env.stdout.trim(), process.env.APP_ENV || 'test');

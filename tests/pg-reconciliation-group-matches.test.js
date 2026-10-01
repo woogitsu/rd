@@ -289,7 +289,7 @@ test('suma pozycji ≠ kwota pozycji wyciągu: odrzucenie w API i w bazie (takż
   }
 });
 
-test('podwójne kliknięcie i równoległe dopasowania: jedno przyjęte, reszta odrzucona', async () => {
+test('podwójne kliknięcie i równoległe dopasowania: jedno przyjęte, reszta odrzucona (PGlite: po kolei, nie wyścig)', async () => {
   const { db, cookies, call } = await setup();
   const pa = await createPayment(call, cookies.treasurer, { amountCents: 2500, householdId: 'h-a' });
   const pb = await createPayment(call, cookies.treasurer, { amountCents: 2500, householdId: 'h-b' });

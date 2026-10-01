@@ -128,7 +128,7 @@ test('sumy migawki zgadzają się z ledger_year_summary i z raportem dla KR', as
   }
 });
 
-test('podwójne kliknięcie i równoległe tworzenie: jedna migawka, drugie żądanie to replayed', async () => {
+test('podwójne kliknięcie i równoległe tworzenie: jedna migawka, drugie żądanie to replayed (PGlite: po kolei, nie wyścig)', async () => {
   const { db, cookies, create } = await setup();
   const results = await Promise.all([create(cookies.board), create(cookies.board), create(cookies.treasurer), create(cookies.board2)]);
   const bodies = await Promise.all(results.map((response) => response.json()));
@@ -139,7 +139,7 @@ test('podwójne kliknięcie i równoległe tworzenie: jedna migawka, drugie żą
   assert.equal((await db.query("SELECT 1 FROM audit_events WHERE action = 'report.snapshot.created'")).rows.length, 1);
 });
 
-test('równoległe różne treści bez supersedesId: dokładnie jedna migawka bez poprzednika (indeks w bazie)', async () => {
+test('równoległe różne treści bez supersedesId: dokładnie jedna migawka bez poprzednika (indeks w bazie) (PGlite: po kolei, nie wyścig)', async () => {
   const { db } = await setup();
   const insert = (id, sha) => db.query(
     `INSERT INTO financial_report_snapshots (id, school_year_id, payload, content_sha256, created_by)
