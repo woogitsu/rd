@@ -58,6 +58,7 @@ import { estimateSchedule } from '../../email/schedule.js';
 import {
   accountDay, BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, QUOTA_LOCK_ID, quotaOverview, unsubscribeUrlFor, utcDay,
 } from '../../email/worker.js';
+import { loadProcessingRestrictions } from '../processing-restrictions.js';
 import { createJsonReader, readBodyText } from '../input.js';
 import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
 
@@ -492,11 +493,21 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     );
     for (const row of prefRows) if (row.action === 'opt_out') optedOut.add(row.email_hash);
   }
+  // #100 (art. 18 RODO): ograniczone gospodarstwo wypada w całości, ograniczony
+  // opiekun przestaje być adresatem (inny opiekun rodziny może nim zostać).
+  const restricted = await loadProcessingRestrictions(executor);
   const recipients = [];
   const exclusions = [];
   const used = new Set();
   const ids = [...households.keys()].sort();
   for (const householdId of ids) {
+    const guardianRows = households.get(householdId);
+    if (restricted.households.has(householdId)
+        || (guardianRows.length && guardianRows.every((row) => restricted.guardians.has(row.guardian_id)))) {
+      exclusions.push({ householdId, reason: 'processing_restricted' });
+      continue;
+    }
+    households.set(householdId, guardianRows.filter((row) => !restricted.guardians.has(row.guardian_id)));
     if (followup?.covered.has(householdId)) { exclusions.push({ householdId, reason: 'followup_already_covered' }); continue; }
     if (paid.has(householdId)) { exclusions.push({ householdId, reason: 'payment_recorded' }); continue; }
     if (withReference && !withReference.has(householdId)) { exclusions.push({ householdId, reason: 'no_payment_reference' }); continue; }
@@ -566,6 +577,9 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
   const { rows } = await executor.query(
     `WITH d AS (SELECT COALESCE($3::date, rd_today()) AS on_date)
      SELECT CASE
+              WHEN EXISTS (SELECT 1 FROM processing_restricted_subjects x
+                            WHERE x.household_id = r.household_id OR x.guardian_id = r.guardian_id)
+                THEN 'processing_restricted'
               WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
                                  JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
                                 WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
