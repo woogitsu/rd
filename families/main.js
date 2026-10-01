@@ -16,6 +16,7 @@ import {
   parseRoute,
   sortStudentsByName,
 } from "./core.js";
+import { renderGuardianUpdates } from "./guardian-updates.js";
 import { api as apiRequest } from "../shared/api.js";
 import { formatSchoolYear } from "../shared/school-year.js";
 import { mountShell, sessionDisplayName } from "../shared/shell.js";
@@ -28,7 +29,7 @@ mountShell().then((result) => { printedBy = sessionDisplayName(result?.session);
 
 const byId = (id) => document.getElementById(id);
 const state = { classes: null, canEdit: false, isRepresentative: false, currentClass: null, currentHousehold: null, classStudents: [], studentQuery: "" };
-const views = { classes: byId("classes-view"), overview: byId("overview-view"), class: byId("class-view"), household: byId("household-view") };
+const views = { classes: byId("classes-view"), overview: byId("overview-view"), class: byId("class-view"), household: byId("household-view"), guardianUpdates: byId("guardian-updates-view") };
 const message = byId("message");
 const breadcrumbs = byId("breadcrumbs");
 const contactDialog = byId("contact-dialog");
@@ -111,6 +112,7 @@ async function renderClasses() {
   }));
   byId("classes-empty").hidden = classes.length > 0;
   byId("overview-link").hidden = !state.canEdit || classes.length === 0;
+  byId("guardian-updates-link").hidden = !state.canEdit; // tylko podpowiedź; serwer: admin i zarząd bez klasy
   showView("classes");
   await renderOverview(groupClassesByYear(classes));
 }
@@ -401,6 +403,7 @@ async function route() {
   const target = parseRoute(location.hash);
   try {
     if (target.view === "overview") await renderBoardOverview();
+    else if (target.view === "guardianUpdates") await renderGuardianUpdates({ api, showView, setBreadcrumbs, showMessage });
     else if (target.view === "class") await renderClass(target.id);
     else if (target.view === "household") await renderHousehold(target.id);
     else await renderClasses();

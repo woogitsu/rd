@@ -38,6 +38,7 @@ export function parseRoute(hash) {
     return { view: "household", id: decodeURIComponent(householdMatch[1]) };
   }
   if (path === "/overview") return { view: "overview" };
+  if (path === "/guardian-updates") return { view: "guardianUpdates" };
   return { view: "classes" };
 }
 
