@@ -195,7 +195,11 @@ async function makeHousehold(db, target, householdId = nextKey('fx-hh')) {
   await db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
     [enrollmentId, studentId, classId, target.schoolYearId]);
   const membership = await db.query('SELECT id FROM student_households WHERE student_id = $1 AND is_primary', [studentId]);
-  return { householdId, guardianId, studentId, enrollmentId, membershipId: membership.rows[0].id };
+  const guardianMembership = await db.query('SELECT id FROM guardian_households WHERE guardian_id = $1', [guardianId]);
+  return {
+    householdId, guardianId, studentId, enrollmentId,
+    membershipId: membership.rows[0].id, guardianMembershipId: guardianMembership.rows[0].id,
+  };
 }
 
 // #200: opiekun z aktywnymi relacjami z DWOMA uczniami z różnych klas tego samego roku

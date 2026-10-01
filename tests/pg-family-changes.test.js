@@ -368,3 +368,117 @@ test('kampania zatwierdzona przed odejściem dziecka: ostrzeżenie, worker nie w
     assert.equal((await t.db.query(`SELECT count(*)::int AS n FROM payment_entries WHERE household_id = 'h-1'`)).rows[0].n, 1);
   } finally { await t.db.close(); }
 });
+
+// #86/#535: zakończenie członkostwa opiekuna w gospodarstwie (guardian_households, migracja 0163).
+// h-2 ma dwoje opiekunów (g-1b, g-2); g-1b opiekuje się też Olą z h-1 (rodzeństwo w dwóch gospodarstwach).
+const guardianMembership = async (t, guardianId, householdId) => (await t.db.query(
+  'SELECT id FROM guardian_households WHERE guardian_id = $1 AND household_id = $2', [guardianId, householdId])).rows[0].id;
+const endGuardianHousehold = (t, cookie, guardianId, membershipId, body = { endsOn: '2020-01-01', reason: REASON }) =>
+  t.call(`/api/guardians/${guardianId}/households/${membershipId}/end`, { method: 'POST', cookie, body });
+
+test('członkostwo opiekuna w gospodarstwie: granice ról (tylko zakres szeroki), walidacja i 404 bez zapisu', async () => {
+  const t = await setup();
+  try {
+    const mid = await guardianMembership(t, 'g-2', 'h-2');
+    assert.equal((await endGuardianHousehold(t, t.cookies.repA, 'g-2', mid)).status, 403);
+    assert.equal((await endGuardianHousehold(t, t.cookies.treasurer, 'g-2', mid)).status, 403);
+    // Zarząd klasowy nie zmienia gospodarstwa (może obejmować dzieci innych klas) — także dla opiekuna dziecka z 1A.
+    const g1aMid = await guardianMembership(t, 'g-1a', 'h-1');
+    const classBoard = await endGuardianHousehold(t, t.cookies.boardA, 'g-1a', g1aMid);
+    assert.equal(classBoard.status, 403);
+    assert.equal(classBoard.body.error, 'forbidden');
+    const denied = await t.db.query(`SELECT actor_id, entity_id FROM audit_events WHERE action = 'access.denied'`);
+    assert.deepEqual(denied.rows.map((r) => r.actor_id).sort(), ['u-board-a', 'u-rep-a', 'u-tr']);
+    assert.ok(denied.rows.every((r) => !r.entity_id.includes('?')));
+
+    assert.equal((await endGuardianHousehold(t, t.cookies.board, 'g-2', 'gh-nope')).status, 404);
+    // Identyfikator członkostwa innego opiekuna: 404, nie zakończenie cudzego wiersza.
+    assert.equal((await endGuardianHousehold(t, t.cookies.board, 'g-1b', mid)).status, 404);
+    assert.equal((await endGuardianHousehold(t, t.cookies.board, 'g-2', mid, { endsOn: '2020-01-01', reason: 'x' })).status, 400);
+    assert.equal((await endGuardianHousehold(t, t.cookies.board, 'g-2', mid, { endsOn: '2020-02-30', reason: REASON })).status, 400);
+    // Data zakończenia przed początkiem członkostwa: 400.
+    await t.db.query(`INSERT INTO guardian_households (id, guardian_id, household_id, starts_on, source) VALUES ('gh-late', 'g-2', 'h-1', '2026-09-15', 'api')`);
+    const early = await endGuardianHousehold(t, t.cookies.board, 'g-2', 'gh-late', { endsOn: '2026-09-01', reason: REASON });
+    assert.equal(early.status, 400);
+    assert.equal(early.body.error, 'invalid_ended_on');
+    const state = await t.db.query(`SELECT
+      (SELECT count(*)::int FROM guardian_households WHERE ends_on IS NOT NULL) AS ended,
+      (SELECT count(*)::int FROM audit_events WHERE action = 'guardian_household.ended') AS audit`);
+    assert.deepEqual(state.rows[0], { ended: 0, audit: 0 });
+  } finally { await t.db.close(); }
+});
+
+test('dwoje opiekunów w gospodarstwie: jeden odchodzi z powodem i audytem, drugi i relacje z dziećmi zostają; podwójne kliknięcie', async () => {
+  const t = await setup();
+  try {
+    const mid = await guardianMembership(t, 'g-1b', 'h-2');
+    const first = await endGuardianHousehold(t, t.cookies.board, 'g-1b', mid);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    // g-1b nie należy do żadnego innego gospodarstwa — odpowiedź to zgłasza.
+    assert.deepEqual(first.body, {
+      membership: { id: mid, guardianId: 'g-1b', householdId: 'h-2', endsOn: '2020-01-01' },
+      changed: true, withoutHousehold: true,
+    });
+    const again = await endGuardianHousehold(t, t.cookies.board, 'g-1b', mid, { endsOn: '2021-05-05', reason: 'Inny powód' });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.changed, false);
+    assert.equal(again.body.membership.endsOn, '2020-01-01');
+
+    const row = await t.db.query(
+      `SELECT to_char(ends_on, 'YYYY-MM-DD') AS ends_on, ended_reason, ended_by, ended_at IS NOT NULL AS has_end_time
+         FROM guardian_households WHERE id = $1`, [mid]);
+    assert.deepEqual(row.rows[0], { ends_on: '2020-01-01', ended_reason: REASON, ended_by: 'u-board', has_end_time: true });
+    const audit = await t.db.query(`SELECT actor_id, entity_type, entity_id, metadata_json FROM audit_events WHERE action = 'guardian_household.ended'`);
+    assert.equal(audit.rows.length, 1);
+    assert.deepEqual([audit.rows[0].actor_id, audit.rows[0].entity_type, audit.rows[0].entity_id], ['u-board', 'guardian_household', mid]);
+    assert.doesNotMatch(JSON.stringify(audit.rows), /Piotr|Testowy|@|Zmiana opieki/);
+
+    // Karta h-2: został drugi opiekun; relacje g-1b z dziećmi (s-1, s-2) bez zmian — to osobna trasa.
+    const card = await t.call('/api/households/h-2', { cookie: t.cookies.board });
+    assert.equal(card.status, 200);
+    assert.deepEqual(card.body.guardians.map((g) => g.id), ['g-2']);
+    const relations = await t.db.query(`SELECT student_id FROM student_guardians_current WHERE guardian_id = 'g-1b' ORDER BY student_id`);
+    assert.deepEqual(relations.rows.map((r) => r.student_id), ['s-1', 's-2']);
+    // Kolumna zgodności guardians.household_id i drugi opiekun bez zmian.
+    assert.equal((await t.db.query(`SELECT household_id FROM guardians WHERE id = 'g-1b'`)).rows[0].household_id, 'h-2');
+    assert.equal((await t.db.query(`SELECT count(*)::int AS n FROM guardian_households_current WHERE household_id = 'h-2'`)).rows[0].n, 1);
+
+    // Zakończone członkostwo jest niezmienne i nieusuwalne; korekta to nowy wiersz.
+    await assert.rejects(t.db.query(`UPDATE guardian_households SET ended_reason = 'poprawka' WHERE id = $1`, [mid]), /guardian_household_already_ended/);
+    await assert.rejects(t.db.query(`DELETE FROM guardian_households WHERE id = $1`, [mid]), /cannot_be_deleted/);
+    // Powód bez daty zakończenia odrzuca baza (0163).
+    const open = await guardianMembership(t, 'g-2', 'h-2');
+    await assert.rejects(t.db.query(`UPDATE guardian_households SET ended_reason = 'bez daty' WHERE id = $1`, [open]), /guardian_household_end_reason_with_end/);
+
+    // Opiekun z drugim bieżącym gospodarstwem: withoutHousehold = false.
+    await t.db.query(`INSERT INTO guardian_households (id, guardian_id, household_id, source) VALUES ('gh-g2-h1', 'g-2', 'h-1', 'api')`);
+    const second = await endGuardianHousehold(t, t.cookies.board, 'g-2', open);
+    assert.equal(second.body.withoutHousehold, false);
+  } finally { await t.db.close(); }
+});
+
+test('członkostwo opiekuna: data w zamkniętym roku daje 409, powód z e-mailem 422 — bez zapisu', async () => {
+  const t = await setup();
+  try {
+    const mid = await guardianMembership(t, 'g-2', 'h-2');
+    await closeYear(t.db, OLD_YEAR);
+    const closed = await endGuardianHousehold(t, t.cookies.board, 'g-2', mid, { endsOn: '2026-03-01', reason: REASON });
+    assert.equal(closed.status, 409);
+    assert.equal(closed.body.error, 'school_year_closed');
+    const email = await endGuardianHousehold(t, t.cookies.board, 'g-2', mid,
+      { endsOn: '2026-10-01', reason: 'Kontakt rodzic@example.invalid', confirmPersonalData: true });
+    assert.equal(email.status, 422);
+    assert.equal(email.body.error, 'personal_data_forbidden');
+    const phone = await endGuardianHousehold(t, t.cookies.board, 'g-2', mid, { endsOn: '2026-10-01', reason: 'Kontakt +32 470 12 34 56' });
+    assert.equal(phone.status, 422);
+    assert.equal(phone.body.error, 'possible_personal_data');
+    assert.equal((await t.db.query('SELECT ends_on FROM guardian_households WHERE id = $1', [mid])).rows[0].ends_on, null);
+    assert.equal((await t.db.query(`SELECT count(*)::int AS n FROM audit_events WHERE action = 'guardian_household.ended'`)).rows[0].n, 0);
+    // Data w otwartym roku i potwierdzony telefon: zapis z flagą w audycie, bez numeru.
+    const ok = await endGuardianHousehold(t, t.cookies.board, 'g-2', mid,
+      { endsOn: '2026-10-01', reason: 'Kontakt +32 470 12 34 56', confirmPersonalData: true });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    const audit = JSON.stringify((await t.db.query(`SELECT metadata_json FROM audit_events WHERE action = 'guardian_household.ended'`)).rows);
+    assert.ok(audit.includes('piiConfirmed') && !SYNTHETIC_PHONE_IN_TEXT.test(audit));
+  } finally { await t.db.close(); }
+});
