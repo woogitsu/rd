@@ -378,5 +378,9 @@
   {
     "name": "0163_guardian_household_end_reason.sql",
     "sha256": "338969d65bba34e46521db63050cb0cd318873b62ec6023f68ed48ffa28b737f"
+  },
+  {
+    "name": "0170_rd_app_role.sql",
+    "sha256": "333cbaaa6f38dbac666905991c020518ed914da030676cabb6a618bbb6545fe7"
   }
 ]

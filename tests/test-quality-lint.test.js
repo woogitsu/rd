@@ -34,6 +34,8 @@ const CLOSED_YEAR_SHORTCUT = 'zamknięcie roku na skróty (INSERT do school_year
 // acceptInvitation w tests/pg-auth.test.js — wymaga zmiany kodu aplikacji (follow-up #214).
 const CLOCK_FOLLOW_UP = 'upływ ważności przez zmianę niezmiennego terminu z wyłączonym strażnikiem — funkcja produkcyjna liczy czas przez now() w SQL i nie przyjmuje zegara; follow-up #214: wstrzykiwany `now`';
 export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
+  // SR-05 (#101): test dowodzi, że rola aplikacji NIE może wyłączyć triggerów (42501); właściciel w kontroli pozytywnej.
+  'pg-real-app-role.test.js': 'próby DISABLE TRIGGER rolą rd_app muszą kończyć się błędem uprawnień (42501); kontrola pozytywna na roli właściciela',
   // Wykrywanie naruszeń danych zapisanych z pominięciem API i triggerów.
   'pg-report-snapshots.test.js': 'naruszenie migawki raportu poza API (superużytkownik) musi być wykryte przy odczycie; wpis po zamknięciu roku zmienia treść bez triggera zamrożenia',
   'pg-email.test.js': 'approval_mismatch: treść kampanii zmieniona w bazie z pominięciem strażnika po zatwierdzeniu — test wykrycia naruszenia',

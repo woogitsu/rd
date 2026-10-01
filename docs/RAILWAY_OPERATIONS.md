@@ -64,7 +64,8 @@ logach, zgłoszeniach ani buildzie frontendu.
 | `MFA_ENCRYPTION_KEY` (albo `MFA_ENCRYPTION_KEYS`) | aplikacja | **wymagany** poza środowiskiem lokalnym: klucz 32 bajty (sekret), rotacja: sekcja niżej |
 | `TRUST_PROXY` | aplikacja | **wymagana** poza środowiskiem lokalnym: `1` lub `true` (za proxy Railway; inaczej wspólny licznik prób logowania na IP) |
 | `BREVO_WEBHOOK_SECRET` | aplikacja | **wymagany** poza środowiskiem lokalnym: co najmniej 32 znaki (sekret) |
-| `DATABASE_URL` | aplikacja | referencja do prywatnego adresu PostgreSQL (`*.railway.internal`), nie publiczny TCP proxy |
+| `DATABASE_URL` | aplikacja / worker e-mail | referencja do prywatnego adresu PostgreSQL (`*.railway.internal`), nie publiczny TCP proxy; docelowo rola `rd_app` (sekcja „Role bazy”) |
+| `DATABASE_MIGRATION_URL` | tylko operator (migrator, odtworzenie) | opcjonalny adres roli WŁAŚCICIELA schematu dla `db:migrate:postgres`, `restore:postgres-snapshot` i `verify-export --restore-database`; brak = fallback na `DATABASE_URL`. Nie ustawiać w usłudze aplikacji ani workera |
 | `BUCKET`, `ENDPOINT`, `REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39) |
 | `BREVO_API_KEY` | aplikacja / worker | dopiero w #40; na stagingu klucz bez możliwości wysyłki do rodziców |
 | `APP_WRITE_MODE` | aplikacja i worker e-mail | `normal` (domyślnie, także gdy brak) albo `read_only` (#143); inna wartość to błąd konfiguracji — serwer nie startuje, worker kończy z błędem. Procedura: sekcja „Tryb tylko do odczytu” |
@@ -109,6 +110,51 @@ po 24 h od wdrożenia (`readSessionToken` w `src/auth.js`). Skrypty
 obciążeniowe i smoke wysyłają cookie pod starą nazwą `rd_session=` — działa to,
 dopóki serwer czyta starą nazwę; przy jej usunięciu skrypty trzeba przełączyć na
 `__Host-rd_session=`.
+
+## Role bazy: `rd_owner` i `rd_app` (#101, SR-05)
+
+Stan: kod i migracja `0170_rd_app_role.sql` są w repozytorium i przetestowane na
+lokalnym PostgreSQL; **nic nie jest wdrożone ani skonfigurowane na Railway**.
+Podział ról wymaga decyzji o dostępie do hasła właściciela (zarząd, `docs/SECURITY.md`,
+„Dostęp”) i potwierdzenia na stagingu, że Railway PostgreSQL pozwala tworzyć role z SQL.
+
+Założenie docelowe:
+
+- **Właściciel schematu** (`rd_owner` albo domyślny użytkownik Railway) wykonuje
+  migracje i odtworzenie z paczki. Jego adres to `DATABASE_MIGRATION_URL`
+  (lub `DATABASE_URL`, gdy tamtej brak) i trafia wyłącznie do operatora; nie
+  do usługi aplikacji ani workera.
+- **`rd_app`** (nazwa stała w migracji) jest używana przez serwer HTTP i
+  `scripts/email-worker.js` przez `DATABASE_URL`. Nie jest właścicielem tabel:
+  bez TRUNCATE, DDL, `DISABLE TRIGGER`, `session_replication_role`; DELETE tylko
+  na czterech tabelach technicznych (lista w nagłówku migracji).
+
+Kroki (staging, potem produkcja po decyzji szkoły; hasła tylko w Railway,
+nigdy w repozytorium, logach ani zgłoszeniach):
+
+1. Zrób kopię i wykonaj migrator rolą właściciela: `DATABASE_MIGRATION_URL=<referencja>
+   npm run db:migrate:postgres` (`--allow-production` na produkcji). Migracja 0170
+   tworzy `rd_app` jako NOLOGIN; jeśli wypisze `NOTICE … pominięto`, użytkownik
+   migracji nie ma CREATEROLE — utwórz rolę ręcznie (`CREATE ROLE rd_app NOLOGIN`)
+   i ponów GRANT-y z pliku 0170.
+2. Nadaj logowanie poza repozytorium, w sesji `psql` właściciela:
+   `ALTER ROLE rd_app LOGIN PASSWORD '<wygenerowane losowe>';`, a hasło zapisz jako
+   sealed variable w adresie `DATABASE_URL` usługi aplikacji i workera.
+3. Przełącz `DATABASE_URL` usług aplikacji i workera na `rd_app`; sprawdź
+   `/health/ready` i jedną ścieżkę zapisu na stagingu. Wycofanie przełączenia:
+   przywrócenie poprzedniego `DATABASE_URL`.
+4. Rotacja hasła `rd_app`: `ALTER ROLE rd_app PASSWORD '<nowe>'`, zmiana zmiennej
+   i restart usług (krótka przerwa w połączeniach). Rotacja hasła właściciela
+   dotyczy tylko operatora i `DATABASE_MIGRATION_URL`.
+5. Nowa tabela, na której aplikacja ma kasować wiersze, wymaga jawnego `GRANT
+   DELETE` w jej migracji i wpisu w `tests/pg-real-app-role.test.js`.
+
+Test: `npm run test:pg-real -- tests/pg-real-app-role.test.js` (uprawnienia,
+meta-test każdej tabeli, wpłata i korekta przez `handlePgRequest`). Cały zestaw na
+roli: `RD_TEST_PG_APP_ROLE=rd_app npm run test:pg-real -- --all`.
+Nie ogranicza tego: `SET LOCAL rd.restore` (zwykły parametr sesji) i prawo
+`TEMPORARY` roli (domyślne dla PUBLIC); `/health/ready` nie ostrzega jeszcze o
+pracy aplikacji jako właściciel (zostaje w #101).
 
 ## Region i sieć
 
