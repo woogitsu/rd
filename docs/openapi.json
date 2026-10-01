@@ -367,6 +367,56 @@
       }
     },
     "/api/admin/anonymizations": {
+      "get": {
+        "operationId": "admin_anonymizations",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.anonymizations",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.anonymizations"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      },
       "post": {
         "operationId": "admin_anonymizationPreview",
         "responses": {
