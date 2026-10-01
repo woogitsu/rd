@@ -33,6 +33,7 @@ import { fillYearSelect, selectYearValue } from "../shared/school-year.js";
 import { mountSuppressions } from "./suppressions.js";
 import { mountResolutions } from "./resolutions.js";
 import { reportCsvUrl } from "./resolutions-core.js";
+import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
 mountShell();
 
@@ -78,6 +79,8 @@ const yearInput = byId("school-year-id");
 const message = byId("message");
 const listBody = byId("campaigns-body");
 const detailSection = byId("detail");
+// #181: zwijana „Historia” kampanii; tylko gdy serwer zwróci 200 (UX, nie kontrola dostępu).
+const campaignHistory = mountEntityHistory(detailSection, { api, idPrefix: "campaign-history" });
 
 function setMessage(text, isError = false) {
   message.textContent = text;
@@ -347,6 +350,7 @@ async function openDetail(id) {
     state.report = reportData;
     state.selectedId = id;
     resolutions.reset(id);
+    campaignHistory.load("email_campaign", id);
     state.detail = statusData;
     state.preview = previewData;
     state.recipients = [];
