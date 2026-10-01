@@ -407,6 +407,35 @@ Panele ukrywają akcje, których rola nie może wykonać. Robią to na podstawie
 
 Listy ról w panelach (`*/core.js`) porównuje ze stałymi serwera test `tests/role-policy-parity.test.js`. Odpowiedź 403 panele Wpłat i Księgi opisują jako brak uprawnień, a nie jako „Błąd serwera”.
 
+## Zakres roli audit
+
+Zestawienie faktów dla decyzji D-09 (#137), wyprowadzone z macierzy `tests/helpers/route-matrix.js`; **nie jest** rozstrzygnięciem ani zatwierdzonym zakresem. Pilnuje go `tests/audit-role-route-inventory.test.js` (liczby w tabeli muszą zgadzać się z macierzą, zmiana zakresu `audit` wymaga świadomej zmiany testu i tej tabeli). Kolumny: liczba tras modułu w macierzy, ile z nich dopuszcza `audit` (200 przy rolze, roku bez klasy i MFA), ile nie dopuszcza `audit` (odmowa 403, a dla dokumentów poza zakresem 404; w tym trasy publiczne z podpisem, np. webhook Brevo w `email`, których rola nie dotyczy).
+
+| Moduł | Tras | audit 200 | audit odmowa |
+| --- | --- | --- | --- |
+| `payments` | 11 | 0 | 11 |
+| `payment-references` | 3 | 0 | 3 |
+| `payment-instructions` | 2 | 0 | 2 |
+| `ledger` | 16 | 0 | 16 |
+| `ledger-budget` | 6 | 0 | 6 |
+| `ledger-cost-centers` | 4 | 0 | 4 |
+| `ledger-cash` | 5 | 0 | 5 |
+| `reconciliation` | 15 | 2 | 13 |
+| `financial-reports` | 6 | 0 | 6 |
+| `documents` | 25 | 0 | 25 |
+| `exports` | 2 | 0 | 2 |
+| `year-close` | 5 | 0 | 5 |
+| `audit-history` | 4 | 0 | 4 |
+| `import` | 3 | 0 | 3 |
+| `families` | 12 | 0 | 12 |
+| `email` | 30 | 0 | 30 |
+| `board` | 3 | 0 | 3 |
+| `audit-reviews` | 5 | 4 | 1 |
+
+Co `audit` dostaje dziś w modułach finansowych (200): `GET /api/reports/audit` (`format=json` i `xlsx`) oraz ścieżka kontroli — `GET /api/audit-reviews/:year`, `POST /api/audit-reviews/:year/notes`, `POST /api/audit-reviews/:year/notes/:id/closure`, `POST /api/audit-reviews/:year/conclusion`. Wszystkie wyłącznie dla przydziału bez klasy, w roku przydziału i z MFA. Jedyne trasy zapisu to niezmienne uwagi, zamknięcia i wniosek KR; żadnej trasy zapisu księgi, wpłat, uzgodnień, dokumentów, importu ani kampanii. Poza modułami finansowymi `audit` czyta zebrania, protokoły, uchwały i listę kontrolną zatwierdzenia (moduł `meetings`, bez MFA).
+
+Czego `audit` nie dostaje (403): `GET /api/ledger*` i eksporty księgi, wpłaty i eksport wpłat, uzgodnienia (lista i szczegóły), plan vs wykonanie, centra kosztów, dokumenty (także `kind='financial'` — lista, szczegół i pobranie), historia obiektu (`/api/audit/entity/*`), sprawozdanie roczne, przepływy, zamknięcie roku, dane rodzin. Skutek praktyczny do rozważenia w D-09: KR czyta zbiorczy raport i prowadzi uwagi, ale nie może otworzyć wpisu księgi ani faktury, do których uwaga się odnosi; punkt `audit_commission_report` zamknięcia roku potwierdza zarząd lub skarbnik, nie KR; w `DOCUMENT_POLICIES` nie ma rodzaju dokumentu, który KR mogłaby wgrać (protokół podpisany). Opcje do zatwierdzenia (bez wdrożenia): (a) stan obecny — raport i uwagi, bez księgi i dowodów; (b) wariant z PRODUCT.md — odczyt i eksport księgi oraz dokumentów finansowych roku, bez danych rodzin ponad sumy, za flagą konfiguracji; (c) dodatkowo rodzaj dokumentu „protokół KR” z zapisem dla `audit` i potwierdzaniem punktu zamknięcia roku przez KR. Wszystkie trzy wymagają decyzji zarządu.
+
 ## Znane luki (przypadki `todo` w macierzy)
 
 Obecnie brak — macierz nie ma przypadków `todo`. Naprawione wcześniej luki pozostają jako zwykłe asercje:
