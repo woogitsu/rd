@@ -86,6 +86,7 @@ odpowiedzialności osoby zapisującej.
 | `enrollments.ended_reason` | powód odejścia ucznia ze szkoły, może opisywać sytuację rodzinną (#86) |
 | `student_households.created_reason` | powód dodania członkostwa ucznia w gospodarstwie, może opisywać sytuację rodzinną (#86) |
 | `student_households.ended_reason` | powód zakończenia członkostwa ucznia w gospodarstwie, jw. (#86) |
+| `guardian_households.ended_reason` | powód zakończenia członkostwa opiekuna w gospodarstwie, jw. (#86, migracja 0163) |
 | `news_photos.author` | imię i nazwisko autora zdjęcia |
 | `news_photos.rights_note` | treść zgody/licencji, może zawierać imię i nazwisko |
 | `news_photos.license_text` | jw. |

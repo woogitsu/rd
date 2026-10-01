@@ -10,6 +10,7 @@
 //   POST  /api/guardians/{id}/students/{studentId}/end zakończenie relacji opiekun–dziecko (admin, zarząd; #86)
 //   POST  /api/students/{id}/households            dodanie członkostwa ucznia w gospodarstwie (admin, zarząd bez zakresu klasowego; #86)
 //   POST  /api/students/{id}/households/{mid}/end  zakończenie członkostwa ucznia w gospodarstwie (admin, zarząd; #86)
+//   POST  /api/guardians/{id}/households/{mid}/end zakończenie członkostwa opiekuna w gospodarstwie (admin, zarząd bez zakresu klasowego; #86)
 //
 // Listy klasy, kartka gospodarstwa i licznik uczniów pokazują wyłącznie
 // bieżące przypisania (enrollments_current, #86) — uczeń po odejściu znika
@@ -696,6 +697,72 @@ async function endStudentHousehold(request, env, studentId, membershipId, json) 
   });
 }
 
+// Członkostwo opiekuna w gospodarstwie (#86, #535) ma przedział [starts_on,
+// ends_on) jak członkostwo ucznia (0014). Wyłącznie zakres szeroki (admin,
+// zarząd bez ograniczenia klasowego) — gospodarstwo może obejmować dzieci
+// z innych klas, a zakończenie zmienia kartę gospodarstwa także dla nich
+// (wariant zachowawczy do D-08, jak dodanie członkostwa ucznia).
+// Zakres roku: gospodarstwo z uczniem z zakresu albo opiekun z relacją
+// z uczniem z zakresu — surowe tabele (także zakończone wiersze), żeby
+// ponowienie po zakończeniu zwracało changed: false, a nie 404.
+// Relacje opiekun–dziecko (student_guardians) zostają bez zmian — to osobna
+// trasa .../students/{studentId}/end; kampanie i kartki biorą adresatów
+// z relacji, więc odpowiedź nie wymienia kampanii do przeglądu.
+// Kolumna zgodności guardians.household_id nie jest zmieniana (trigger
+// synchronizacji z 0014 działa tylko w drugą stronę).
+const GUARDIAN_MEMBERSHIP_IN_SCOPE = `($1::boolean OR EXISTS (
+    SELECT 1 FROM student_households msh
+     WHERE msh.household_id = gh.household_id AND ${STUDENT_IN_SCOPE('msh.student_id')})
+  OR EXISTS (
+    SELECT 1 FROM student_guardians rel
+     WHERE rel.guardian_id = gh.guardian_id AND ${STUDENT_IN_SCOPE('rel.student_id')}))`;
+
+async function endGuardianHousehold(request, env, guardianId, membershipId, json) {
+  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  if (isClassScoped(scope)) {
+    // #184: zakres wyłącznie klasowy — ślad odmowy przed transakcją.
+    await logAccessDenied(env, context, { roles: EDIT_ROLES }, request);
+    throw new RequestError('forbidden', 403);
+  }
+  const endData = await readJson(request);
+  const input = parseEndRelationInput(endData);
+  const actorId = context.session.user.id;
+  const result = await env.db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `SELECT gh.household_id, to_char(gh.starts_on, 'YYYY-MM-DD') AS starts_on,
+              to_char(gh.ends_on, 'YYYY-MM-DD') AS ends_on
+         FROM guardian_households gh
+        WHERE gh.id = $5 AND gh.guardian_id = $6 AND ${GUARDIAN_MEMBERSHIP_IN_SCOPE}
+        FOR UPDATE OF gh`,
+      [...scopeParams(scope), membershipId, guardianId],
+    );
+    const current = rows[0];
+    if (!current) throw notFound();
+    if (current.ends_on) return { changed: false, endsOn: current.ends_on, householdId: current.household_id };
+    if (current.starts_on && input.endsOn < current.starts_on) throw new RequestError('invalid_ended_on');
+    await assertYearsOpenOn(tx, input.endsOn);
+    // #152: powód zakończenia członkostwa trafia do niezmiennej historii — bramka na dane osobowe.
+    const gate = gateFreeText([['guardian_households.ended_reason', input.reason]], { confirm: endData.confirmPersonalData === true, fail: piiFail });
+    await tx.query(
+      `UPDATE guardian_households SET ends_on = $2, ended_at = now(), ended_by = $3, ended_reason = $4 WHERE id = $1`,
+      [membershipId, input.endsOn, actorId, input.reason],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'guardian_household.ended', entityType: 'guardian_household', entityId: membershipId,
+      metadata: { guardianId, householdId: current.household_id, endsOn: input.endsOn, ...piiAuditMetadata(gate) },
+    });
+    return { changed: true, endsOn: input.endsOn, householdId: current.household_id };
+  });
+  // Opiekun bez żadnego bieżącego gospodarstwa znika z kart gospodarstw —
+  // odpowiedź to zgłasza (jak withoutPrimaryHousehold u ucznia).
+  const { rows } = await env.db.query('SELECT 1 FROM guardian_households_current WHERE guardian_id = $1 LIMIT 1', [guardianId]);
+  return json({
+    membership: { id: membershipId, guardianId, householdId: result.householdId, endsOn: result.endsOn },
+    changed: result.changed,
+    withoutHousehold: !rows[0],
+  });
+}
+
 function parseAddHouseholdInput(data) {
   if (typeof data.householdId !== 'string' || !ID_PATTERN.test(data.householdId)) throw new RequestError('invalid_request');
   if (data.isPrimary !== undefined && typeof data.isPrimary !== 'boolean') throw new RequestError('invalid_request');
@@ -765,6 +832,7 @@ export async function handle(request, env, url, json) {
   const relationEndMatch = path.match(/^\/api\/guardians\/([^/]+)\/students\/([^/]+)\/end$/);
   const householdEndMatch = path.match(/^\/api\/students\/([^/]+)\/households\/([^/]+)\/end$/);
   const householdAddMatch = path.match(/^\/api\/students\/([^/]+)\/households$/);
+  const guardianHouseholdEndMatch = path.match(/^\/api\/guardians\/([^/]+)\/households\/([^/]+)\/end$/);
   const enrollmentEndMatch = path.match(/^\/api\/students\/([^/]+)\/enrollments\/([^/]+)\/end$/);
   const enrollmentMatch = path.match(/^\/api\/students\/([^/]+)\/enrollments$/);
   const method = request.method;
@@ -781,6 +849,9 @@ export async function handle(request, env, url, json) {
   }
   else if (method === 'POST' && householdEndMatch) {
     action = () => endStudentHousehold(request, env, decodeId(householdEndMatch[1]), decodeId(householdEndMatch[2]), json);
+  }
+  else if (method === 'POST' && guardianHouseholdEndMatch) {
+    action = () => endGuardianHousehold(request, env, decodeId(guardianHouseholdEndMatch[1]), decodeId(guardianHouseholdEndMatch[2]), json);
   }
   else if (method === 'POST' && householdAddMatch) action = () => addStudentHousehold(request, env, decodeId(householdAddMatch[1]), json);
   else if (method === 'POST' && enrollmentEndMatch) {

@@ -374,5 +374,9 @@
   {
     "name": "0162_email_campaign_payment_instructions.sql",
     "sha256": "33ad0292d8f2083173ba4f3d8dedf82bca47531e008b73b70ac7f24486cfa249"
+  },
+  {
+    "name": "0163_guardian_household_end_reason.sql",
+    "sha256": "338969d65bba34e46521db63050cb0cd318873b62ec6023f68ed48ffa28b737f"
   }
 ]

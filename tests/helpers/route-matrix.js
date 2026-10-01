@@ -1716,6 +1716,17 @@ export const ROUTE_MATRIX = Object.freeze([
     }),
   },
   {
+    // Członkostwo opiekuna (#86, #535): wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403.
+    id: 'families.guardianHouseholdEnd', module: 'families', method: 'POST', path: '/api/guardians/:guardianId/households/:membershipId/end',
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 200,
+    deny: (actor, targetKey, mfa) => (actor.key === 'boardA' ? 403 : familyEditDeny(actor, targetKey, mfa)),
+    fixture: 'fresh', object: { kind: 'household' },
+    build: ({ obj }) => ({
+      path: `/api/guardians/${obj.guardianId}/households/${obj.guardianMembershipId}/end`,
+      body: { endsOn: '2020-01-01', reason: 'Zakończenie członkostwa opiekuna (syntetyczne)' },
+    }),
+  },
+  {
     // Dodanie członkostwa: wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403 (#86, wariant zachowawczy).
     id: 'families.studentHouseholdAdd', module: 'families', method: 'POST', path: '/api/students/:studentId/households',
     targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 201,
