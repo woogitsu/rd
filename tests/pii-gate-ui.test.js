@@ -6,6 +6,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createApiClient } from '../shared/api.js';
 import { describeCategories } from '../shared/pii-confirm.js';
+import { buildActionRequest } from '../events/core.js';
+import { postUrl } from '../news/core.js';
 
 const read = (file) => readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), 'utf8');
 
@@ -21,6 +23,8 @@ const FIELDS = {
   'events/index.html': ['title', 'reason'],
   // #146 (0159): okno „Odrzuć” wniosku o nadanie roli — opcjonalny powód.
   'admin/index.html': ['reason'],
+  // Powód wycofania aktualności (news_posts.withdrawal_reason); odwołanie wydarzenia jest w events/.
+  'news/index.html': ['reason'],
 };
 
 test('każde pole wolnego tekstu z niezmiennej tabeli ma w panelu krótką podpowiedź o danych osobowych', () => {
@@ -115,4 +119,62 @@ test('drugi 422 po potwierdzeniu nie wpada w pętlę', async () => {
   });
   await assert.rejects(client.request('/api/x', { method: 'POST', body: { reason: 'abc' } }), { code: 'personal_data_forbidden' });
   assert.equal(calls.length, 2);
+});
+
+// Odwołanie wydarzenia i wycofanie aktualności: panele używają wspólnego klienta,
+// więc 422 possible_personal_data kończy się potwierdzeniem i ponowieniem z confirmPersonalData.
+test('odwołanie wydarzenia: 422 possible_personal_data → potwierdzenie → ponowienie z tym samym powodem', async () => {
+  const request = buildActionRequest('evt-1', 'cancel', 3, 'Odwołane, kontakt +32 470 12 34 56');
+  const { fetchImpl, calls } = fakeFetch([
+    { status: 422, body: { error: 'possible_personal_data', categories: ['phone'] } },
+    { status: 200, body: { ok: true } },
+  ]);
+  const asked = [];
+  const client = createApiClient({
+    fetchImpl, getLocation: () => ({ pathname: '/events/' }), navigate: () => {},
+    confirmPersonalData: async (info) => { asked.push(info); return true; },
+  });
+  await client.request(request.url, { method: request.method, headers: request.headers, body: request.body });
+  assert.deepEqual(asked, [{ categories: ['phone'] }]);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, '/api/events/evt-1/cancel');
+  const first = JSON.parse(calls[0].init.body);
+  const retry = JSON.parse(calls[1].init.body);
+  assert.equal(first.confirmPersonalData, undefined);
+  assert.deepEqual(retry, { ...first, confirmPersonalData: true });
+  assert.equal(retry.revision, 3);
+});
+
+test('wycofanie aktualności: 422 possible_personal_data → potwierdzenie → ponowienie; odmowa nie ponawia', async () => {
+  const body = { revision: 2, reason: 'Wycofane, tel. +32 470 12 34 56' };
+  const accepted = fakeFetch([
+    { status: 422, body: { error: 'possible_personal_data', categories: ['phone', 'known_name'] } },
+    { status: 200, body: { ok: true } },
+  ]);
+  const client = createApiClient({
+    fetchImpl: accepted.fetchImpl, getLocation: () => ({ pathname: '/news/' }), navigate: () => {},
+    confirmPersonalData: async () => true,
+  });
+  await client.request(postUrl('post-1', 'withdraw'), { method: 'POST', body });
+  assert.equal(accepted.calls.length, 2);
+  assert.equal(accepted.calls[1].url, '/api/news/post-1/withdraw');
+  assert.deepEqual(JSON.parse(accepted.calls[1].init.body), { ...body, confirmPersonalData: true });
+
+  const declined = fakeFetch([{ status: 422, body: { error: 'possible_personal_data', categories: ['phone'] } }]);
+  const clientDecline = createApiClient({
+    fetchImpl: declined.fetchImpl, getLocation: () => ({ pathname: '/news/' }), navigate: () => {},
+    confirmPersonalData: async () => false,
+  });
+  await assert.rejects(clientDecline.request(postUrl('post-1', 'withdraw'), { method: 'POST', body }), { code: 'possible_personal_data' });
+  assert.equal(declined.calls.length, 1);
+});
+
+test('panele wydarzeń i aktualności wywołują akcje przez wspólny klient bez własnego obejścia bramki', () => {
+  for (const file of ['events/main.js', 'news/main.js']) {
+    const source = read(file);
+    assert.match(source, /import \{ api as apiRequest \} from "\.\.\/shared\/api\.js"/, `${file}: wspólny klient`);
+    assert.doesNotMatch(source, /createApiClient|confirmPersonalData\s*:/, `${file}: bramka tylko we wspólnym kliencie`);
+  }
+  assert.match(read('events/main.js'), /runAction\("cancel", checked\.reason\)/);
+  assert.match(read('news/main.js'), /postUrl\(post\.id, "withdraw"\), \{ method: "POST", body: \{ revision: post\.revision, reason \}/);
 });

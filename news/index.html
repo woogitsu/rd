@@ -121,7 +121,7 @@
     <dialog id="reason-dialog" aria-labelledby="reason-dialog-title"><form method="dialog">
       <div class="dialog-heading"><div><p class="eyebrow">Ostateczne</p><h2 id="reason-dialog-title">Wycofaj wpis</h2></div><button class="icon-button" value="cancel" formnovalidate aria-label="Zamknij">×</button></div>
       <p class="context">Powód jest widoczny tylko wewnętrznie. Wycofanie usuwa wpis ze strony publicznej i nie da się go cofnąć.</p>
-      <label>Powód (3–500 znaków) <textarea name="reason" rows="3" required minlength="3" maxlength="500" autofocus></textarea></label>
+      <label>Powód (3–500 znaków) <textarea name="reason" rows="3" required minlength="3" maxlength="500" autofocus></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
       <div class="form-error" id="reason-error" role="alert"></div>
       <div class="dialog-actions"><button value="cancel" formnovalidate>Anuluj</button><button class="primary" value="submit" aria-describedby="reason-error">Dalej</button></div>
     </form></dialog>
