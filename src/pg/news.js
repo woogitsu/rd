@@ -31,7 +31,7 @@ import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { createJsonReader, isUniqueError } from './input.js';
-import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf } from './list-cursor.js';
+import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from './list-cursor.js';
 
 export const NEWS_POLICY = Object.freeze({
   draftSchoolWide: Object.freeze(['admin', 'board']),
@@ -1091,13 +1091,21 @@ export async function listPhotos(db, actor, input = {}) {
   if (!canSeePhotos(actor)) throw new NewsError('forbidden', 403);
   const status = input.status ?? null;
   if (status !== null && !['pending', 'verified', 'revoked'].includes(status)) throw new NewsError('invalid_status');
+  // #159: kursor keyset (uploaded_at DESC, id), związany ze statusem; domyślnie 200 jak dawny stały limit.
+  const fail = (code) => { throw new NewsError(code); };
+  const limit = parseListLimit(input.limit ?? null, { defaultLimit: 200, maxLimit: 200 }, fail);
+  const scope = JSON.stringify(['news-photos', status]);
+  const cursor = decodeListCursor(input.cursor ?? null, { kind: 'timestamp', scope }, fail);
+  const values = [status];
+  const after = cursor ? ` AND ${afterTimestampDescSql('uploaded_at', 'id', cursor, values)}` : '';
   const { rows } = await db.query(
-    `SELECT ${PHOTO_COLUMNS} FROM news_photos WHERE ($1::text IS NULL OR rights_status = $1)
-      ORDER BY uploaded_at DESC, id LIMIT 201`,
-    [status],
+    `SELECT ${PHOTO_COLUMNS}, ${cursorTimestampSql('uploaded_at')} AS cursor_ts FROM news_photos
+      WHERE ($1::text IS NULL OR rights_status = $1)${after}
+      ORDER BY uploaded_at DESC, id LIMIT ${limit + 1}`,
+    values,
   );
-  // #159: 201 wierszy = jawny sygnał obcięcia rejestru (pokazujemy 200 najnowszych).
-  return { photos: rows.slice(0, 200).map((r) => internalPhoto(r)), truncated: rows.length > 200 };
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return { photos: page.items.map((r) => internalPhoto(r)), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit };
 }
 
 // ---------- HTTP ----------
@@ -1258,7 +1266,9 @@ export async function handle(request, env, url, json) {
           : action && request.method === 'POST' ? 'action' : null;
     if (!route) return json({ error: 'not_found' }, 404);
     const actor = await loadActor(request, env);
-    if (route === 'list') return json(await listPhotos(env.db, actor, { status: url.searchParams.get('status') }), 200, noStore);
+    if (route === 'list') return json(await listPhotos(env.db, actor, {
+      status: url.searchParams.get('status'), limit: url.searchParams.get('limit'), cursor: url.searchParams.get('cursor'),
+    }), 200, noStore);
     if (route === 'get') return json(await getPhoto(env.db, actor, { photoId: decodeId(item[1], 'invalid_photo_id') }), 200, noStore);
     if (route === 'action' && action[2] === 'file') {
       // Bajty surowe, nie JSON — czytane osobno, PRZED jakąkolwiek próbą

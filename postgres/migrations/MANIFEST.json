@@ -410,5 +410,9 @@
   {
     "name": "0180_net_views_lateral.sql",
     "sha256": "6d4fec8334fda9f37d685de82160990e8f61ff781e02bc75a6ebacf305c55269"
+  },
+  {
+    "name": "0181_data_subject_requests_idempotency.sql",
+    "sha256": "fa21675243ce50fa8c23bd23dcdd535fb71693a6dcc26dea8096a8483a897e12"
   }
 ]

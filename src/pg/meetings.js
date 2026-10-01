@@ -23,7 +23,7 @@ import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
 import { ContentError, contentHash as emailContentHash, parseCampaignContent } from '../email/content.js';
 import { createJsonReader } from './input.js';
-import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from './list-cursor.js';
+import { afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from './list-cursor.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
@@ -2078,12 +2078,22 @@ export async function getMeetingNoticeCalendar(db, actor, input = {}, env) {
 // Publiczne: wyłącznie zatwierdzone zawiadomienia zebrań ogólnych (widok public_meeting_notices).
 export async function listPublicMeetingNotices(db, input = {}) {
   const schoolYearId = requireId(input.schoolYearId);
+  // #159: kursor keyset (scheduled_at, id) rosnąco, związany z rokiem szkolnym; domyślnie 200.
+  const fail = (code) => { throw new MeetingError(code); };
+  const limit = parseListLimit(input.limit ?? null, { defaultLimit: 200, maxLimit: 200 }, fail);
+  const scope = JSON.stringify(['public-notices', schoolYearId]);
+  const cursor = decodeListCursor(input.cursor ?? null, { kind: 'timestamp', scope }, fail);
+  const values = [schoolYearId];
+  const after = cursor ? `AND ${afterTupleAscSql(['scheduled_at', 'id'], [cursor.key, cursor.id], values, ['::timestamptz', ''])}` : '';
   const { rows } = await db.query(
-    'SELECT * FROM public_meeting_notices WHERE school_year_id = $1 ORDER BY scheduled_at, id LIMIT 201', [schoolYearId]);
-  // #159: 201 wierszy = jawny sygnał obcięcia (pokazujemy 200).
+    `SELECT *, ${cursorTimestampSql('scheduled_at')} AS cursor_ts FROM public_meeting_notices
+      WHERE school_year_id = $1 ${after} ORDER BY scheduled_at, id LIMIT ${limit + 1}`, values);
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
   return {
-    truncated: rows.length > 200,
-    notices: rows.slice(0, 200).map(row => ({
+    truncated: page.truncated,
+    nextCursor: page.nextCursor,
+    limit: page.limit,
+    notices: page.items.map(row => ({
       id: row.id,
       kind: row.kind,
       cancelled: row.kind === 'cancellation',
@@ -2239,7 +2249,9 @@ export async function handle(request, env, url, json) {
       return json(await listPublicMinutes(db, { schoolYearId: query.get('schoolYearId') }));
     }
     if (target.name === 'publicNotices') {
-      return json(await listPublicMeetingNotices(db, { schoolYearId: query.get('schoolYearId') }));
+      return json(await listPublicMeetingNotices(db, {
+        schoolYearId: query.get('schoolYearId'), limit: query.get('limit'), cursor: query.get('cursor'),
+      }));
     }
 
     const actor = await loadActor(request, env);
