@@ -180,11 +180,11 @@ describe('anonimizacja gospodarstwa (#91)', () => {
     let requestH1;
     let exportBefore;
 
-    test('podgląd (dryRun) niczego nie zmienia, nie zapisuje audytu i nie zwraca danych osobowych', async () => {
+    test('podgląd (dryRun) niczego nie zmienia, zostawia tylko ślad podglądu i nie zwraca danych osobowych', async () => {
       requestH1 = await erasureRequest({ householdId: 'h-1' });
       beforeAll = { fin: await financialSnapshot(db), dump: await personalDump(db) };
       exportBefore = (await db.transaction((tx) => buildYearlyExport(tx, Y1))).bundle;
-      const auditBefore = await count('SELECT count(*)::int AS n FROM audit_events');
+      const auditBefore = await count("SELECT count(*)::int AS n FROM audit_events WHERE action <> 'household.anonymization_previewed'");
 
       const preview = await anonymize({ householdId: 'h-1', reasonCode: 'data_subject_request', dataRequestId: requestH1 });
       assert.equal(preview.status, 200, preview.text);
@@ -199,7 +199,11 @@ describe('anonimizacja gospodarstwa (#91)', () => {
         assert.ok(!preview.text.includes(marker), `podgląd zawiera dane osobowe: ${marker}`);
       }
       assert.deepEqual(await personalDump(db), beforeAll.dump);
-      assert.equal(await count('SELECT count(*)::int AS n FROM audit_events'), auditBefore);
+      assert.equal(await count("SELECT count(*)::int AS n FROM audit_events WHERE action <> 'household.anonymization_previewed'"), auditBefore);
+      const { rows: previews } = await db.query("SELECT actor_id, entity_type, entity_id, metadata_json FROM audit_events WHERE action = 'household.anonymization_previewed'");
+      assert.equal(previews.length, 1, 'podgląd zostawia ślad: aktor, gospodarstwo, liczniki');
+      assert.deepEqual([previews[0].actor_id, previews[0].entity_type, previews[0].entity_id], ['u-admin', 'household', 'h-1']);
+      assertNoPii(previews[0].metadata_json);
       assert.equal(await runCount(), 0);
     });
 

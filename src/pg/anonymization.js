@@ -324,7 +324,14 @@ export async function anonymizeHousehold(db, {
     const planSha256 = planDigest(plan);
     const result = { householdId, reasonCode, planSha256, counts, retained: plan.retained };
 
-    if (dryRun) return { status: 'dry_run', runId: null, ...result };
+    if (dryRun) {
+      // Podgląd niczego nie zmienia, ale ujawnia liczności — zostaje po nim ślad (aktor, czas, gospodarstwo).
+      await insertAuditEvent(tx, {
+        actorId, action: 'household.anonymization_previewed', entityType: 'household', entityId: householdId,
+        metadata: { reasonCode, planSha256, counts },
+      });
+      return { status: 'dry_run', runId: null, ...result };
+    }
     if (total === 0) return { status: 'replayed', runId: null, ...result };
     if (expectedPlanSha256 !== planSha256) throw new AnonymizationError('anonymization_plan_changed');
 

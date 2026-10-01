@@ -86,6 +86,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   guardian: "Opiekun",
   guardian_update_link: "Link aktualizacji danych opiekuna",
   guardian_update_request: "Prośba o aktualizację danych opiekuna",
+  household: "Gospodarstwo",
   import_batch: "Import uczniów",
   invitation: "Zaproszenie",
   invitation_batch: "Partia zaproszeń",
