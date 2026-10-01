@@ -246,7 +246,7 @@ test('too large upload is refused with 413 (streamed and declared length)', asyn
 // magazynu ani bazy — sprawdzone bezpośrednio (semafor to stan procesu,
 // PGlite i tak serializuje transakcje, więc nie da się tego odtworzyć przez
 // prawdziwą równoległość żądań tutaj, patrz tests/pg-reconciliation-race.test.js).
-test('a fifth concurrent upload gets 503 upload_busy with Retry-After, before the body is touched', async () => withEnv(async (db, env, storage) => {
+test('a fifth concurrent upload gets 503 upload_busy with Retry-After, before the body is touched (licznik w procesie Node, nie transakcje bazy)', async () => withEnv(async (db, env, storage) => {
   const cookie = await treasurer(db);
   resetUploadSlotsForTests();
   const releases = Array.from({ length: DEFAULT_MAX_CONCURRENT_UPLOADS }, () => tryAcquireUploadSlot());
@@ -305,7 +305,7 @@ test('#185: bez sesji, przedstawiciel z kind=financial i niedozwolony typ — od
   assert.equal((await db.query('SELECT count(*)::int AS n FROM document_uploads')).rows[0].n, 0);
 }, { documentMaxBytes: 25 * 1024 * 1024 }));
 
-test('#185: ten sam użytkownik ma najwyżej 2 uploady naraz; inny użytkownik nadal wysyła', async () => withEnv(async (db, env) => {
+test('#185: ten sam użytkownik ma najwyżej 2 uploady naraz; inny użytkownik nadal wysyła (licznik w procesie Node, nie transakcje bazy)', async () => withEnv(async (db, env) => {
   resetUploadSlotsForTests();
   const cookie = await treasurer(db);
   const own = [tryAcquireUploadSlot(undefined, 'u-treasurer'), tryAcquireUploadSlot(undefined, 'u-treasurer')];
@@ -871,7 +871,7 @@ async function statusEventCount(db, id) {
   return (await db.query('SELECT count(*)::int AS n FROM document_status_events WHERE document_id = $1', [id])).rows[0].n;
 }
 
-test('#82 wyścig: dwa równoległe zastąpienia tego samego dokumentu RÓŻNYMI wersjami — jedno 201, drugie 409 (nie powtórka)', async () => withEnv(async (db, env) => {
+test('#82 wyścig: dwa równoległe zastąpienia tego samego dokumentu RÓŻNYMI wersjami — jedno 201, drugie 409 (nie powtórka) (PGlite: po kolei, nie wyścig)', async () => withEnv(async (db, env) => {
   const cookie = await treasurer(db);
   const original = await upload(env, { cookie });
   const first = await upload(env, { cookie });
