@@ -370,5 +370,9 @@
   {
     "name": "0161_document_validation_version.sql",
     "sha256": "6cfad1e1dfeffb54bd7fed7dbef5da4791dc75df643bacf3fe3701bc9ca1c536"
+  },
+  {
+    "name": "0162_email_campaign_payment_instructions.sql",
+    "sha256": "33ad0292d8f2083173ba4f3d8dedf82bca47531e008b73b70ac7f24486cfa249"
   }
 ]

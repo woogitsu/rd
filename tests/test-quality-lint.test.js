@@ -42,6 +42,7 @@ export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
   'pg-year-close-class-grants.test.js': 'odtworzenie procedury z nagłówka migracji 0143 (ręczna korekta roku przydziału z wyłączonym role_grants_guard)',
   'pg-schema-consistency-0143.test.js': 'wiersz role_grants sprzed 0081 (klasa spoza roku) — migracja 0143 musi go wykryć i zatrzymać się bez zmian',
   'pg-export.test.js': 'przydział sprzed 0081/a0_year_freeze (np. z importu D1) — autoryzacja i tak nie może go uznać',
+  'pg-email-payment-instructions.test.js': 'kampania z {rachunek} zatwierdzona/zakolejkowana przed migracją 0162 (approved_payment_instructions_id = NULL) — kolejka, wznowienie i worker muszą ją zatrzymać',
   'pg-year-close-year-end-check.test.js': 'wpisy księgi datowane po końcu roku istnieją tylko sprzed walidacji 0027 — kontrola końca roku musi je wykazać',
   'pg-reconciliation.test.js': 'korekty wpłat/księgi w stanie, który dziś blokuje active_bank_match (dane sprzed blokady) — widok uzgodnienia musi go pokazać',
   'pg-primary-household.test.js': 'stan po dniu D zaplanowanej zmiany gospodarstwa bez przepisania kolumny zgodności — zegara SQL (current_date) nie da się wstrzyknąć',

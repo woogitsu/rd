@@ -526,6 +526,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `approved_at` | none | — | nie |
 | `approved_by` | pseudonymous | board_member | nie |
 | `approved_content_hash` | none | — | nie |
+| `approved_payment_instructions_id` | none | — | nie |
 | `approved_recipients_hash` | none | — | nie |
 | `audience` | none | — | nie |
 | `body_text` | direct | guardian | nie |

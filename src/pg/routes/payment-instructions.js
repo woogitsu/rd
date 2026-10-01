@@ -95,21 +95,34 @@ export async function loadCurrentPaymentInstructions(executor, schoolYearId) {
   return rows[0] ? instructionsFromRow(rows[0]) : null;
 }
 
-// Wersja danych do wpłaty, z którą zarząd zatwierdził kampanię e-mail (#92):
-// `paymentInstructionsId` w metadanych OSTATNIEGO zdarzenia
-// email.campaign.approved tej kampanii (dziennik jest tylko do dopisywania,
-// zapis w tej samej transakcji co zatwierdzenie). Bez osobnej kolumny — bez
-// migracji; null = kampania zatwierdzona bez wersji (albo jeszcze niezatwierdzona).
-export async function campaignApprovedPaymentInstructionsId(executor, campaignId) {
+// Konkretna wersja danych do wpłaty po identyfikatorze (wiersze są niezmienne
+// i nieusuwalne — 0086) albo null. Bez kontroli uprawnień, jak wyżej.
+export async function loadPaymentInstructionsById(executor, id) {
+  if (!id) return null;
   const { rows } = await executor.query(
-    `SELECT metadata_json->>'paymentInstructionsId' AS id
-       FROM audit_events
-      WHERE entity_type = 'email_campaign' AND entity_id = $1 AND action = 'email.campaign.approved'
-      ORDER BY occurred_at DESC, id DESC
-      LIMIT 1`,
-    [campaignId],
+    `SELECT id, school_year_id, iban, bic, payee_name, approved_at
+       FROM payment_instructions WHERE id = $1`,
+    [id],
   );
-  return rows[0]?.id ?? null;
+  return rows[0] ? instructionsFromRow(rows[0]) : null;
+}
+
+// Wersja danych do wpłaty dla kampanii e-mail z {rachunek}/{odbiorca} (#92):
+//   * szkic (i szkic anulowany bez zatwierdzenia): bieżąca zatwierdzona wersja
+//     roku — to ją zatwierdzający widzi w podglądzie i zatwierdza;
+//   * po zatwierdzeniu: wersja zapisana w kampanii
+//     (email_campaigns.approved_payment_instructions_id, 0162), nie „bieżąca”.
+// `changed` = kampania zatwierdzona, a rok ma inną bieżącą wersję (korekta
+// rachunku po zatwierdzeniu) albo kampania nie ma wiązania (zatwierdzona przed
+// 0162). Wariant zachowawczy: przy `changed` nic nie wychodzi bez ponownego
+// zatwierdzenia. Wywołujący sprawdza wcześniej, czy treść używa placeholderów.
+export async function campaignPaymentInstructions(executor, campaign) {
+  const current = await loadCurrentPaymentInstructions(executor, campaign.school_year_id);
+  if (campaign.status === 'draft' || (campaign.status === 'cancelled' && !campaign.approved_at)) {
+    return { instructions: current, current, changed: false };
+  }
+  const instructions = await loadPaymentInstructionsById(executor, campaign.approved_payment_instructions_id);
+  return { instructions, current, changed: !instructions || !current || current.id !== instructions.id };
 }
 
 async function requireContext(request, env, roles, schoolYearId) {

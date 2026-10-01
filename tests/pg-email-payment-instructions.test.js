@@ -311,3 +311,234 @@ test('treść: {rachunek}/{odbiorca} tylko w treści; render wymaga poprawnego I
   }
   assert.equal(typeof WARNING_LABELS.payment_instructions_missing, 'string');
 });
+
+// --- #92 (0162): wersja danych do wpłaty zapisana w kampanii -----------------
+
+test('0162: zatwierdzenie zapisuje wersję w kampanii; po korekcie podgląd pokazuje ZATWIERDZONY rachunek z ostrzeżeniem, test 409, worker nic nie wysyła (także przy ponowieniu)', async () => {
+  const t = await setup();
+  const networkBefore = networkGuardCalls();
+  try {
+    await family(t.db, 'h-a');
+    const oldVersion = await approveInstructions(t, IBAN_OLD);
+    const id = await draftAndSnapshot(t);
+    const draftView = await t.call(t.treasurer, `/api/email/campaigns/${id}/preview`);
+    assert.equal(draftView.body.campaign.approvedPaymentInstructionsId, null);
+    const { approved } = await previewAndApprove(t, id);
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal(approved.body.campaign.approvedPaymentInstructionsId, oldVersion.id);
+    const { rows } = await t.db.query('SELECT approved_payment_instructions_id FROM email_campaigns WHERE id = $1', [id]);
+    assert.equal(rows[0].approved_payment_instructions_id, oldVersion.id);
+
+    // Korekta rachunku po zatwierdzeniu kampanii.
+    const newVersion = await approveInstructions(t, IBAN_NEW);
+    assert.notEqual(newVersion.id, oldVersion.id);
+    const preview = await t.call(t.board, `/api/email/campaigns/${id}/preview`);
+    assert.equal(preview.status, 200);
+    assert.deepEqual(preview.body.paymentInstructions, { id: oldVersion.id, approvedAt: oldVersion.approvedAt });
+    assert.ok(preview.body.sample.text.includes('BE68 5390 0754 7034'), 'podgląd zatwierdzonej kampanii = zatwierdzona wersja');
+    assert.ok(!preview.body.sample.text.includes('BE71 0961 2345 6769'), 'nie „bieżąca” wersja');
+    assert.ok(preview.body.warnings.includes('payment_instructions_changed'));
+    assert.ok(!preview.body.warnings.includes('payment_instructions_missing'));
+    assert.equal(typeof WARNING_LABELS.payment_instructions_changed, 'string');
+
+    const testSend = await t.call(t.treasurer, `/api/email/campaigns/${id}/test-send`, {
+      method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: { recipientEmail: PREVIEW_ADDRESS },
+    });
+    assert.equal(testSend.status, 409);
+    assert.equal(testSend.body.error, 'payment_instructions_changed');
+    const { rows: previews } = await t.db.query('SELECT count(*)::int AS n FROM email_preview_sends');
+    assert.equal(previews[0].n, 0);
+
+    // Kolejka odmawia, a worker (także ponowiony) nic nie wysyła.
+    const refused = await t.call(t.treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error, 'payment_instructions_changed');
+    for (const offset of [30, 90]) {
+      const transport = fakeTransport();
+      await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + offset * 60_000) });
+      assert.equal(transport.calls.length, 0);
+    }
+    assert.equal(networkGuardCalls(), networkBefore);
+  } finally {
+    await t.db.close();
+  }
+});
+
+test('0162: wiadomość testowa zatwierdzonej kampanii używa zatwierdzonej wersji; podwójne kliknięcie zatwierdzenia = jedno zatwierdzenie', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h-a');
+    const version = await approveInstructions(t, IBAN_OLD);
+    const id = await draftAndSnapshot(t);
+    const preview = await t.call(t.board, `/api/email/campaigns/${id}/preview`);
+    const body = {
+      contentHash: preview.body.contentHash, recipientsHash: preview.body.recipientsHash,
+      paymentInstructionsId: preview.body.paymentInstructions.id,
+    };
+    const [first, second] = await Promise.all([
+      t.call(t.board, `/api/email/campaigns/${id}/approve`, { method: 'POST', body }),
+      t.call(t.board, `/api/email/campaigns/${id}/approve`, { method: 'POST', body }),
+    ]);
+    assert.deepEqual([first.status, second.status], [200, 200], JSON.stringify([first.body, second.body]));
+    const third = await t.call(t.board, `/api/email/campaigns/${id}/approve`, { method: 'POST', body });
+    assert.equal(third.status, 200);
+    assert.equal(third.body.campaign.approvedPaymentInstructionsId, version.id);
+    const { rows: events } = await t.db.query(
+      "SELECT count(*)::int AS n FROM audit_events WHERE action = 'email.campaign.approved' AND entity_id = $1", [id],
+    );
+    assert.equal(events[0].n, 1);
+    // Ponowienie z inną wersją nie jest ponowieniem tego samego zatwierdzenia.
+    const other = await t.call(t.board, `/api/email/campaigns/${id}/approve`, {
+      method: 'POST', body: { ...body, paymentInstructionsId: 'inna-wersja' },
+    });
+    assert.equal(other.status, 409);
+    assert.equal(other.body.error, 'campaign_not_draft');
+
+    // Wiadomość testowa (atrapa transportu, adres techniczny) po korekcie
+    // rachunku: odmowa; przed korektą — rachunek z zatwierdzonej wersji.
+    const transport = fakeTransport();
+    t.env.emailTransport = transport;
+    const testSend = await t.call(t.treasurer, `/api/email/campaigns/${id}/test-send`, {
+      method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: { recipientEmail: PREVIEW_ADDRESS },
+    });
+    assert.equal(testSend.status, 201, JSON.stringify(testSend.body));
+    assert.equal(transport.calls.length, 1);
+    assert.equal(transport.calls[0].to, PREVIEW_ADDRESS);
+    assert.ok(transport.calls[0].text.includes('BE68 5390 0754 7034'), transport.calls[0].text);
+    await approveInstructions(t, IBAN_NEW);
+    const afterCorrection = await t.call(t.treasurer, `/api/email/campaigns/${id}/test-send`, {
+      method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: { recipientEmail: PREVIEW_ADDRESS },
+    });
+    assert.equal(afterCorrection.status, 409);
+    assert.equal(afterCorrection.body.error, 'payment_instructions_changed');
+    assert.equal(transport.calls.length, 1, 'po korekcie nic nie wychodzi, nawet test');
+  } finally {
+    await t.db.close();
+  }
+});
+
+test('0162: granice ról — skarbnik nie zatwierdza, przedstawiciel klasy bez dostępu do podglądu i zatwierdzenia; kolumna bez zmian', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h-a');
+    await approveInstructions(t, IBAN_OLD);
+    const rep = await seedUserSession(t.db, { userId: 'u-rep', mfa: true, roles: [{ role: 'representative', classId: 'c1', schoolYearId: YEAR }] });
+    const id = await draftAndSnapshot(t);
+    const preview = await t.call(t.board, `/api/email/campaigns/${id}/preview`);
+    const body = {
+      contentHash: preview.body.contentHash, recipientsHash: preview.body.recipientsHash,
+      paymentInstructionsId: preview.body.paymentInstructions.id,
+    };
+    const byTreasurer = await t.call(t.treasurer, `/api/email/campaigns/${id}/approve`, { method: 'POST', body });
+    assert.equal(byTreasurer.status, 403);
+    assert.equal((await t.call(rep, `/api/email/campaigns/${id}/preview`)).status, 403);
+    assert.equal((await t.call(rep, `/api/email/campaigns/${id}/approve`, { method: 'POST', body })).status, 403);
+    const { rows } = await t.db.query('SELECT status, approved_payment_instructions_id FROM email_campaigns WHERE id = $1', [id]);
+    assert.deepEqual(rows[0], { status: 'draft', approved_payment_instructions_id: null });
+  } finally {
+    await t.db.close();
+  }
+});
+
+test('0162: strażnik bazy — wersję ustawia tylko zatwierdzenie, czyści tylko cofnięcie do szkicu; rok musi się zgadzać', async () => {
+  const t = await setup();
+  try {
+    await family(t.db, 'h-a');
+    const oldVersion = await approveInstructions(t, IBAN_OLD);
+    const id = await draftAndSnapshot(t);
+    // Szkic nie może nosić wersji (CHECK).
+    await assert.rejects(
+      t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = $2 WHERE id = $1', [id, oldVersion.id]),
+      /email_campaign_payment_instructions_immutable|email_campaigns_draft_without_payment_instructions/,
+    );
+    // Wersja z innego roku.
+    await t.db.query("INSERT INTO school_years (id, label, starts_on, ends_on) VALUES ('y2027', '2027/2028', '2027-09-01', '2028-08-31') ON CONFLICT DO NOTHING");
+    await t.db.query(
+      `INSERT INTO payment_instructions (id, school_year_id, iban, payee_name, approved_by, idempotency_key)
+       VALUES ('pi-other-year', 'y2027', $1, $2, 'u-bd2', 'klucz-inny-rok-0001')`,
+      [IBAN_NEW, PAYEE],
+    );
+    await assert.rejects(
+      t.db.query(
+        `UPDATE email_campaigns SET status = 'approved', approved_by = 'u-bd', approved_at = now(),
+                approved_content_hash = content_hash, approved_recipients_hash = recipients_hash,
+                approved_payment_instructions_id = 'pi-other-year' WHERE id = $1`, [id],
+      ),
+      /email_campaign_payment_instructions_year_mismatch/,
+    );
+    assert.equal((await previewAndApprove(t, id)).approved.status, 200);
+    // W stanie 'approved' wersja jest niezmienna.
+    await assert.rejects(
+      t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = NULL WHERE id = $1', [id]),
+      /email_campaign_payment_instructions_immutable/,
+    );
+    // Cofnięcie do szkicu bez wyczyszczenia wersji — odrzucone.
+    await assert.rejects(
+      t.db.query(
+        `UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL,
+                approved_content_hash = NULL, approved_recipients_hash = NULL WHERE id = $1`, [id],
+      ),
+      /email_campaigns_draft_without_payment_instructions/,
+    );
+    // Nowa migawka (API) czyści wersję razem z zatwierdzeniem.
+    const snapshot = await t.call(t.treasurer, `/api/email/campaigns/${id}/snapshot`, { method: 'POST' });
+    assert.equal(snapshot.status, 200, JSON.stringify(snapshot.body));
+    const { rows } = await t.db.query('SELECT status, approved_payment_instructions_id FROM email_campaigns WHERE id = $1', [id]);
+    assert.deepEqual(rows[0], { status: 'draft', approved_payment_instructions_id: null });
+    // Po kolejce (sending) wersja również niezmienna.
+    assert.equal((await previewAndApprove(t, id)).approved.status, 200);
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' })).status, 200);
+    await assert.rejects(
+      t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = NULL WHERE id = $1', [id]),
+      /email_campaign_payment_instructions_immutable|email_campaign_sending_locked/,
+    );
+    // Nowa kampania nie może powstać z wersją.
+    await assert.rejects(
+      t.db.query(
+        `INSERT INTO email_campaigns (id, school_year_id, title, audience, subject, body_text, content_hash, created_by, updated_by, idempotency_key, approved_payment_instructions_id)
+         SELECT 'c-new', school_year_id, title, audience, subject, body_text, content_hash, created_by, updated_by, 'klucz-nowej-0001', $2
+           FROM email_campaigns WHERE id = $1`, [id, oldVersion.id],
+      ),
+      /email_campaign_payment_instructions_immutable|email_campaigns_draft_without_payment_instructions/,
+    );
+  } finally {
+    await t.db.close();
+  }
+});
+
+test('0162: kampania zakolejkowana przed migracją (bez zapisanej wersji) nie wychodzi — worker pomija, wznowienie 409', async () => {
+  const t = await setup();
+  const networkBefore = networkGuardCalls();
+  try {
+    await family(t.db, 'h-a');
+    await approveInstructions(t, IBAN_OLD);
+    const id = await draftAndSnapshot(t);
+    assert.equal((await previewAndApprove(t, id)).approved.status, 200);
+    // Stan po migracji 0162 dla kampanii zatwierdzonej wcześniej: kolumna NULL
+    // (migracja niczego nie uzupełnia). Odtwarzamy go z pominięciem strażnika.
+    const legacyState = async () => {
+      await t.db.query('ALTER TABLE email_campaigns DISABLE TRIGGER email_campaigns_payment_instructions_guard');
+      await t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = NULL WHERE id = $1', [id]);
+      await t.db.query('ALTER TABLE email_campaigns ENABLE TRIGGER email_campaigns_payment_instructions_guard');
+    };
+    // Kampania w toku (zakolejkowana przed migracją).
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' })).status, 200);
+    await legacyState();
+    const preview = await t.call(t.board, `/api/email/campaigns/${id}/preview`);
+    assert.ok(preview.body.warnings.includes('payment_instructions_changed'));
+    assert.equal(preview.body.paymentInstructions, null);
+    assert.ok(preview.body.sample.text.includes('[brak zatwierdzonych danych do wpłaty]'));
+    const transport = fakeTransport();
+    await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
+    assert.equal(transport.calls.length, 0);
+    const { rows: outbox } = await t.db.query('SELECT state FROM email_outbox WHERE campaign_id = $1', [id]);
+    assert.deepEqual(outbox.map((row) => row.state), ['queued']);
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${id}/pause`, { method: 'POST' })).status, 200);
+    const resumed = await t.call(t.treasurer, `/api/email/campaigns/${id}/resume`, { method: 'POST' });
+    assert.equal(resumed.status, 409);
+    assert.equal(resumed.body.error, 'payment_instructions_changed');
+    assert.equal(networkGuardCalls(), networkBefore);
+  } finally {
+    await t.db.close();
+  }
+});

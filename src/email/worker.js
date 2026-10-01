@@ -52,7 +52,7 @@
 import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
 import { contentHash, preferencesToken, renderMessage, usesPaymentInstructions, usesStructuredReference } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
-import { campaignApprovedPaymentInstructionsId, loadCurrentPaymentInstructions } from '../pg/routes/payment-instructions.js';
+import { campaignPaymentInstructions } from '../pg/routes/payment-instructions.js';
 import { brusselsDay } from '../pg/today.js';
 
 const QUOTA_LOCK_ID = 732481707;
@@ -340,6 +340,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
     const { rows: campaigns } = await tx.query(
       `SELECT c.id, c.school_year_id, c.audience, c.category, c.subject, c.body_text, c.content_hash,
               c.approved_content_hash, c.approved_recipients_hash, c.recipients_hash, c.daily_cap,
+              c.status, c.approved_at, c.approved_payment_instructions_id,
               y.label AS school_year_label,
               (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
                 + (${IN_FLIGHT} AND o.campaign_id = c.id) AS sent_today
@@ -359,20 +360,21 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         await recordIntegrityMismatch(tx, campaign, hash);
         continue;
       }
-      // #92: {rachunek}/{odbiorca} — tylko bieżąca wersja danych do wpłaty i tylko
-      // ta, z którą zarząd zatwierdził kampanię (zdarzenie email.campaign.approved).
+      // #92: {rachunek}/{odbiorca} — wyłącznie wersja danych do wpłaty zapisana
+      // w kampanii przy zatwierdzeniu (approved_payment_instructions_id, 0162),
+      // i tylko dopóki jest to nadal bieżąca wersja roku.
       // Korekta rachunku później (albo brak wersji) wstrzymuje kampanię bez zmian
       // w kolejce: wiersze zostają 'queued', nic nie wychodzi ani ze starym, ani
       // z nowym, niezatwierdzonym w kampanii rachunkiem. Zarząd anuluje kampanię
       // i zatwierdza nową.
       let paymentInstructions = null;
       if (usesPaymentInstructions(campaign)) {
-        paymentInstructions = await loadCurrentPaymentInstructions(tx, campaign.school_year_id);
-        if (!paymentInstructions
-            || paymentInstructions.id !== await campaignApprovedPaymentInstructionsId(tx, campaign.id)) {
+        const payment = await campaignPaymentInstructions(tx, campaign);
+        if (payment.changed || !payment.instructions) {
           run.stoppedReason = 'payment_instructions_changed';
           continue;
         }
+        paymentInstructions = payment.instructions;
       }
       let capLeft = campaign.daily_cap - campaign.sent_today;
       if (capLeft <= 0) continue;
