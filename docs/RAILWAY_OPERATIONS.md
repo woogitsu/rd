@@ -766,19 +766,22 @@ w bucketach. Dlatego:
 Gotowe narzędzia (kod w repozytorium, testy na atrapie magazynu):
 
 - `npm run backup:storage` (`scripts/backup-storage.js`, `src/pg/storage-backup.js`)
-  kopiuje wyłącznie **nowe** obiekty `docs/*` z bucketu źródłowego (`BUCKET_*`,
+  kopiuje wyłącznie **nowe** obiekty `docs/*` (dokumenty) i `photos/*` (pliki zdjęć
+  galerii, tabela `news_photo_files`) z bucketu źródłowego (`BUCKET_*`,
   poświadczenia tylko do odczytu) do drugiego magazynu S3 w UE
   (`STORAGE_BACKUP_S3_ENDPOINT`, `_REGION`, `_BUCKET`, `_ACCESS_KEY_ID`,
   `_SECRET_ACCESS_KEY`, opcjonalnie `_URL_STYLE`; poświadczenia celu tylko do
   zapisu, bez `DeleteObject`, jeśli dostawca na to pozwala). Nigdy nie usuwa w
-  celu. Liczy SHA-256 źródła i kopii względem `documents.sha256`; niezgodny
+  celu. Liczy SHA-256 źródła i kopii względem `documents.sha256` / `news_photo_files.sha256`; niezgodny
   skrót lub brak obiektu w źródle daje kod wyjścia 1. Odmawia pracy w
   `APP_ENV=production` (lub nieznanym) bez `--allow-production`. Raport (liczby,
-  bez nazw plików) trafia na stdout i do `backup_runs` (`storage_backup`).
+  bez nazw plików; sumy oraz rozbicie `bySet` na dokumenty i zdjęcia, w tym
+  obiekty osierocone w źródle) trafia na stdout i do `backup_runs`
+  (`storage_backup`).
 - `npm run backup:storage:verify` (`scripts/verify-storage-backup.js`,
   `src/pg/storage-backup-verify.js`) — niezależna weryfikacja kopii: buduje
   manifest SHA-256 z faktycznej treści kopii (katalog pobrany przez operatora),
-  porównuje go z `documents` (brakujące obiekty, niezgodne skróty i rozmiary,
+  porównuje go z `documents` i `news_photo_files` (brakujące obiekty, niezgodne skróty i rozmiary,
   osierocone w kopii) i opcjonalnie wykonuje **próbę odtworzenia** próbki
   (`--restore-dir`, `--sample N`) do lokalnego katalogu, sprawdzając SHA-256
   odtworzonych bajtów. Cel odtworzenia może być tylko lokalny (katalog albo
@@ -786,6 +789,15 @@ Gotowe narzędzia (kod w repozytorium, testy na atrapie magazynu):
   identyfikatory techniczne wierszy `documents`, bez kluczy obiektów i nazw
   plików. Kod wyjścia 1 przy brakach lub niezgodnościach. Osierocone obiekty w
   kopii są tylko zgłaszane (nie psują wyniku).
+- `reportStorageConsistency` (`src/pg/storage-backup-verify.js`) — raport
+  zgodności bucketu z bazą bez pobierania treści: dla `docs/` i `photos/`
+  liczba wierszy, obiektów, obiektów osieroconych (w buckecie bez wiersza,
+  tylko ostrzeżenie) i wierszy bez obiektu (identyfikatory techniczne, psują
+  wynik). Test `tests/storage-backup-photos.test.js` potwierdza też, że plik
+  odtworzony z kopii do nowego magazynu nadal wymaga sesji i uprawnień do klasy.
+- Usunięcie dokumentu lub zdjęcia po okresie retencji (D-04) musi objąć także
+  kopię; narzędzia nigdy nie usuwają, więc czyszczenie kopii to osobna,
+  jawnie zatwierdzona operacja.
 
 Procedura po decyzji (nie wykonana):
 
