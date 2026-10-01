@@ -42,6 +42,10 @@ import {
   listSummary as dataRequestsSummary, newRequestKey, nextStatuses, omittedNote, statusBody as dataRequestStatusBody,
   statusConfirmation, subjectOf,
 } from "./data-requests.js";
+import {
+  HISTORY_ACTION, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows, historySummary,
+  planRows, previewBody, previewSummary, resultMessage, retainedNote,
+} from "./anonymization.js";
 import { api as apiRequest } from "../shared/api.js";
 import { buildEffectsHtml, confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
@@ -1442,6 +1446,143 @@ for (const [id, key] of [["dr-filter-status", "status"], ["dr-filter-kind", "kin
   });
 }
 
+// --- Anonimizacja (#91; POST /api/admin/anonymizations, wyłącznie admin z MFA) ---
+// Podgląd (dryRun) pokazuje tylko liczniki. Wykonanie zatwierdza dokładnie ten plan
+// (confirm = id gospodarstwa, expectedPlanSha256 z podglądu); API nie używa Idempotency-Key,
+// bo powtórzenie jest idempotentne po stronie serwera (`replayed`). Historia pochodzi z dziennika
+// zdarzeń (domena „privacy”, tylko identyfikatory i liczniki). Nic nie jest zapisywane w przeglądarce.
+
+const anon = { preview: null, request: null, busy: false, events: [], cursor: null };
+
+function clearAnonPreview() {
+  anon.preview = null;
+  anon.request = null;
+  byId("anon-plan").hidden = true;
+  byId("anon-plan-body").replaceChildren();
+}
+
+function setAnonBusy(busy) {
+  anon.busy = busy;
+  byId("anon-preview").disabled = busy;
+  byId("anon-execute").disabled = busy || !canExecute(anon.preview);
+}
+
+function renderAnonPlan() {
+  const preview = anon.preview;
+  byId("anon-plan").hidden = !preview;
+  if (!preview) return;
+  byId("anon-plan-meta").textContent = `${previewSummary(preview)} Gospodarstwo ${preview.householdId}. Powód: ${REASON_LABELS[preview.reasonCode] ?? preview.reasonCode}.`;
+  const rows = planRows(preview.counts);
+  const tbody = byId("anon-plan-body");
+  if (!rows.length) emptyRow(tbody, 2, "Brak pozycji do zmiany.");
+  else tbody.replaceChildren(...rows.map((row) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(row.label), cell(String(row.count), "num"));
+    return tr;
+  }));
+  byId("anon-retained").textContent = retainedNote(preview.retained);
+  const execute = byId("anon-execute");
+  execute.disabled = anon.busy || !canExecute(preview);
+  execute.title = executeBlocker(preview);
+}
+
+function renderAnonHistory() {
+  const rows = historyRows(anon.events);
+  byId("anon-history-summary").textContent = historySummary(rows.length, Boolean(anon.cursor));
+  const tbody = byId("anon-history-body");
+  if (!rows.length) return emptyRow(tbody, 7, "Brak przebiegów.");
+  tbody.replaceChildren(...rows.map((row) => {
+    const tr = document.createElement("tr");
+    const run = cell(row.runId ? shortId(row.runId) : "—");
+    if (row.runId) run.title = row.runId;
+    const household = cell(row.householdId ? shortId(row.householdId) : "—");
+    if (row.householdId) household.title = row.householdId;
+    const digest = cell(row.planSha256 ? `${row.planSha256.slice(0, 12)}…` : "—");
+    if (row.planSha256) digest.title = row.planSha256;
+    const actor = cell(accountName(row.actorId, state.users));
+    if (row.actorId) actor.title = row.actorId;
+    tr.append(cell(formatDateTime(row.occurredAt)), run, household,
+      cell(REASON_LABELS[row.reasonCode] ?? row.reasonCode), cell(row.total === null ? "—" : String(row.total), "num"), digest, actor);
+    return tr;
+  }));
+}
+
+async function loadAnonHistory({ append = false } = {}) {
+  const result = await api(withCursor(auditListPath("privacy"), append ? anon.cursor : null));
+  anon.events = append ? [...anon.events, ...result.events.filter((event) => event.action === HISTORY_ACTION)]
+    : result.events.filter((event) => event.action === HISTORY_ACTION);
+  anon.cursor = result.nextCursor ?? null;
+  toggleMore("anon-more", anon.cursor);
+  renderAnonHistory();
+}
+
+function anonHistoryError(error) {
+  byId("anon-history-summary").textContent = error.message;
+  byId("anon-history-body").replaceChildren();
+}
+
+byId("anon-reason").replaceChildren(...Object.entries(REASON_LABELS).map(([value, label]) => new Option(label, value)));
+function syncAnonRequestField() {
+  const needed = byId("anon-reason").value === "data_subject_request";
+  byId("anon-request").disabled = !needed;
+  if (!needed) byId("anon-request").value = "";
+}
+syncAnonRequestField();
+byId("anon-form").addEventListener("input", () => { clearAnonPreview(); byId("anon-error").textContent = ""; });
+byId("anon-reason").addEventListener("change", syncAnonRequestField);
+
+byId("anon-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (anon.busy) return;
+  const errorBox = byId("anon-error");
+  errorBox.textContent = "";
+  let body;
+  try {
+    body = previewBody(Object.fromEntries(new FormData(event.currentTarget)));
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  clearAnonPreview();
+  setAnonBusy(true);
+  try {
+    const result = await withStepUp(() => api("/api/admin/anonymizations", { method: "POST", body }));
+    anon.preview = result;
+    anon.request = body;
+    byId("anon-summary").textContent = resultMessage(result);
+    renderAnonPlan();
+    await loadAnonHistory().catch(anonHistoryError);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    setAnonBusy(false);
+  }
+});
+
+byId("anon-execute").addEventListener("click", async () => {
+  if (anon.busy || !canExecute(anon.preview)) return;
+  const preview = anon.preview;
+  const confirmed = await promptAction(executeConfirmation(preview));
+  if (confirmed === null || anon.busy) return;
+  const errorBox = byId("anon-error");
+  errorBox.textContent = "";
+  setAnonBusy(true); // podwójne kliknięcie: jeden przebieg naraz (serwer też serializuje i zwróci `replayed`)
+  try {
+    const result = await withStepUp(() => api("/api/admin/anonymizations", { method: "POST", body: executeBody(preview, anon.request ?? {}) }));
+    clearAnonPreview(); // skrót planu jest zużyty; kolejny przebieg wymaga nowego podglądu
+    byId("anon-summary").textContent = resultMessage(result);
+    showMessage(resultMessage(result));
+    await Promise.all([loadAnonHistory().catch(anonHistoryError), loadAudit()]);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    setAnonBusy(false);
+  }
+});
+
+byId("anon-more").addEventListener("click", () => loadAnonHistory({ append: true }).catch(anonHistoryError));
+byId("reload-anon").addEventListener("click", () => loadAnonHistory().catch(anonHistoryError));
+
 // --- Start ----------------------------------------------------------------------
 
 async function start() {
@@ -1455,6 +1596,7 @@ async function start() {
     byId("batch-form").elements.schoolYearId.value = defaultYearId();
     await Promise.all([loadGrantRequests(), loadGrants(), loadInvitations(), loadAudit(), loadCoverage()]);
     await loadDataRequests().catch((error) => { byId("dr-message").textContent = error.message; byId("dr-summary").textContent = ""; });
+    await loadAnonHistory().catch(anonHistoryError);
   } catch (error) {
     showMessage(error.message, true);
   }

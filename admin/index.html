@@ -384,6 +384,45 @@
         </form>
       </section>
 
+      <section class="card" aria-labelledby="anon-title">
+        <div class="section-heading">
+          <div><h2 id="anon-title">Anonimizacja</h2><p id="anon-summary">Wybierz gospodarstwo i powód, aby zobaczyć plan.</p></div>
+          <button type="button" id="reload-anon">Odśwież historię</button>
+        </div>
+        <p class="hint">Anonimizacja usuwa dane osobowe jednego gospodarstwa (imiona, nazwiska, e-maile, tytuły przelewów, powody w historii), zostawiając kwoty, daty i księgę. Jest nieodwracalna z poziomu panelu. Najpierw podgląd: pokazuje wyłącznie liczniki. Powód „okres retencji” działa dopiero po zatwierdzeniu polityk (D-04) — dziś serwer go odrzuci. Dostęp: administrator z potwierdzonym MFA; serwer sprawdza uprawnienia przy każdym żądaniu. Szczegóły: docs/RETENTION.md.</p>
+        <form id="anon-form" class="grid-form">
+          <label>Powód <select name="reasonCode" id="anon-reason" required></select></label>
+          <label>Identyfikator gospodarstwa <input name="householdId" autocomplete="off" required spellcheck="false" /></label>
+          <label>Identyfikator żądania usunięcia <input name="dataRequestId" id="anon-request" autocomplete="off" spellcheck="false" aria-describedby="anon-hint" /></label>
+          <button class="primary" type="submit" id="anon-preview">Pokaż podgląd</button>
+          <p class="hint" id="anon-hint">Identyfikatory skopiuj z panelu Rodziny i rejestru „Żądania osób”. Identyfikator żądania jest wymagany tylko dla powodu „żądanie usunięcia”. Nie wpisuj imion ani e-maili.</p>
+          <p class="form-error" id="anon-error" role="alert"></p>
+        </form>
+        <div id="anon-plan" hidden>
+          <h3>Plan przebiegu</h3>
+          <p id="anon-plan-meta" role="status"></p>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Liczba pozycji do zanonimizowania według kategorii</caption>
+              <thead><tr><th scope="col">Kategoria</th><th scope="col" class="num">Pozycji</th></tr></thead>
+              <tbody id="anon-plan-body"></tbody>
+            </table>
+          </div>
+          <p class="hint" id="anon-retained"></p>
+          <p><button class="danger" type="button" id="anon-execute">Anonimizuj…</button></p>
+        </div>
+        <h3>Historia przebiegów</h3>
+        <p id="anon-history-summary">Wczytywanie…</p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Historia przebiegów anonimizacji</caption>
+            <thead><tr><th scope="col">Czas</th><th scope="col">Przebieg</th><th scope="col">Gospodarstwo</th><th scope="col">Powód</th><th scope="col" class="num">Pozycji</th><th scope="col">Skrót planu</th><th scope="col">Wykonał</th></tr></thead>
+            <tbody id="anon-history-body"></tbody>
+          </table>
+        </div>
+        <p><button type="button" id="anon-more" hidden>Pokaż więcej</button></p>
+      </section>
+
       <section class="card" aria-labelledby="audit-title">
         <div class="section-heading">
           <div><h2 id="audit-title">Dziennik zdarzeń</h2><p>Najnowsze zdarzenia wybranego obszaru, po 100 na stronę; starsze dociąga „Pokaż więcej”. Dziennik zawiera identyfikatory, bez adresów e-mail i bez treści opisowych.</p></div>
