@@ -249,3 +249,26 @@ test('wpłata dopasowana w innym uzgodnieniu roku → odrzucenie całej partii',
   assert.equal(result.body.failures[0].error, 'matched_in_other_reconciliation');
   assert.equal(await activeCount(db, second.id), 0);
 });
+
+test('wsad: wpłata ujęta w księdze nie może być zatwierdzona, gdy jej wpis księgi jest już powiązany w uzgodnieniu (#162)', async () => {
+  const { db, cookies, call } = await setup();
+  await seedPayments(db, [['p-dup', 2500]]);
+  await db.query(`INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by)
+    VALUES ('cat-dues', $1, 'income', 'Składki dobrowolne', 'u-treasurer')`, [YEAR]);
+  await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description,
+    occurred_on, method, payment_entry_id, created_by, idempotency_key)
+    VALUES ('le-dup', $1, 'income', 2500, 'cat-dues', 'Składka syntetyczna z wpłaty', '2026-09-14', 'bank', 'p-dup', 'u-treasurer', 'le-key-dup')`, [YEAR]);
+  const { id, lineIds } = await draft(call, cookies, [2500, 2500]);
+  // Wpis księgi ujmujący wpłatę zajmuje cel ręcznie; partia z tą samą wpłatą jest odrzucana w całości.
+  const manual = await call(`/api/reconciliations/${id}/matches`, {
+    method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('man') },
+    body: { statementLineId: lineIds[0], ledgerEntryId: 'le-dup' },
+  });
+  assert.equal(manual.status, 201);
+  const result = await batch(call, cookies.treasurer, id, [{ statementLineId: lineIds[1], paymentEntryId: 'p-dup' }]);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error, 'match_batch_rejected');
+  assert.equal(result.body.failures.length, 1);
+  assert.equal(result.body.failures[0].error, 'already_matched_via_ledger');
+  assert.equal(await activeCount(db, id), 1);
+});
