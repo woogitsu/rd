@@ -1415,6 +1415,7 @@ Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSen
 pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
 SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
 Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
+
 `0181_data_subject_requests_idempotency.sql` (#100, idempotencja rejestracji
 żądania osoby) dodaje opcjonalną kolumnę `data_subject_requests.idempotency_key`
 (CHECK formatu jak w pozostałych trasach) i unikalny indeks częściowy
