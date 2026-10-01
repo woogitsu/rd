@@ -22,7 +22,7 @@
         <div>
           <p class="eyebrow">Komisja Rewizyjna</p>
           <h1>Raport roczny</h1>
-          <p>Zestawienie z księgi w systemie, tylko do odczytu. Nie jest zatwierdzonym sprawozdaniem finansowym; wymaga sprawdzenia z dokumentami źródłowymi.</p>
+          <p>Zestawienie z księgi w systemie, tylko do odczytu (uwagi kontroli poniżej raportu są osobną, niezmienną ścieżką zapisu). Nie jest zatwierdzonym sprawozdaniem finansowym; wymaga sprawdzenia z dokumentami źródłowymi.</p>
         </div>
       </section>
 
@@ -47,6 +47,51 @@
         <p><a id="report-xlsx-link" href="#" download>Arkusz XLSX (sekcja na kartę, kwoty jako liczby, bez formuł)</a></p>
         <p class="empty">Każde wygenerowanie raportu zapisuje się w dzienniku zdarzeń.</p>
         <div id="report-sections"></div>
+      </section>
+
+      <section class="card" id="review-section" aria-labelledby="review-title" hidden>
+        <div class="section-heading">
+          <div><h2 id="review-title">Uwagi kontroli</h2></div>
+          <span id="review-counts"></span>
+        </div>
+        <p class="empty">Pytania i ustalenia Komisji Rewizyjnej, odpowiedzi zarządu lub skarbnika oraz zamknięcia. Zapisy są niezmienne: korekta to nowy zapis. Zakres dostępu Komisji do księgi i dowodów wymaga decyzji zarządu (D-09) — uwagi wskazują wpis lub uzgodnienie po identyfikatorze.</p>
+        <div id="review-threads"></div>
+        <p id="review-conclusion"></p>
+        <div class="message" id="review-message" role="status"></div>
+
+        <form id="reply-form" hidden>
+          <h3 id="reply-title">Odpowiedź</h3>
+          <input type="hidden" name="noteId" />
+          <input type="hidden" name="action" />
+          <label>Treść <textarea name="body" rows="3" minlength="3" maxlength="2000"></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
+          <div class="dialog-actions">
+            <button type="button" id="reply-cancel">Anuluj</button>
+            <button type="submit" class="primary" id="reply-submit">Zapisz</button>
+          </div>
+        </form>
+
+        <form id="note-form" hidden>
+          <h3>Nowa uwaga</h3>
+          <label>Rodzaj
+            <select name="kind"><option value="question">Pytanie</option><option value="finding">Ustalenie</option></select>
+          </label>
+          <label>Dotyczy
+            <select name="targetType">
+              <option value="ledger_entry">Wpis księgi (identyfikator)</option>
+              <option value="reconciliation">Uzgodnienie (identyfikator)</option>
+              <option value="year">Cały rok szkolny</option>
+            </select>
+          </label>
+          <label>Identyfikator <input name="targetId" maxlength="128" autocomplete="off" /><small>Dla całego roku zostaw puste.</small></label>
+          <label>Treść <textarea name="body" rows="3" minlength="3" maxlength="2000" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
+          <div class="dialog-actions"><button type="submit" class="primary">Dodaj uwagę</button></div>
+        </form>
+
+        <form id="conclusion-form" hidden>
+          <h3>Wniosek końcowy Komisji Rewizyjnej</h3>
+          <label>Treść <textarea name="body" rows="4" minlength="3" maxlength="2000" required></textarea><small class="pii-hint">Wpis jest niezmienny i trafi do eksportu. Nie wpisuj imion dzieci, e-maili, telefonów ani numerów rachunków — użyj identyfikatora rodziny.</small></label>
+          <div class="dialog-actions"><button type="submit" class="primary">Zapisz wniosek</button></div>
+        </form>
       </section>
     </main>
     <script type="module" src="/main.js"></script>

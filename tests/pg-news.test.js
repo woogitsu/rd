@@ -544,6 +544,51 @@ async function jpegWithExifOrientation() {
     .toBuffer();
 }
 
+// PNG z kanałem alfa (syntetyczny: lewa połowa zielona, prawa w pełni
+// przezroczysta). Wariant publiczny to zawsze nieprzezroczysty JPEG, więc
+// przezroczystość jest jawnie spłaszczana na białe tło strony (nie na czarne).
+test('plik zdjęcia: PNG z przezroczystością jest spłaszczany na białe tło, bez kanału alfa i metadanych', async () => {
+  const db = await newsDb();
+  const storage = createMemoryStorage();
+  const env = { db, storage };
+  try {
+    const width = 8;
+    const height = 4;
+    const raw = Buffer.alloc(width * height * 4);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) raw.set(x < 4 ? [10, 200, 10, 255] : [0, 0, 0, 0], (y * width + x) * 4);
+    }
+    const source = await sharp(raw, { raw: { width, height, channels: 4 } }).png().toBuffer();
+    assert.equal((await sharp(source).metadata()).hasAlpha, true, 'atrapa musi mieć kanał alfa');
+
+    const { photo } = await registerPhoto(db, admin, photoInput());
+    const boardCookie = await seedUserSession(db, { userId: 'u-board-alpha', roles: [{ role: 'board', schoolYearId: year }], mfa: true });
+    const uploaded = await handlePgRequest(request(`/api/news-photos/${photo.id}/file`, {
+      method: 'POST', cookie: boardCookie, headers: { 'Content-Type': 'image/png', 'Idempotency-Key': key('file') }, body: source,
+    }), env);
+    assert.equal(uploaded.status, 201);
+    await verifyPhoto(db, board1, { photoId: photo.id });
+    await publishedPost(db, { title: 'Przezroczystość (syntetyczna)', photoIds: [photo.id] });
+
+    for (const variant of ['web', 'thumb']) {
+      const response = await handlePgRequest(request(`/api/public/news-photos/${photo.id}/${variant}`), env);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('Content-Type'), 'image/jpeg');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const meta = await sharp(bytes).metadata();
+      assert.equal(meta.hasAlpha, false, `${variant}: JPEG nie ma kanału alfa`);
+      assert.equal(meta.exif, undefined);
+      const { data, info } = await sharp(bytes).raw().toBuffer({ resolveWithObject: true });
+      const pixel = (x) => [...data.subarray(x * info.channels, x * info.channels + 3)];
+      const near = (actual, expected) => actual.every((v, i) => Math.abs(v - expected[i]) <= 12);
+      assert.ok(near(pixel(0), [10, 200, 10]), `${variant}: nieprzezroczysta część zachowana, jest ${pixel(0)}`);
+      assert.ok(near(pixel(info.width - 1), [255, 255, 255]), `${variant}: przezroczystość na białym tle, nie czarna; jest ${pixel(info.width - 1)}`);
+    }
+  } finally {
+    await db.close();
+  }
+});
+
 test('plik zdjęcia: EXIF/GPS usunięte, orientacja uwzględniona, publiczny odczyt tylko po weryfikacji i publikacji', async () => {
   const db = await newsDb();
   const storage = createMemoryStorage();

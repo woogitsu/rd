@@ -30,6 +30,7 @@ import { mountShell, sessionDisplayName } from "../shared/shell.js";
 import "../shared/shell.css";
 import { formatPrintDate, mountPrintMeta } from "../shared/print-meta.js";
 import "../shared/print.css";
+import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
 let printedBy = null;
 mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
@@ -472,6 +473,11 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
   };
 });
 
+// #181: zwijana „Historia” wpłaty; tylko gdy serwer zwróci 200 (UX, nie kontrola dostępu).
+const paymentHistory = mountEntityHistory(correctionDialog.form, { api, idPrefix: "payment-history" });
+correctionDialog.form.insertBefore(paymentHistory.element, correctionDialog.form.querySelector(".dialog-actions"));
+correctionDialog.dialog.addEventListener("close", () => paymentHistory.reset());
+
 const assignmentDialog = configureDialog("assignment-dialog", "assignment", async (data, requestKey) => {
   const paymentId = String(data.get("paymentId"));
   const householdId = String(data.get("householdId") || "").trim();
@@ -639,6 +645,7 @@ body.addEventListener("click", (event) => {
   if (button.dataset.action === "correct") {
     correctionDialog.form.elements.paymentId.value = payment.id;
     correctionDialog.form.querySelector(".context").textContent = `${payment.receivedOn} · ${payment.reference || "Bez opisu"} · netto ${formatCents(payment.netCents)}`;
+    paymentHistory.load("payment_entry", payment.id);
     correctionDialog.dialog.showModal();
   } else if (button.dataset.action === "split") {
     splitState.paymentId = payment.id;
