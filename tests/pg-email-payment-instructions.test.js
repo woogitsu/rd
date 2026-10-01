@@ -506,7 +506,7 @@ test('0162: strażnik bazy — wersję ustawia tylko zatwierdzenie, czyści tylk
   }
 });
 
-test('0162: kampania zatwierdzona przed migracją (bez zapisanej wersji) nie wychodzi — kolejka 409, worker pomija', async () => {
+test('0162: kampania zakolejkowana przed migracją (bez zapisanej wersji) nie wychodzi — worker pomija, wznowienie 409', async () => {
   const t = await setup();
   const networkBefore = networkGuardCalls();
   try {
@@ -514,30 +514,29 @@ test('0162: kampania zatwierdzona przed migracją (bez zapisanej wersji) nie wyc
     await approveInstructions(t, IBAN_OLD);
     const id = await draftAndSnapshot(t);
     assert.equal((await previewAndApprove(t, id)).approved.status, 200);
-    // Stan po migracji 0162 dla kampanii zatwierdzonej wcześniej: kolumna NULL.
-    await t.db.query('ALTER TABLE email_campaigns DISABLE TRIGGER email_campaigns_payment_instructions_guard');
-    await t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = NULL WHERE id = $1', [id]);
-    await t.db.query('ALTER TABLE email_campaigns ENABLE TRIGGER email_campaigns_payment_instructions_guard');
+    // Stan po migracji 0162 dla kampanii zatwierdzonej wcześniej: kolumna NULL
+    // (migracja niczego nie uzupełnia). Odtwarzamy go z pominięciem strażnika.
+    const legacyState = async () => {
+      await t.db.query('ALTER TABLE email_campaigns DISABLE TRIGGER email_campaigns_payment_instructions_guard');
+      await t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = NULL WHERE id = $1', [id]);
+      await t.db.query('ALTER TABLE email_campaigns ENABLE TRIGGER email_campaigns_payment_instructions_guard');
+    };
+    // Kampania w toku (zakolejkowana przed migracją).
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' })).status, 200);
+    await legacyState();
     const preview = await t.call(t.board, `/api/email/campaigns/${id}/preview`);
     assert.ok(preview.body.warnings.includes('payment_instructions_changed'));
     assert.equal(preview.body.paymentInstructions, null);
     assert.ok(preview.body.sample.text.includes('[brak zatwierdzonych danych do wpłaty]'));
-    const refused = await t.call(t.treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' });
-    assert.equal(refused.status, 409);
-    assert.equal(refused.body.error, 'payment_instructions_changed');
-    // Kampania w toku bez wersji (stan po migracji): worker pomija, wiersze zostają w kolejce.
-    await t.db.query('ALTER TABLE email_campaigns DISABLE TRIGGER email_campaigns_payment_instructions_guard');
-    await t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = (SELECT id FROM payment_instructions LIMIT 1) WHERE id = $1', [id]);
-    await t.db.query('ALTER TABLE email_campaigns ENABLE TRIGGER email_campaigns_payment_instructions_guard');
-    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' })).status, 200);
-    await t.db.query('ALTER TABLE email_campaigns DISABLE TRIGGER email_campaigns_payment_instructions_guard');
-    await t.db.query('UPDATE email_campaigns SET approved_payment_instructions_id = NULL WHERE id = $1', [id]);
-    await t.db.query('ALTER TABLE email_campaigns ENABLE TRIGGER email_campaigns_payment_instructions_guard');
     const transport = fakeTransport();
     await runEmailBatch(t.env, { transport, dryRun: false, now: new Date(DAY1.getTime() + 30 * 60_000) });
     assert.equal(transport.calls.length, 0);
     const { rows: outbox } = await t.db.query('SELECT state FROM email_outbox WHERE campaign_id = $1', [id]);
     assert.deepEqual(outbox.map((row) => row.state), ['queued']);
+    assert.equal((await t.call(t.treasurer, `/api/email/campaigns/${id}/pause`, { method: 'POST' })).status, 200);
+    const resumed = await t.call(t.treasurer, `/api/email/campaigns/${id}/resume`, { method: 'POST' });
+    assert.equal(resumed.status, 409);
+    assert.equal(resumed.body.error, 'payment_instructions_changed');
     assert.equal(networkGuardCalls(), networkBefore);
   } finally {
     await t.db.close();
