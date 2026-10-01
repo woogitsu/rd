@@ -9,6 +9,7 @@ import {
   describeOtherSendEffects,
   describeQuotaError,
   describeQuotaSummary,
+  otherSendsListUrl,
   quotaRows,
   quotaUrl,
 } from "./quota-core.js";
@@ -58,10 +59,11 @@ export function mountQuota({ api, canEdit }) {
       const tr = document.createElement("tr");
       tr.append(cell(entry.day), cell(String(entry.count), "amount"),
         cell(entry.reasonCode === "correction" ? "Korekta" : (QUOTA_REASON_LABELS[entry.reasonCode] ?? entry.reasonCode)),
+        cell(entry.reasonCode === "correction" ? `Koryguje ${entry.correctsId}` : (entry.corrected ? `Skorygowano: ${entry.correctedCount}` : "Bez korekty")),
         cell(entry.id));
       const actions = document.createElement("td");
       actions.className = "row-actions";
-      if (entry.count > 0) {
+      if (entry.count > 0 && (entry.correctableCount ?? entry.count) > 0) {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = "Koryguj ten wpis";
@@ -86,7 +88,7 @@ export function mountQuota({ api, canEdit }) {
     form.elements.kind.value = "correction";
     form.elements.correctsId.value = entry.id;
     form.elements.day.value = entry.day;
-    form.elements.count.value = String(entry.count);
+    form.elements.count.value = String(-(entry.correctableCount ?? entry.count));
     syncKind();
     form.elements.count.focus();
   }
@@ -109,6 +111,20 @@ export function mountQuota({ api, canEdit }) {
       setMessage(`Nie udało się pobrać stanu limitu: ${messageFor(error)}`, true);
     }
     renderQuota();
+    await loadEntries(schoolYearId);
+  }
+
+  // Lista wpisów ręcznych z serwera (te same role co formularz); błąd nie blokuje stanu puli.
+  async function loadEntries(schoolYearId) {
+    try {
+      const data = await api(otherSendsListUrl(schoolYearId));
+      if (state.schoolYearId !== schoolYearId) return;
+      state.entries = Array.isArray(data?.entries) ? data.entries : [];
+    } catch (error) {
+      state.entries = [];
+      setMessage(`Nie udało się pobrać listy wpisów: ${messageFor(error)}`, true);
+    }
+    renderEntries();
   }
 
   for (const radio of form.querySelectorAll('input[name="kind"]')) radio.addEventListener("change", syncKind);
@@ -153,10 +169,8 @@ export function mountQuota({ api, canEdit }) {
       const data = await api(OTHER_SENDS_URL, { method: "POST", body, idempotencyKey: state.key });
       state.key = null;
       state.keyBody = null;
-      if (data?.entry && !state.entries.some((entry) => entry.id === data.entry.id)) state.entries.unshift(data.entry);
       form.elements.count.value = "";
       form.elements.correctsId.value = "";
-      renderEntries();
       await load(state.schoolYearId);
       setMessage(`Zapisano: ${describeEntry(data?.entry)}. Nic nie zostało wysłane.`);
     } catch (error) {
