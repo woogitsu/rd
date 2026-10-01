@@ -81,7 +81,9 @@ export function cardDay(year, today) {
 async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = null }) {
   const values = [schoolYearId, on];
   const primary = 'student_primary_household_on(COALESCE($2::date, rd_today()))';
-  const conditions = ['e.school_year_id = $1', 'h.archived_at IS NULL'];
+  // #100 (art. 18 RODO): gospodarstwo z ograniczonym przetwarzaniem nie dostaje kartki.
+  const conditions = ['e.school_year_id = $1', 'h.archived_at IS NULL',
+    'NOT EXISTS (SELECT 1 FROM processing_restricted_subjects rs WHERE rs.household_id = p.household_id)'];
   if (classId) {
     values.push(classId);
     if (full) {

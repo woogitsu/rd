@@ -1531,6 +1531,19 @@ export const ROUTE_MATRIX = Object.freeze([
     object: 'dataRequestVerified',
     build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/export`, body: {} }),
   }),
+  // #100 (art. 18 RODO): ograniczenie przetwarzania — wyłącznie admin + MFA; żądanie `restriction` po weryfikacji tożsamości (hh-1).
+  adminRoute('admin.dataRequestRestrict', 'POST', '/api/admin/data-requests/:requestId/restrict', {
+    object: 'restrictionRequestVerified',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/restrict`, body: {} }),
+  }),
+  adminRoute('admin.dataRequestLiftRestriction', 'POST', '/api/admin/data-requests/:requestId/lift-restriction', {
+    object: 'restrictionRequestVerified',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/lift-restriction`, body: {} }),
+  }),
+  adminRoute('admin.dataRequestRestrictions', 'GET', '/api/admin/data-requests/:requestId/restrictions', {
+    object: 'restrictionRequestVerified',
+    build: ({ obj }) => ({ path: `/api/admin/data-requests/${obj.requestId}/restrictions` }),
+  }),
   // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
   // Anonimizacja gospodarstwa (#91): wariant zachowawczy — admin + krok w górę MFA. Macierz wywołuje tylko podgląd
