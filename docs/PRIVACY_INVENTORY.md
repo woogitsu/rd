@@ -64,6 +64,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`email_preview_sends`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie wysyłki testowej z osobą|nieustalona (D-04)|nie|nie|
 |`email_preview_sends`|`recipient_hash`|Członek Rady|pseudonymous|kontakt|limit wysyłek testowych na adres techniczny Rady|nieustalona (D-04)|nie|nie|
 |`email_provider_pauses`|`lifted_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_send_ledger`|`actor_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
 |`email_suppression_release_requests`|`consumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_suppression_release_requests`|`email_hash`|Opiekun|pseudonymous|kontakt|lista wypisań/odbić|email_snapshot|nie|nie|
 |`email_suppression_release_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -227,7 +228,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **214**, w tym wolnego tekstu: **60** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **215**, w tym wolnego tekstu: **60** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -687,12 +688,16 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 
 | Kolumna | Dane osobowe | Podmiot | Eksport roczny |
 |---|---|---|---|
+| `actor_id` | pseudonymous | board_member | tak |
 | `attempt` | none | — | nie |
 | `campaign_id` | none | — | nie |
+| `corrects_id` | none | — | tak |
 | `day` | none | — | nie |
 | `id` | none | — | nie |
+| `idempotency_key` | none | — | tak |
 | `message_count` | none | — | nie |
 | `outbox_id` | none | — | nie |
+| `reason_code` | none | — | tak |
 | `recorded_at` | none | — | nie |
 | `source` | none | — | nie |
 
