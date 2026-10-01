@@ -350,11 +350,14 @@ digest obrazu `postgres:16`). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
 `scripts/test-pg-real.js` nie stawia własnego serwera, tylko używa wskazanego;
 bez zmiennej działa jak wcześniej (`initdb` w katalogu tymczasowym).
 Zwykłe shardy (`test`) nadal biegną na PGlite i pomijają testy wyścigów.
-Nocny przebieg (#111): job `nightly-pg-real` w `ci.yml` (`schedule:`, codziennie
-02:17 UTC) uruchamia `npm run test:pg-real -- --all` (cały zestaw `tests/*.test.js`
-na prawdziwym PostgreSQL) i `npm run test:pg-mutations`. Nie należy do `needs`
-w `ci-ok` i nie blokuje scalania; przy `schedule` pozostałe joby są pomijane
-(`if: github.event_name != 'schedule'`). Shardy `test` pilnuje
+Nocny przebieg (#111): osobny workflow `.github/workflows/nightly-pg-real.yml`
+(`schedule:` codziennie 02:17 UTC oraz ręczne `workflow_dispatch`) uruchamia
+`npm run test:pg-real -- --all` (cały zestaw `tests/*.test.js` na prawdziwym
+PostgreSQL) i `npm run test:pg-mutations`, timeout 120 min. Nie jest wymaganym
+checkiem i nie wchodzi w `ci-ok`; `ci.yml` nie ma wyzwalacza `schedule`. Te same
+przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
+`tests/ci-supply-chain.test.js` (dla wszystkich plików w `.github/workflows`);
+przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
 z 6 shardów).
 

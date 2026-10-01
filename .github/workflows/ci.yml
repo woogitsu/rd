@@ -3,10 +3,6 @@ on:
   pull_request:
   push:
     branches: [main]
-  # Nocny przebieg (#111): tylko job `nightly-pg-real`. Pozostałe joby mają
-  # `if: github.event_name != 'schedule'`, żeby nie dublować przebiegu PR.
-  schedule:
-    - cron: '17 2 * * *'
 permissions:
   contents: read
 
@@ -29,7 +25,6 @@ jobs:
   # równoległych instancji PGlite (każda ~550 MB, #111). Runner hostowany ma
   # 2 rdzenie, więc zestaw dzielimy na 6 shardów zamiast podnosić limit czasu.
   test:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -53,7 +48,6 @@ jobs:
   # i przy braku podpisów rejestru. Osobny job (podział zgodny z #111), żeby
   # awaria audytu nie mieszała się z testami.
   audit:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -80,7 +74,6 @@ jobs:
       - run: npm audit signatures
 
   build:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -106,7 +99,6 @@ jobs:
 
   smoke:
     needs: build
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -135,7 +127,6 @@ jobs:
   # Skrypt `scripts/test-pg-real.js` przy ustawionym RD_TEST_PG_URL używa tego
   # serwera zamiast uruchamiać własny (docs/TESTING.md).
   test-pg-real:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -172,7 +163,6 @@ jobs:
   # nie dokłada nowego z numerem <= maksimum na gałęzi bazowej. Kontrola
   # numeracji potrzebuje historii gałęzi bazowej — tylko dla pull_request.
   migrations-order:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -195,7 +185,6 @@ jobs:
   # #160: sprawdzanie typów JSDoc (`tsc --noEmit`) dla plików wskazanych w
   # jsconfig.json. Osobny, lekki job; lista plików rośnie stopniowo.
   typecheck:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -222,7 +211,6 @@ jobs:
   # joba nie blokuje PR, dopóki testy przeglądarkowe nie okażą się stabilne
   # na runnerze hostowanym.
   e2e:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
@@ -243,46 +231,12 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
-  # #111: nocny przebieg PEŁNEGO zestawu tests/*.test.js na prawdziwym
-  # PostgreSQL (`--all`, RD_TEST_PG_BACKEND=real) oraz kontrola mutacyjna
-  # blokad. CELOWO poza `ci-ok` (nie jest wymagany na PR i nie blokuje
-  # scalania); uruchamia się wyłącznie z harmonogramu. Te same przypięte akcje
-  # i obraz usługi co `test-pg-real`, bez sekretów i bez wysyłek.
-  nightly-pg-real:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    services:
-      postgres:
-        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
-        env:
-          POSTGRES_PASSWORD: rd_ci_only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      RD_TEST_PG_URL: postgres://postgres:rd_ci_only@127.0.0.1:5432/postgres
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-      - run: npm ci --ignore-scripts
-      - run: npm run test:pg-real -- --all
-      - run: npm run test:pg-mutations
-
   # Jedyny wymagany check: oblewa, gdy którykolwiek z powyższych jobów nie
   # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem). `e2e`
   # jest CELOWO poza tą listą (patrz komentarz przy tym jobie).
   ci-ok:
     needs: [test, test-pg-real, audit, build, smoke, migrations-order, typecheck]
-    if: always() && github.event_name != 'schedule'
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

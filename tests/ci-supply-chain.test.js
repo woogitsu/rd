@@ -106,3 +106,28 @@ test('dependabot.yml watches npm and github-actions without auto-merge', async (
   assert.match(dependabot, /package-ecosystem:\s*"github-actions"[\s\S]*?interval:\s*"monthly"/);
   assert.match(dependabot, /dependency-type:\s*"development"/, 'dev dependencies should be grouped');
 });
+
+test('all workflow files: one SHA per action across files, read-only permissions, hosted runners, digest-pinned images, no secrets', async () => {
+  const dir = new URL('../.github/workflows/', import.meta.url);
+  const files = (await readdir(dir)).filter((f) => /\.ya?ml$/.test(f));
+  assert.ok(files.includes('nightly-pg-real.yml'), 'nightly-pg-real.yml expected');
+  const byAction = new Map();
+  for (const file of files) {
+    const text = await readFile(new URL(file, dir), 'utf8');
+    const code = text.replace(/^\s*#.*$/gm, '');
+    assert.match(text, /^permissions:\s*\n\s+contents: read\s*$/m, `${file}: top-level read-only permissions`);
+    assert.doesNotMatch(code, /(contents|actions|packages|id-token|pull-requests|issues|checks|statuses|deployments):\s*write/, `${file}: write permission`);
+    assert.doesNotMatch(code, /pull_request_target|secrets\.|self-hosted/, `${file}: forbidden trigger/secret/runner`);
+    for (const line of code.split('\n')) {
+      if (/^\s*runs-on:/.test(line)) assert.match(line, /runs-on:\s*ubuntu-latest\s*$/, `${file}: ${line.trim()}`);
+      if (/^\s*image:\s*/.test(line)) assert.match(line, /image:\s*[\w./-]+@sha256:[0-9a-f]{64}\s*$/, `${file}: ${line.trim()}`);
+      if (/\bnpm ci\b/.test(line)) assert.match(line, /npm ci --ignore-scripts/, `${file}: ${line.trim()}`);
+      const m = line.match(/^\s*-?\s*uses:\s*([^@\s]+)@([0-9a-f]{40})/);
+      if (m) {
+        if (!byAction.has(m[1])) byAction.set(m[1], new Set());
+        byAction.get(m[1]).add(m[2]);
+      }
+    }
+  }
+  for (const [action, shas] of byAction) assert.equal(shas.size, 1, `${action} pinned to different SHAs across workflows: ${[...shas].join(', ')}`);
+});
