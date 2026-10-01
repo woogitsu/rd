@@ -1,17 +1,28 @@
 # Żądania osób (RODO): rejestr i eksport danych jednej rodziny
 
-**Status:** prototyp — model w bazie i API na PostgreSQL, bez panelu; nie jest wdrożony (staging: nie, produkcja: nie) i nie jest gotowy do pracy na danych rodzin. Testy wyłącznie na danych syntetycznych (`@example.invalid`). Wszystkie zasady poniżej są wariantem zachowawczym do decyzji zarządu **D-07** (kto przyjmuje żądanie, termin, weryfikacja tożsamości), **D-01** (w czyim imieniu odpowiadamy) i **D-08/D-09** (kto ma dostęp do rejestru) — patrz [DECISIONS.md](DECISIONS.md).
+**Status:** prototyp — model w bazie, API na PostgreSQL i ekran „Żądania osób (RODO)” w panelu `admin/` (lista, rejestracja, zmiana stanu, eksport); nie jest wdrożony (staging: nie, produkcja: nie) i nie jest gotowy do pracy na danych rodzin. Testy wyłącznie na danych syntetycznych (`@example.invalid`). Wszystkie zasady poniżej są wariantem zachowawczym do decyzji zarządu **D-07** (kto przyjmuje żądanie, termin, weryfikacja tożsamości), **D-01** (w czyim imieniu odpowiadamy) i **D-08/D-09** (kto ma dostęp do rejestru) — patrz [DECISIONS.md](DECISIONS.md).
 
 ## Co jest zrobione (#100)
 
 | Element | Gdzie | Stan |
 |---|---|---|
 | Rejestr żądań (`access`, `rectification`, `erasure`, `restriction`, `objection`, `portability`) i przejścia stanu bez cofania | `data_subject_requests` (migracja 0068), `GET/POST /api/admin/data-requests`, `POST …/{id}/status` | zrobione |
+| Ekran w panelu administracji | `admin/` (sekcja „Żądania osób (RODO)”), `admin/data-requests.js` | zrobione (zob. „Ekran w panelu”) |
 | Eksport danych jednej rodziny (JSON + CSV do wydruku) | `POST /api/admin/data-requests/{id}/export?format=json\|csv`, `src/pg/family-export.js` | zrobione (ten dokument) |
 | Sprostowanie imienia/nazwiska z historią (`identity_changes`) | — | nie zrobione: wymaga migracji |
 | Ograniczenie przetwarzania (art. 18): oznaczenie gospodarstwa/opiekuna, wykluczenie z kampanii i kartek, zdjęcie jako nowy zapis | `processing_restrictions` (migracja 0178), `POST …/{id}/restrict`, `POST …/{id}/lift-restriction`, `GET …/{id}/restrictions` | zrobione (#100, ten zakres) |
 | Anonimizacja gospodarstwa na żądanie usunięcia (`erasure`) | `POST /api/admin/anonymizations` (`reasonCode: data_subject_request`), `src/pg/anonymization.js`, migracja 0174 | zrobione jako mechanizm (prototyp, dane syntetyczne); zakres i procedura — [RETENTION.md](RETENTION.md); fizyczne usunięcie nie istnieje |
 | Raport „kto oglądał dane rodziny” (z `data_access_log`) w odpowiedzi dla rodzica | — | nie zrobione: D-07 (czy i w jakim zakresie to ujawniać) |
+
+## Ekran w panelu
+
+Sekcja „Żądania osób (RODO)” w `admin/` (tylko rola `admin`; serwer sprawdza uprawnienia przy każdym żądaniu, ukrycie przycisku nie jest kontrolą):
+
+- lista z filtrami stanu i rodzaju oraz kursorem („Pokaż więcej”; zmiana filtra zaczyna listę od początku); kolumny: rodzaj, podmiot (rodzaj i identyfikator, bez imion), data wpłynięcia, termin (z oznaczeniem „po terminie” dla otwartych), stan, odwołanie do decyzji;
+- formularz rejestracji (rodzaj, gospodarstwo/opiekun/uczeń z identyfikatorem skopiowanym z panelu Rodziny, data wpłynięcia, opcjonalny termin); bez treści żądania i danych kontaktowych;
+- zmiana stanu tylko do przodu, po potwierdzeniu; zamknięcie (`answered`/`rejected`) wymaga w panelu odwołania do dokumentu odpowiedzi;
+- eksport JSON/CSV: przyciski aktywne tylko dla `access`/`portability` w stanie `identity_verified`/`in_progress` (podpowiedź; reguły egzekwuje serwer, 409), okno potwierdzenia z ostrzeżeniem o danych osobowych i śladzie w dzienniku, krok w górę MFA przez `withStepUp` (przy `mfa_stale` panel prosi o kod i ponawia dokładnie raz), jeden eksport naraz (blokada przycisków). Plik trafia tylko do pobrania z pamięci karty; nic nie jest zapisywane w `localStorage`, logach ani konsoli. Po pobraniu panel pokazuje liczby pominiętych osób trzecich z nagłówków `X-Data-Export-Omitted-*`.
+- `Idempotency-Key` przy rejestracji: jeden klucz na wypełnienie formularza (ponowienie po błędzie sieci używa tego samego). **Uwaga:** trasa `POST /api/admin/data-requests` nie deduplikuje po kluczu — ochroną przed podwójnym zapisem jest blokada przycisku; ponowienie po zerwanym połączeniu może utworzyć drugi wpis (wymaga poprawki serwera, poza zakresem ekranu). Zmiana stanu jest idempotentna po stronie serwera.
 
 ## Przebieg (założenie do D-07)
 

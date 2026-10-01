@@ -22,6 +22,8 @@
 //   GET  /api/email/provider-pause?schoolYearId=…    aktywna pauza po odmowie konta przez dostawcę (#209)
 //   POST /api/email/provider-pause/lift              potwierdzenie naprawy konfiguracji: zarząd + świeże MFA (#209), idempotentne
 //   GET  /api/email/worker-status?schoolYearId=…     ostatni przebieg zadania i alarm „brak przebiegów” (#130; liczby i kody)
+//   GET  /api/email/quota?schoolYearId=…             stan dziennego limitu Brevo: doba UTC i strefa konta, dziś i jutro (#84; liczby)
+//   POST /api/email/quota/other-sends                ręczna ewidencja wiadomości spoza kolejki lub jej korekta (#84, Idempotency-Key, tylko dopisywanie)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //   GET  /api/email/preferences?t=…                  publiczna: podgląd wypisania (bez skutku, #110)
 //   POST /api/email/preferences?t=…                  publiczna: wypisanie jednym kliknięciem (bez Origin, #110)
@@ -53,7 +55,9 @@ import {
 } from '../../email/content.js';
 import { campaignPaymentInstructions, loadCurrentPaymentInstructions } from './payment-instructions.js';
 import { estimateSchedule } from '../../email/schedule.js';
-import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
+import {
+  accountDay, BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, QUOTA_LOCK_ID, quotaOverview, unsubscribeUrlFor, utcDay,
+} from '../../email/worker.js';
 import { loadProcessingRestrictions } from '../processing-restrictions.js';
 import { createJsonReader, readBodyText } from '../input.js';
 import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
@@ -1315,6 +1319,128 @@ async function workerStatus(request, env, url, json) {
   return json({ workerStatus: status }, 200, { 'Cache-Control': 'no-store' });
 }
 
+// --- Dzienny limit Brevo: stan i ewidencja wiadomości spoza kolejki (#84) -----
+// Role (założenie do D-08/D-17, jak worker-status): board/treasurer z MFA,
+// przydział szkolny (bez klasy) w podanym roku. Admin techniczny, przedstawiciel
+// i role klasowe: 403. Dziennik jest tylko do dopisywania — pomyłkę poprawia
+// nowy wpis ujemny (reasonCode 'correction' + correctsId), nic nie jest edytowane.
+const QUOTA_REASON_CODES = Object.freeze(['manual_brevo_panel', 'invitation', 'audit_committee', 'other', 'correction']);
+const QUOTA_MAX_COUNT = 10_000;
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function quotaNow(env) {
+  return typeof env?.now === 'function' ? env.now() : new Date();
+}
+
+async function quotaShow(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, schoolYearId);
+  const quota = await quotaOverview(env.db, quotaNow(env), emailConfig(env));
+  const { rows } = await env.db.query(
+    `SELECT COUNT(DISTINCT c.id)::int AS campaigns, COUNT(o.id)::int AS queued
+       FROM email_campaigns c
+       LEFT JOIN email_outbox o ON o.campaign_id = c.id AND o.state = 'queued'
+      WHERE c.school_year_id = $1 AND c.status IN ('sending', 'paused')`,
+    [schoolYearId],
+  );
+  quota.queuedCampaigns = { campaigns: rows[0].campaigns, queuedMessages: rows[0].queued };
+  return json({ quota }, 200, { 'Cache-Control': 'no-store' });
+}
+
+const LEDGER_COLUMNS = `id, to_char(day, 'YYYY-MM-DD') AS day, message_count, reason_code, corrects_id, actor_id, recorded_at`;
+
+function ledgerView(row) {
+  return {
+    id: row.id, day: row.day, count: row.message_count, reasonCode: row.reason_code,
+    correctsId: row.corrects_id ?? null, recordedBy: row.actor_id, recordedAt: iso(row.recorded_at),
+  };
+}
+
+async function recordOtherSend(request, env, json) {
+  const key = request.headers.get('Idempotency-Key')?.trim();
+  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
+  const data = await readJson(request);
+  if (!validId(data.schoolYearId)) throw new RequestError('invalid_request');
+  if (!QUOTA_REASON_CODES.includes(data.reasonCode)) throw new RequestError('invalid_quota_reason');
+  const correction = data.reasonCode === 'correction';
+  const count = data.count;
+  if (!Number.isInteger(count) || count === 0 || Math.abs(count) > QUOTA_MAX_COUNT || (count < 0) !== correction) {
+    throw new RequestError('invalid_quota_count');
+  }
+  if (typeof data.day !== 'string' || !DAY_PATTERN.test(data.day) || Number.isNaN(Date.parse(`${data.day}T00:00:00Z`))
+      || new Date(`${data.day}T00:00:00Z`).toISOString().slice(0, 10) !== data.day) {
+    throw new RequestError('invalid_quota_day');
+  }
+  if (correction ? !validId(data.correctsId) : data.correctsId != null) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, data.schoolYearId);
+  const actorId = context.session.user.id;
+  const now = quotaNow(env);
+  const config = emailConfig(env);
+  // Nowy wpis dotyczy bieżącej doby (UTC albo strefy konta); wstecz — tylko korekta.
+  if (!correction && data.day !== utcDay(now) && data.day !== accountDay(now, config.quotaTimezone)) {
+    throw new RequestError('invalid_quota_day');
+  }
+
+  const sameRequest = (row) => row.actor_id === actorId && row.day === data.day && row.message_count === count
+    && row.reason_code === data.reasonCode && (row.corrects_id ?? null) === (correction ? data.correctsId : null);
+  const replay = async (executor) => {
+    const { rows } = await executor.query(`SELECT ${LEDGER_COLUMNS} FROM email_send_ledger WHERE idempotency_key = $1`, [key]);
+    if (!rows[0]) return null;
+    if (!sameRequest(rows[0])) throw new RequestError('idempotency_conflict', 409);
+    return json({ entry: ledgerView(rows[0]) }, 200, { 'Idempotency-Replayed': 'true' });
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      // Ta sama blokada co przejmowanie kolejki przez zadanie: wpis i pula nie ścigają się.
+      await tx.query('SELECT pg_advisory_xact_lock($1)', [QUOTA_LOCK_ID]);
+      const existing = await replay(tx);
+      if (existing) return existing;
+      let recordedAt = null;
+      if (correction) {
+        const { rows: target } = await tx.query(
+          `SELECT id, to_char(day, 'YYYY-MM-DD') AS day, message_count, recorded_at FROM email_send_ledger
+            WHERE id = $1 AND source = 'other' AND message_count > 0`,
+          [data.correctsId],
+        );
+        if (!target[0]) throw new RequestError('quota_correction_target_not_found', 404);
+        if (target[0].day !== data.day) throw new RequestError('invalid_quota_day');
+        const { rows: done } = await tx.query(
+          'SELECT COALESCE(SUM(-message_count), 0)::int AS n FROM email_send_ledger WHERE corrects_id = $1', [data.correctsId],
+        );
+        if (done[0].n + Math.abs(count) > target[0].message_count) throw new RequestError('quota_correction_exceeds', 409);
+        // Korekta należy do tej samej doby konta co wpis korygowany.
+        recordedAt = target[0].recorded_at;
+      }
+      const id = crypto.randomUUID();
+      const { rows } = await tx.query(
+        `INSERT INTO email_send_ledger (id, day, source, message_count, actor_id, reason_code, idempotency_key, corrects_id, recorded_at)
+         VALUES ($1, $2, 'other', $3, $4, $5, $6, $7, COALESCE($8, now()))
+         RETURNING ${LEDGER_COLUMNS}`,
+        [id, data.day, count, actorId, data.reasonCode, key, correction ? data.correctsId : null, recordedAt],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: correction ? 'email.quota.other_corrected' : 'email.quota.other_recorded',
+        entityType: 'email_send_ledger', entityId: id,
+        metadata: {
+          schoolYearId: data.schoolYearId, day: data.day, count, reasonCode: data.reasonCode,
+          correctsId: correction ? data.correctsId : null,
+        },
+      });
+      return json({ entry: ledgerView(rows[0]) }, 201, { 'Idempotency-Replayed': 'false' });
+    });
+  } catch (error) {
+    if (error?.code === '23505') {
+      const existing = await replay(env.db);
+      if (existing) return existing;
+    }
+    return mapDatabaseError(error);
+  }
+}
+
 const REPORT_CATEGORIES = Object.freeze(['queued', 'sending', 'sent', 'delivered', 'bounced', 'delivery_unknown', 'failed', 'suppressed', 'skipped', 'cancelled']);
 const RESOLUTIONS = Object.freeze(['confirmed_delivered', 'confirmed_not_sent']);
 const EVIDENCE_CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
@@ -2119,6 +2245,14 @@ export async function handle(request, env, url, json) {
     if (url.pathname === '/api/email/worker-status') {
       if (method === 'GET') return await workerStatus(request, env, url, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    }
+    if (url.pathname === '/api/email/quota') {
+      if (method === 'GET') return await quotaShow(request, env, url, json);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    }
+    if (url.pathname === '/api/email/quota/other-sends') {
+      if (method === 'POST') return await recordOtherSend(request, env, json);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'POST' });
     }
     if (url.pathname === '/api/email/provider-pause/lift') {
       if (method === 'POST') return await providerPauseLift(request, env, json);

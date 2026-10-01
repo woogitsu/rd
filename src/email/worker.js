@@ -55,7 +55,7 @@ import { insertAuditEvent } from '../pg/audit.js';
 import { campaignPaymentInstructions } from '../pg/routes/payment-instructions.js';
 import { brusselsDay } from '../pg/today.js';
 
-const QUOTA_LOCK_ID = 732481707;
+export const QUOTA_LOCK_ID = 732481707;
 export const LEASE_MINUTES = 15;
 // Zdarzenia dostawcy oznaczające, że adres nie przyjął wiadomości (#210):
 // wiersz kończy jako „bounced”, nie „sent”. Wspólne dla webhooka i odzyskiwania.
@@ -133,6 +133,60 @@ export async function remainingQuota(executor, now, config) {
     [utc, account, config.quotaTimezone],
   );
   return Math.max(0, config.dailyLimit - config.dailyReserved - Number(rows[0].used));
+}
+
+// 'YYYY-MM-DD' + n dni (arytmetyka na dacie kalendarzowej, nie na godzinach —
+// zmiana czasu w strefie konta nie wpływa na wynik; #84).
+export function addDays(day, n) {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Zużycie jednej doby: 'utc' po kolumnie `day`, 'account' po `recorded_at`
+// przeliczonym do strefy konta. Same liczby (kampania / inne / razem).
+async function dayUsage(executor, kind, day, timezone) {
+  const { rows } = kind === 'utc'
+    ? await executor.query(
+      'SELECT source, COALESCE(SUM(message_count), 0)::int AS n FROM email_send_ledger WHERE day = $1 GROUP BY source',
+      [day])
+    : await executor.query(
+      `SELECT source, COALESCE(SUM(message_count), 0)::int AS n FROM email_send_ledger
+        WHERE (recorded_at AT TIME ZONE $2) >= $1::date AND (recorded_at AT TIME ZONE $2) < $1::date + 1
+        GROUP BY source`,
+      [day, timezone]);
+  const by = Object.fromEntries(rows.map((row) => [row.source, Number(row.n)]));
+  const campaign = by.campaign ?? 0;
+  const other = by.other ?? 0;
+  return { day, campaign, other, total: campaign + other };
+}
+
+// Stan dziennego limitu do podglądu (GET /api/email/quota, #84): dziś i jutro
+// w obu dobach (UTC i strefa konta), rezerwa, wiadomości w locie i pula, którą
+// zobaczy najbliższy przebieg (remainingQuota). Tylko odczyt, same liczby.
+export async function quotaOverview(executor, now, config) {
+  const utcToday = utcDay(now);
+  const accountToday = accountDay(now, config.quotaTimezone);
+  const windows = {
+    utc: {
+      today: await dayUsage(executor, 'utc', utcToday),
+      tomorrow: await dayUsage(executor, 'utc', addDays(utcToday, 1)),
+    },
+    account: {
+      timezone: config.quotaTimezone,
+      today: await dayUsage(executor, 'account', accountToday, config.quotaTimezone),
+      tomorrow: await dayUsage(executor, 'account', addDays(accountToday, 1), config.quotaTimezone),
+    },
+  };
+  const { rows } = await executor.query(IN_FLIGHT);
+  return {
+    dailyLimit: config.dailyLimit,
+    dailyReserved: config.dailyReserved,
+    inFlight: Number(rows[0].count),
+    remaining: await remainingQuota(executor, now, config),
+    windows,
+    generatedAt: now.toISOString(),
+  };
 }
 
 // Wpis w dzienniku limitu dla próby, która mogła wyjść (idempotentnie: jeden

@@ -1387,6 +1387,19 @@ definicje funkcji z migracji 0003, 0007, 0014, 0017, 0023, 0038, 0055, 0087,
 0136, `DROP FUNCTION rd_anonymization_update_allowed, rd_anonymization_active`,
 `DROP TABLE anonymization_runs` (na bazie z danymi tylko po kopii zapasowej).
 
+<<<<<<< HEAD
+`0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
+przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
+(bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj
+przesyłają admin i zarząd z przydziałem bez klasy, a czytają także
+przedstawiciele z przydziałem klasowym w roku dokumentu (`readRoles` w
+`DOCUMENT_POLICIES`); przydział z innego roku daje 404. Skutki dla danych:
+zbiór dozwolonych wartości tylko rośnie, istniejące wiersze `documents` nie są
+zmieniane ani przepisywane, `news_photo_document_kind_allowed` (0143) zostaje
+przy `board`, `documents` pozostaje poza eksportem rocznym. Wycofanie:
+odtworzenie CHECK z 0006 możliwe dopiero, gdy nie ma wierszy `council_shared`.
+
+
 `0176_audit_review_notes.sql` (#137, część niezależna od D-09) dodaje tabelę
 `audit_review_notes`: niezmienną (UPDATE/DELETE: `immutable_financial_record`,
 TRUNCATE: `deny_truncate`, `created_at` z zegara bazy) ścieżkę kontroli
@@ -1401,6 +1414,22 @@ funkcja `audit_review_notes_guard()` i triggery; żaden wiersz nie jest
 zmieniany. `body` to wolny tekst za bramką danych osobowych; w `audit_events`
 trafiają wyłącznie identyfikatory. Tabela jest w eksporcie rocznym.
 Wycofanie: DROP TABLE i DROP FUNCTION (na bazie z zapisami tylko po kopii).
+>>>>>>> origin/main
+
+`0177_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
+spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
+bez zera (wiersz kampanii nadal ma dokładnie 1) i dodaje kolumny opcjonalne
+`actor_id`, `reason_code` (`manual_brevo_panel`, `invitation`, `audit_committee`,
+`other`, `correction`), `idempotency_key` (UNIQUE) i `corrects_id` (FK do
+wpisu korygowanego) oraz CHECK `email_ledger_other_manual`: wpis ręczny ma
+aktora, kod i klucz, a korekta to wyłącznie liczba ujemna z kodem `correction`
+i wskazaniem korygowanego wpisu. Dziennik nadal jest tylko do dopisywania
+(trigger z 0007) — pomyłkę poprawia nowy wpis ujemny, nic nie jest edytowane.
+Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSends`)
+pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
+SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
+Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
+=======
 
 `0178_processing_restrictions.sql` (#100, RODO art. 18) dodaje tabelę
 `processing_restrictions` (tylko dopisywanie: nałożenie `restrict` i zdjęcie

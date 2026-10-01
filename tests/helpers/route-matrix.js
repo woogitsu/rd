@@ -1250,6 +1250,21 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/email/worker-status?schoolYearId=${target.schoolYearId}` }),
   },
   {
+    // Stan dziennego limitu Brevo (#84): odczyt jak worker-status; same liczby.
+    id: 'email.quota.get', module: 'email', method: 'GET', path: '/api/email/quota?schoolYearId=:year',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: ({ target }) => ({ path: `/api/email/quota?schoolYearId=${target.schoolYearId}` }),
+  },
+  {
+    // Ewidencja wiadomości spoza kolejki (#84): dziennik tylko do dopisywania, Idempotency-Key.
+    id: 'email.quota.otherSends', module: 'email', method: 'POST', path: '/api/email/quota/other-sends',
+    targets: YEAR_TARGETS, allow: EMAIL_EDIT, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: ({ target, key }) => ({
+      path: '/api/email/quota/other-sends', headers: withKey(key),
+      body: { schoolYearId: target.schoolYearId, day: new Date().toISOString().slice(0, 10), count: 1, reasonCode: 'invitation' },
+    }),
+  },
+  {
     // Zdjęcie pauzy wznawia wysyłkę do rodzin: wyłącznie zarząd z (świeżym) MFA,
     // jak zatwierdzenie kampanii. Fixture 'fresh' zwraca aktywną pauzę albo ją
     // tworzy (najwyżej jedna aktywna); skarbnik, admin i przedstawiciel: 403.
