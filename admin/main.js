@@ -16,6 +16,7 @@ import {
   userOptionLabel,
   grantPayload,
   grantRequestDialog,
+  filterUsers,
   grantRequestRow,
   grantRequestsPath,
   indexClasses,
@@ -28,6 +29,7 @@ import {
   roleNeedsPendingDecisionWarning,
   schoolYearPayload,
   scopeLabel,
+  usersSummary,
 } from "./core.js";
 import {
   batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
@@ -217,10 +219,13 @@ function fillDictionaries() {
 
 function renderUsers() {
   const tbody = byId("users-body");
-  const more = state.usersCursor ? " Lista jest niepełna — użyj „Pokaż więcej”." : "";
-  byId("users-summary").textContent = `${state.users.length} kont. Konta tworzy wyłącznie przyjęcie zaproszenia.${more}`;
+  const filters = Object.fromEntries(new FormData(byId("user-filters")));
+  const users = filterUsers(state.users, filters);
+  const filtered = Boolean(String(filters.q ?? "").trim() || filters.state);
+  byId("users-summary").textContent = usersSummary(users.length, state.users.length, Boolean(state.usersCursor), filtered);
   if (!state.users.length) return emptyRow(tbody, 7, "Brak kont.");
-  tbody.replaceChildren(...state.users.map((user) => {
+  if (!users.length) return emptyRow(tbody, 7, "Brak kont pasujących do filtra.");
+  tbody.replaceChildren(...users.map((user) => {
     const tr = document.createElement("tr");
     const self = user.id === state.me;
     // Skrót konta (przegląd demo 5); pełny identyfikator w podpowiedzi komórki.
@@ -600,6 +605,8 @@ function wirePendingRoleWarning(formId, warningId) {
 wirePendingRoleWarning("grant-form", "grant-pending-warning");
 wirePendingRoleWarning("invitation-form", "invitation-pending-warning");
 
+byId("user-filters").addEventListener("input", renderUsers);
+byId("user-filters").addEventListener("submit", (event) => event.preventDefault());
 byId("grant-filters").addEventListener("submit", (event) => {
   event.preventDefault();
   loadGrants().catch((error) => showMessage(error.message, true));
