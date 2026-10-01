@@ -13,7 +13,7 @@ import { DATA_ACCESS_EXEMPT_ROUTES, DATA_ACCESS_KINDS, DATA_ACCESS_ROUTES } from
 import { createDraft, createSignup, createTask } from '../src/pg/events.js';
 import { AUDIT_ACTION_CATALOG } from '../shared/audit-actions.js';
 import { ROUTE_MATRIX } from './helpers/route-matrix.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const Y1 = 'y-2026';
@@ -135,6 +135,7 @@ describe('pokrycie dziennika odczytu danych rodzin (#133)', () => {
     const PII = ['Anna', 'Testowa', 'Ola', 'opiekun1@example.invalid', 'nowy1@example.invalid'];
     before(async () => {
       db = await createTestDb();
+      await seedPublishedPrivacyNotice(db);
       env.db = db;
       await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
       await seedClass(db, { id: 'c-1a', schoolYearId: Y1, name: '1A' });
@@ -230,6 +231,7 @@ describe('pokrycie dziennika odczytu danych rodzin (#133)', () => {
     const env = {};
     before(async () => {
       db = await createTestDb();
+      await seedPublishedPrivacyNotice(db);
       env.db = db;
       await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
       await seedClass(db, { id: 'c-1a', schoolYearId: Y1, name: '1A' });

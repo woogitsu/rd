@@ -174,3 +174,37 @@ test('recordStorageBackupRun: zapisuje przebieg w backup_runs (#90 scalony — t
     await db.close();
   }
 });
+
+test('runStorageBackup: verifyTarget wykrywa uszkodzoną kopię, nie nadpisuje i nie usuwa', async () => {
+  const db = await createTestDb();
+  try {
+    const source = createMemoryStorage();
+    const target = createMemoryStorage();
+    const bytes = Buffer.from('dane syntetyczne do kontroli kopii');
+    await source.putObject('docs/aaaaaaa9', bytes, 'application/pdf');
+    await insertDocument(db, { id: 'd-9', objectKey: 'docs/aaaaaaa9', sha256: sha256Hex(bytes) });
+    await runStorageBackup({ db, sourceStorage: source, targetStorage: target });
+
+    const clean = await runStorageBackup({ db, sourceStorage: source, targetStorage: target, verifyTarget: true });
+    assert.equal(clean.targetHashMismatches, 0);
+    assert.equal(clean.alreadyVerified, 1);
+
+    await target.putObject('docs/aaaaaaa9', Buffer.from('uszkodzone'), 'application/pdf');
+    let writes = 0;
+    let deletes = 0;
+    const originalPut = target.putObject.bind(target);
+    target.putObject = async (...args) => { writes += 1; return originalPut(...args); };
+    target.deleteObject = async () => { deletes += 1; };
+
+    const lax = await runStorageBackup({ db, sourceStorage: source, targetStorage: target });
+    assert.equal(lax.targetHashMismatches, 0, 'bez verifyTarget decyduje sama obecność klucza');
+    const strict = await runStorageBackup({ db, sourceStorage: source, targetStorage: target, verifyTarget: true });
+    assert.equal(strict.targetHashMismatches, 1);
+    assert.equal(strict.alreadyVerified, 0);
+    assert.equal(strict.bySet.documents.targetHashMismatches, 1);
+    assert.equal(writes, 0);
+    assert.equal(deletes, 0);
+  } finally {
+    await db.close();
+  }
+});

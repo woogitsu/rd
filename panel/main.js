@@ -33,7 +33,8 @@ import "../shared/print.css";
 import { mountEntityHistory } from "../shared/entity-history-dom.js";
 
 let printedBy = null;
-mountShell().then((result) => { printedBy = sessionDisplayName(result?.session); });
+const shellReady = mountShell();
+shellReady.then((result) => { printedBy = sessionDisplayName(result?.session); });
 
 const FILTER_KEYS = ["schoolYearId", "status", "method", "householdId", "dateFrom", "dateTo", "q"];
 const state = { householdLabels: new Map(), labelsYear: null, payments: [], nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
@@ -474,7 +475,7 @@ const correctionDialog = configureDialog("correction-dialog", "correction", asyn
 });
 
 // #181: zwijana „Historia” wpłaty; tylko gdy serwer zwróci 200 (UX, nie kontrola dostępu).
-const paymentHistory = mountEntityHistory(correctionDialog.form, { api, idPrefix: "payment-history" });
+const paymentHistory = mountEntityHistory(correctionDialog.form, { api, grants: async () => (await shellReady)?.grants, idPrefix: "payment-history" });
 correctionDialog.form.insertBefore(paymentHistory.element, correctionDialog.form.querySelector(".dialog-actions"));
 correctionDialog.dialog.addEventListener("close", () => paymentHistory.reset());
 
