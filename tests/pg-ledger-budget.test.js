@@ -4,7 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { renderAuditReportHtml, reportContentSecurityPolicy } from '../src/pg/audit-report.js';
-import { budgetCsvLine } from '../src/pg/routes/ledger-budget.js';
+import { unzipSync, strFromU8 } from 'fflate';
+import { BUDGET_CSV_COLUMNS, budgetCsvLine } from '../src/pg/routes/ledger-budget.js';
 import { createMeeting, createResolution, determineQuorum, recordAttendance } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
 import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
@@ -203,6 +204,28 @@ test('przyjęcie przez zebranie zamraża wersje linii; wykonanie = netto wpisów
     const lines = (await csv.text()).split('\r\n');
     assert.ok(lines[0].includes('rodzaj;kategoria;aktywna;plan_przyjety_eur'));
     assert.ok(lines.some((row) => row.startsWith('Wydatek;Inne;tak;;;15,00;;;tak;nie;1')));
+    // XLSX (#121): te same kolumny co CSV, kwoty jako liczby (także ujemne), brak planu = pusta komórka, bez formuł.
+    const xlsx = await raw('GET', `/api/ledger/budget/execution?schoolYearId=${YEAR}&format=xlsx`, cookies.treasurer);
+    assert.equal(xlsx.headers.get('Content-Type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    assert.equal(xlsx.headers.get('Content-Disposition'), `attachment; filename="preliminarz-${YEAR}.xlsx"`);
+    assert.equal(xlsx.headers.get('Cache-Control'), 'no-store');
+    const xlsxBytes = new Uint8Array(await xlsx.arrayBuffer());
+    for (const [name, part] of Object.entries(unzipSync(xlsxBytes))) assert.ok(!/<f[\s>/]/.test(strFromU8(part)), `${name} bez formuł`);
+    const { default: readXlsxFileNode } = await import('read-excel-file/node');
+    const parsed = await readXlsxFileNode(Buffer.from(xlsxBytes));
+    const sheetRows = parsed[0].data ?? parsed[0];
+    assert.equal(sheetRows.length, 1 + result.items.length);
+    const outside = sheetRows.find((row) => row[1] === 'Inne');
+    assert.deepEqual([outside[3], outside[4], outside[5], outside[6]], [null, null, 15, null]);
+    const executedColumn = BUDGET_CSV_COLUMNS.findIndex((column) => column.header === 'wykonanie_netto_eur');
+    const xlsxExecuted = { Przychód: 0, Wydatek: 0 };
+    for (const row of sheetRows.slice(1)) {
+      assert.equal(typeof row[executedColumn], 'number');
+      xlsxExecuted[row[0]] += Math.round(row[executedColumn] * 100);
+    }
+    assert.deepEqual(xlsxExecuted, { Przychód: result.totals.income.executedNetCents, Wydatek: result.totals.expense.executedNetCents });
+    const exportEvents = (await db.query("SELECT metadata_json FROM audit_events WHERE action = 'ledger.budget_execution.exported' ORDER BY occurred_at, id")).rows;
+    assert.deepEqual(exportEvents.map((event) => event.metadata_json.format), ['csv', 'xlsx']);
     const html = await raw('GET', `/api/ledger/budget/execution?schoolYearId=${YEAR}&format=html`, cookies.treasurer);
     assert.equal(html.headers.get('Content-Security-Policy'), await reportContentSecurityPolicy());
     const page = await html.text();

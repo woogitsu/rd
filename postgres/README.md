@@ -1313,6 +1313,20 @@ COLUMN bez DEFAULT nie przepisuje tabeli. Kampanie pozostają poza eksportem
 rocznym. Wycofanie: DROP TRIGGER, DROP FUNCTION, DROP COLUMN (wraca wiązanie
 przez metadane zdarzeń z kodu sprzed migracji).
 
+`0163_guardian_household_end_reason.sql` (#86, #535) dodaje do
+`guardian_households` kolumnę tekstową `ended_reason` (powód zakończenia
+członkostwa opiekuna w gospodarstwie; zapisuje ją trasa
+`POST /api/guardians/{id}/households/{membershipId}/end`) oraz CHECK
+`guardian_household_end_reason_with_end` (powód tylko razem z `ends_on`).
+`guardian_household_check` (wersja z 0023) bez zmian — po zakończeniu wiersz
+jest niezmienny, więc powód również. Skutki dla danych: istniejące wiersze
+dostają NULL, żaden nie jest zmieniany ani usuwany; ADD COLUMN bez DEFAULT nie
+przepisuje tabeli. Kolumna to wolny tekst (inwentarz prywatności i lista DPIA
+jak dla `student_households.ended_reason`); trafia do eksportu rocznego razem
+z całym wierszem `guardian_households`, jak powody członkostwa ucznia.
+Wycofanie: na pustej bazie DROP CONSTRAINT i DROP COLUMN; na bazie z danymi
+tylko po kopii.
+
 `0167_documents_council_shared.sql` (#167, część: dokumenty Rady dla
 przedstawicieli) rozszerza CHECK `documents_api_row` o rodzaj `council_shared`
 (bez klasy jak `board`; powiązanie z księgą nadal tylko `financial`). Rodzaj

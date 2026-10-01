@@ -376,6 +376,10 @@
     "sha256": "33ad0292d8f2083173ba4f3d8dedf82bca47531e008b73b70ac7f24486cfa249"
   },
   {
+    "name": "0163_guardian_household_end_reason.sql",
+    "sha256": "338969d65bba34e46521db63050cb0cd318873b62ec6023f68ed48ffa28b737f"
+  },
+  {
     "name": "0167_documents_council_shared.sql",
     "sha256": "9b4fbdd386560c71873daa22c0be4320b7193f9cf928900a382b049cf4ab97f3"
   }
