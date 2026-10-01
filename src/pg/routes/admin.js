@@ -140,6 +140,7 @@ import {
 } from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
 import { promotionAllowedMethods, PromotionError, routePromotions } from '../promotions.js';
+import { mfaRequiredRoles } from '../mfa-policy.js';
 import { invitationBatchAllowedMethods, routeInvitationBatches } from '../invitation-batch.js';
 import {
   afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
@@ -1003,16 +1004,32 @@ async function classCoverage(env, url, json) {
             (SELECT to_char(max(s.created_at), 'YYYY-MM-DD') FROM sessions s
                JOIN role_grants g2 ON g2.user_id = s.user_id
               WHERE g2.class_id = c.id AND g2.role = 'representative'
-                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on
+                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on,
+            (SELECT count(DISTINCT g3.user_id) FROM role_grants g3
+               WHERE g3.class_id = c.id AND g3.role = 'representative'
+                 AND g3.revoked_at IS NULL AND (g3.expires_at IS NULL OR g3.expires_at > now())
+                 AND NOT EXISTS (SELECT 1 FROM sessions s3 WHERE s3.user_id = g3.user_id)) AS never_logged_in_count,
+            (SELECT count(DISTINCT g4.user_id) FROM role_grants g4
+               WHERE g4.class_id = c.id AND g4.role = 'representative'
+                 AND g4.revoked_at IS NULL AND (g4.expires_at IS NULL OR g4.expires_at > now())
+                 AND EXISTS (SELECT 1 FROM user_mfa_factors f4
+                              WHERE f4.user_id = g4.user_id AND f4.confirmed_at IS NOT NULL AND f4.disabled_at IS NULL)) AS mfa_enrolled_count
        FROM classes c WHERE c.school_year_id = $1
        ORDER BY c.name, c.id`,
     [schoolYearId],
   );
   return json({
     schoolYearId,
+    // Stan aktywacji (#108): czy rola przedstawiciela wymaga MFA wg polityki serwera
+    // (MFA_REQUIRED_ROLES) oraz — per klasa — ilu aktywnych przedstawicieli nigdy się
+    // nie zalogowało (brak sesji; stare sesje mogły zostać usunięte retencją) i ilu ma
+    // potwierdzone MFA. Wyłącznie liczby, bez identyfikatorów osób i e-maili.
+    representativeMfaRequired: mfaRequiredRoles(env).includes('representative'),
     classes: rows.map((row) => ({
       id: row.id,
       name: row.name,
+      neverLoggedInRepresentativeCount: toSafeInteger(row.never_logged_in_count),
+      mfaEnrolledRepresentativeCount: toSafeInteger(row.mfa_enrolled_count),
       activeRepresentativeCount: toSafeInteger(row.active_count),
       pendingInvitationCount: toSafeInteger(row.pending_count),
       nextInvitationExpiresAt: isoTimestamp(row.next_expires_at),
