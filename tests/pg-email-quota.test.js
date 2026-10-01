@@ -216,7 +216,7 @@ async function family(db, id) {
   await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)', [`${id}-s`, `${id}-g`]);
 }
 
-test('#84 two parallel worker runs at the day boundary never exceed the pool', async () => {
+test('#84 two parallel worker runs at the day boundary never exceed the pool (PGlite: po kolei, nie wyścig)', async () => {
   // 22:30 UTC = 00:30 w Brukseli: doba UTC 5 października, doba konta już 6.
   const boundary = new Date('2026-10-05T22:30:00Z');
   const t = await setup({ EMAIL_DAILY_LIMIT: '10', EMAIL_CAMPAIGN_MIN_DAILY: '100' }, boundary);
