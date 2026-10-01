@@ -344,6 +344,46 @@
         </form>
       </section>
 
+      <section class="card" aria-labelledby="dr-title">
+        <div class="section-heading">
+          <div><h2 id="dr-title">Żądania osób (RODO)</h2><p id="dr-summary">Wczytywanie…</p></div>
+          <button type="button" id="reload-dr">Odśwież</button>
+        </div>
+        <p class="hint">Rejestr zawiera tylko odwołanie do korespondencji (np. numer w teczce), bez treści żądania i danych kontaktowych. Eksport danych rodziny zawiera dane osobowe i wymaga świeżego kodu MFA; panel nie zapisuje pliku na serwerze ani w przeglądarce poza pobraniem. „Brak żądania w rejestrze” nie oznacza braku żądania — korespondencja wpływa poza panelem. Kto przyjmuje żądania i w jakim terminie: decyzja D-07.</p>
+        <form id="dr-create-form" class="grid-form">
+          <label>Rodzaj <select name="kind" id="dr-create-kind" required></select></label>
+          <label>Dotyczy <select name="subjectType" required></select></label>
+          <label>Identyfikator <input name="subjectId" autocomplete="off" required spellcheck="false" aria-describedby="dr-subject-hint" /></label>
+          <label>Data wpłynięcia <input name="receivedOn" type="date" required /></label>
+          <label>Termin odpowiedzi (opcjonalnie) <input name="dueOn" type="date" /></label>
+          <button class="primary" type="submit">Zarejestruj żądanie</button>
+          <p class="hint" id="dr-subject-hint">Identyfikator gospodarstwa, opiekuna albo ucznia skopiuj z panelu Rodziny. Nie wpisuj imion, e-maili ani treści żądania.</p>
+          <p class="form-error" id="dr-create-error" role="alert"></p>
+        </form>
+        <div class="filters">
+          <label>Stan <select id="dr-filter-status"></select></label>
+          <label>Rodzaj <select id="dr-filter-kind"></select></label>
+        </div>
+        <p class="form-error" id="dr-message" role="alert"></p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Żądania osób, których dane dotyczą</caption>
+            <thead><tr><th scope="col">Rodzaj</th><th scope="col">Dotyczy</th><th scope="col">Wpłynęło</th><th scope="col">Termin</th><th scope="col">Stan</th><th scope="col">Odwołanie do decyzji</th><th scope="col">Akcje</th></tr></thead>
+            <tbody id="dr-body"></tbody>
+          </table>
+        </div>
+        <p><button type="button" id="dr-more" hidden>Pokaż więcej</button></p>
+        <form id="dr-status-form" class="grid-form" hidden>
+          <p class="wide" id="dr-status-subject" role="status"></p>
+          <label>Nowy stan <select name="status" id="dr-status-select" required></select></label>
+          <label>Odwołanie do decyzji (wymagane przy zamknięciu) <input name="decisionNoteRef" maxlength="200" autocomplete="off" aria-describedby="dr-ref-hint" /></label>
+          <button class="primary" type="submit">Zmień stan</button>
+          <button type="button" id="dr-status-cancel">Anuluj</button>
+          <p class="hint" id="dr-ref-hint">Numer pisma lub pozycji w teczce administratora danych. Nie wpisuj danych osobowych.</p>
+          <p class="form-error" id="dr-status-error" role="alert"></p>
+        </form>
+      </section>
+
       <section class="card" aria-labelledby="audit-title">
         <div class="section-heading">
           <div><h2 id="audit-title">Dziennik zdarzeń</h2><p>Najnowsze zdarzenia wybranego obszaru, po 100 na stronę; starsze dociąga „Pokaż więcej”. Dziennik zawiera identyfikatory, bez adresów e-mail i bez treści opisowych.</p></div>
