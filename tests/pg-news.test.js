@@ -334,6 +334,33 @@ test('news_photo_alt_text_required is added with NOT VALID (does not retroactive
   assert.match(sql, /ADD CONSTRAINT news_photo_alt_text_required\s+CHECK \(alt_text IS NOT NULL OR decorative\) NOT VALID/);
 });
 
+// #124: zdjęcie zapisane PRZED 0071 bez opisu (ograniczenie NOT VALID go nie
+// obejmuje) nie może zostać zweryfikowane — 422 alt_text_required, status bez zmian,
+// a zdjęcie jest widoczne w rejestrze „do uzupełnienia opisu”. Symulacja „sprzed
+// migracji”: na czas wstawienia wiersza ograniczenie jest zdejmowane i przywracane.
+test('verifying a legacy photo without alt text or decorative flag is refused with 422 and the photo stays pending', async () => {
+  const db = await newsDb();
+  try {
+    await seedDocument(db, { id: 'doc-legacy-alt' });
+    await db.query('ALTER TABLE news_photos DROP CONSTRAINT news_photo_alt_text_required');
+    try {
+      await db.query(
+        `INSERT INTO news_photos (id, document_id, author, source, taken_on, license_text, depicts_children, uploaded_by)
+         VALUES ('p-legacy-no-alt', 'doc-legacy-alt', 'Autor', 'own_work', '2020-01-01', 'Zdjęcie bez opisu', false, 'admin')`,
+      );
+    } finally {
+      await db.query('ALTER TABLE news_photos ADD CONSTRAINT news_photo_alt_text_required CHECK (alt_text IS NOT NULL OR decorative) NOT VALID');
+    }
+    await assert.rejects(verifyPhoto(db, board1, { photoId: 'p-legacy-no-alt' }), { code: 'alt_text_required', status: 422 });
+    const { rows } = await db.query("SELECT rights_status, rights_verified_by FROM news_photos WHERE id = 'p-legacy-no-alt'");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].rights_status, 'pending');
+    assert.equal(rows[0].rights_verified_by, null);
+    const { rows: missing } = await db.query("SELECT id FROM news_photos_missing_alt_text WHERE id = 'p-legacy-no-alt'");
+    assert.equal(missing.length, 1, 'zdjęcie bez opisu musi być w rejestrze do uzupełnienia opisu');
+  } finally { await db.close(); }
+});
+
 test('a raw insert without alt text or decorative is rejected by the database, and the registry view stays empty otherwise', async () => {
   const db = await newsDb();
   try {

@@ -17,6 +17,18 @@ To środek wspierający, nie zastępuje odpowiedzialności osoby zapisującej (f
 - Podpowiedzi UI przy polach („Nie wpisuj imion dzieci…”) — brak zmian w panelach w tym PR.
 - Kolumny `reference_hash` na `payment_entries` — czeka na D-04 (okres retencji jawnej referencji).
 
+## Aktualności i wydarzenia (rewizje niezmienne)
+
+Każda zmiana treści aktualności (`news_post_revisions`) i wydarzenia (`event_revisions`) jest niezmienną rewizją, więc wpisane dane osobowe zostają w historii i w eksporcie. Bramka (`src/pg/pii-gate.js`) działa po stronie serwera w `createDraft` i `updateDraft` obu modułów (`src/pg/news.js`, `src/pg/events.js`) i obejmuje pola `news_post_revisions.title`, `news_post_revisions.body`, `event_revisions.title`, `event_revisions.description`:
+
+- e-mail, IBAN i numer rejestru krajowego — odrzucane zawsze (`422 personal_data_forbidden`), bez flagi obejścia;
+- telefon i znane imię i nazwisko ucznia lub opiekuna z roku szkolnego wpisu — `422 possible_personal_data`, zapis po ponowieniu z `confirmPersonalData: true`; dotyczy także przedstawiciela klasy zapisującego szkic (zakres klasy bez zmian);
+- przy aktualizacji sprawdzane są wyłącznie pola zmienione w tej rewizji (niezmieniony tekst nie wymaga ponownego potwierdzenia);
+- `audit_events` dostaje `piiConfirmed` i `piiCategories` (bez treści); ponowienie tego samego żądania z kluczem idempotencji nie tworzy drugiego wpisu;
+- zatwierdzenie i publikacja nadal wymagają osobnej osoby z zarządu (cztery oczy) — bramka ich nie zastępuje.
+
+Założenie zachowawcze (do decyzji zarządu/IOD): publiczny kontakt e-mail w treści aktualności lub wydarzenia jest odrzucany tak samo jak w polach finansowych; adres kontaktowy Rady podaje się przez stałe dane strony, nie w treści. Pola `location` i `organizer` wydarzenia nie są objęte bramką (nazwy miejsc i organizacji; nie są polem wolnego tekstu o osobach) — do rewizji, jeśli zarząd uzna inaczej. Wydłużenie okresu przechowywania i `reference_hash` dla `payment_entries.reference` nadal czekają na D-04.
+
 ## Wydajność
 
 `detectPossiblePersonalData` przy ~1000 znanych imionach/nazwiskach wykonuje się poniżej 50 ms (test `tests/pii-check.test.js`) — dopasowanie liniowe po zbiorze znormalizowanych słów tekstu, bez zapytań do bazy poza jednorazowym pobraniem listy imion/nazwisk dla roku szkolnego.
