@@ -156,6 +156,13 @@ export function unsubscribeUrlFor(config, { campaignId, category, emailHash }) {
 }
 
 async function recheckRow(tx, campaign, row, config) {
+  // #100 (art. 18 RODO): ograniczenie nałożone po zatwierdzeniu kampanii wstrzymuje wysyłkę
+  // do ograniczonego gospodarstwa albo opiekuna; wiersz jest pomijany, nie usuwany.
+  const restricted = await tx.query(
+    'SELECT 1 FROM processing_restricted_subjects WHERE household_id = $1 OR guardian_id = $2 LIMIT 1',
+    [row.household_id, row.guardian_id],
+  );
+  if (restricted.rows[0]) return { state: 'skipped', error: 'processing_restricted' };
   if (campaign.audience === 'no_payment_record') {
     const paid = await tx.query(
       `SELECT 1 FROM household_payment_totals
@@ -461,6 +468,10 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
              WHERE c.id = o.campaign_id AND c.audience = 'no_payment_record' AND p.net_amount_cents > 0)
           AND NOT EXISTS (
             SELECT 1 FROM email_campaign_recipients r JOIN email_active_suppressions s ON s.email_hash = r.email_hash
+             WHERE r.id = o.recipient_id)
+          AND NOT EXISTS (
+            SELECT 1 FROM email_campaign_recipients r
+              JOIN processing_restricted_subjects x ON x.household_id = o.household_id OR x.guardian_id = r.guardian_id
              WHERE r.id = o.recipient_id)
           AND EXISTS (
             SELECT 1

@@ -641,6 +641,192 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/data-requests/{requestId}/lift-restriction": {
+      "post": {
+        "operationId": "admin_dataRequestLiftRestriction",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.dataRequestLiftRestriction",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.dataRequestLiftRestriction"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/data-requests/{requestId}/restrict": {
+      "post": {
+        "operationId": "admin_dataRequestRestrict",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.dataRequestRestrict",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.dataRequestRestrict"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/data-requests/{requestId}/restrictions": {
+      "get": {
+        "operationId": "admin_dataRequestRestrictions",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.dataRequestRestrictions",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.dataRequestRestrictions"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/data-requests/{requestId}/status": {
       "post": {
         "operationId": "admin_dataRequestStatus",
@@ -17943,9 +18129,11 @@
           "data_request_export_in_progress",
           "data_request_identity_not_verified",
           "data_request_kind_not_exportable",
+          "data_request_kind_not_restrictable",
           "data_request_not_found",
           "data_request_status_cannot_go_back",
           "data_request_subject_mismatch",
+          "data_request_subject_not_restrictable",
           "date_outside_school_year",
           "difference_requires_note",
           "document_active_content",
@@ -18637,6 +18825,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "data_request_kind_not_restrictable",
+        "meaning": "Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "data_request_not_found",
         "meaning": "Nie znaleziono żądania.",
         "retry": "Nie — popraw dane żądania."
@@ -18649,6 +18842,11 @@
       {
         "code": "data_request_subject_mismatch",
         "meaning": "Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "data_request_subject_not_restrictable",
+        "meaning": "Żądanie nie wskazuje gospodarstwa ani opiekuna, więc nie można nałożyć ograniczenia. Popraw wpis w rejestrze.",
         "retry": "Nie — popraw dane żądania."
       },
       {

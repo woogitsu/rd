@@ -90,9 +90,11 @@ wpisów).
 | `data_request_export_in_progress` | Eksport dla tego żądania już trwa. Poczekaj na jego zakończenie. | Tak, po chwili (drugi równoczesny eksport tego samego żądania). |
 | `data_request_identity_not_verified` | Eksport danych jest możliwy dopiero po potwierdzeniu tożsamości wnioskodawcy. | Nie — najpierw zmień stan żądania. |
 | `data_request_kind_not_exportable` | Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych. | Nie — popraw dane żądania. |
+| `data_request_kind_not_restrictable` | Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw. | Nie — popraw dane żądania. |
 | `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
 | `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
 | `data_request_subject_mismatch` | Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze. | Nie — popraw dane żądania. |
+| `data_request_subject_not_restrictable` | Żądanie nie wskazuje gospodarstwa ani opiekuna, więc nie można nałożyć ograniczenia. Popraw wpis w rejestrze. | Nie — popraw dane żądania. |
 | `date_outside_school_year` | Data wpisu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `difference_requires_note` | Różnica wymaga wpisania wyjaśnienia. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_active_content` | Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady. | Zależy od kontekstu (patrz moduł trasy). |

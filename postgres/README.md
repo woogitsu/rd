@@ -1361,3 +1361,18 @@ trybu odtworzenia `SET LOCAL rd.restore` (zwykły parametr sesji).
 Dowód: `tests/pg-real-app-role.test.js` (`npm run test:pg-real`). Wycofanie:
 REVOKE ALL na tabelach/sekwencjach/funkcjach schematu i `ALTER DEFAULT
 PRIVILEGES … REVOKE`, REVOKE USAGE na schemacie, `DROP ROLE rd_app`.
+
+`0178_processing_restrictions.sql` (#100, RODO art. 18) dodaje tabelę
+`processing_restrictions` (tylko dopisywanie: nałożenie `restrict` i zdjęcie
+`lift` to osobne wiersze z aktorem, czasem serwera i odwołaniem do żądania z
+`data_subject_requests`), widok `processing_restricted_subjects` (podmioty, których
+ostatni wiersz to `restrict`) oraz rozszerza CHECK
+`email_campaign_exclusions_reason_check` o powód `processing_restricted`.
+Skutki dla danych: brak wstecznego wypełnienia (po migracji nikt nie jest
+ograniczony); żadnych treści żądań ani danych kontaktowych; istniejące
+wykluczenia kampanii bez zmian; wiersz nie jest usuwany ani zmieniany
+(trigger, TRUNCATE blokuje `deny_truncate()`), `created_at` stempluje baza.
+Wycofanie: `DROP VIEW processing_restricted_subjects`, `DROP TABLE
+processing_restrictions`, `DROP FUNCTION processing_restrictions_guard()` oraz
+przywrócenie CHECK z 0158 (tylko bez wierszy `processing_restricted`); znika
+ślad ograniczeń, dane rodzin zostają.

@@ -9,7 +9,7 @@
 | Rejestr żądań (`access`, `rectification`, `erasure`, `restriction`, `objection`, `portability`) i przejścia stanu bez cofania | `data_subject_requests` (migracja 0068), `GET/POST /api/admin/data-requests`, `POST …/{id}/status` | zrobione |
 | Eksport danych jednej rodziny (JSON + CSV do wydruku) | `POST /api/admin/data-requests/{id}/export?format=json\|csv`, `src/pg/family-export.js` | zrobione (ten dokument) |
 | Sprostowanie imienia/nazwiska z historią (`identity_changes`) | — | nie zrobione: wymaga migracji |
-| Ograniczenie przetwarzania (`processing_restricted`, wykluczenie z kampanii i kartek) | — | nie zrobione: wymaga migracji |
+| Ograniczenie przetwarzania (art. 18): oznaczenie gospodarstwa/opiekuna, wykluczenie z kampanii i kartek, zdjęcie jako nowy zapis | `processing_restrictions` (migracja 0178), `POST …/{id}/restrict`, `POST …/{id}/lift-restriction`, `GET …/{id}/restrictions` | zrobione (#100, ten zakres) |
 | Usunięcie / anonimizacja | — | nie zrobione: czeka na mechanizm retencji (#91, D-04) |
 | Raport „kto oglądał dane rodziny” (z `data_access_log`) w odpowiedzi dla rodzica | — | nie zrobione: D-07 (czy i w jakim zakresie to ujawniać) |
 
@@ -70,9 +70,21 @@ W tej samej transakcji co budowa paczki (awaria zapisu = brak pliku):
 ## Usunięcie, anonimizacja, ograniczenie i sprostowanie
 
 - **Usunięcie/anonimizacja** (`erasure`): brak zatwierdzonego mechanizmu — raport retencji (#91, `GET /api/admin/retention/preview`) tylko liczy kandydatów, nie usuwa. Dopóki D-04 nie ustali okresów i sposobu anonimizacji, żądanie usunięcia jest rejestrowane i rozstrzygane poza panelem; odpowiedź = stan `answered`/`rejected` z odwołaniem do decyzji administratora danych. Historia finansowa (wpłaty, korekty) i dzienniki są niezmienne (triggery) — ewentualna anonimizacja musi być nowym, audytowanym zdarzeniem, nie usunięciem wiersza.
-- **Ograniczenie przetwarzania** (`restriction`) i **sprzeciw** (`objection`): do czasu flagi `processing_restricted` (migracja) obsługujący może wyłączyć zgodę na kontakt opiekuna (`PATCH /api/guardians/{id}/contact`), co wyklucza go z kampanii; wydruk kartek nie ma jeszcze wykluczenia.
+- **Ograniczenie przetwarzania** (`restriction`) i **sprzeciw** (`objection`): patrz sekcja niżej.
 - **Sprostowanie** (`rectification`): e-mail i zgoda — `PATCH /api/guardians/{id}/contact` (historia w `guardian_contact_changes`); imię/nazwisko ucznia lub opiekuna — brak trasy z historią i powodem (wymaga tabeli `identity_changes`, migracja).
+
+## Ograniczenie przetwarzania (art. 18 RODO)
+
+Ograniczenie to dodatkowy stan, który wyłącza wybrane operacje — **dane nie są usuwane ani zmieniane**.
+
+- **Kto i kiedy (założenie do D-07):** administrator (rola `admin`, MFA) na podstawie żądania rodzaju `restriction` albo `objection` w stanie `identity_verified`/`in_progress`. Podmiot wynika z żądania: gospodarstwo, w drugiej kolejności opiekun; żądanie wskazujące wyłącznie ucznia → 409 `data_request_subject_not_restrictable` (zarejestruj je na gospodarstwo lub opiekuna).
+- **Trasy:** `POST /api/admin/data-requests/{id}/restrict`, `POST …/lift-restriction`, `GET …/restrictions` (historia: akcja, aktor, czas — bez danych osobowych). Idempotentność wynika ze stanu: powtórzenie tego samego przejścia (podwójne kliknięcie, ponowienie) daje 200 `changed: false`, bez nowego wiersza i zdarzenia; równoległe wywołania serializuje blokada doradcza na podmiocie.
+- **Skutek dla gospodarstwa:** wypada z migawki kampanii e-mail (powód `processing_restricted` w `email_campaign_exclusions`), z kolejki przed wysyłką (worker pomija wiersz: `skipped`, `processing_restricted`; to samo sprawdza atomowy warunek tuż przed wysyłką) i z wydruku kartek (także dla przedstawiciela klasy; odpowiedź nie ujawnia, że wiersz pominięto).
+- **Skutek dla opiekuna:** przestaje być adresatem e-mail; drugi opiekun tej samej rodziny (bez ograniczenia) może nim zostać, a gdy ograniczeni są wszyscy — rodzina wypada z powodem `processing_restricted`. Kartka nie zawiera danych opiekuna, więc jej to nie dotyczy (założenie do D-07; jeśli zarząd uzna inaczej, ograniczenie należy nałożyć na gospodarstwo).
+- **Zdjęcie ograniczenia** to NOWY wiersz (`lift`), nie zmiana ani usunięcie wiersza nałożenia; tabela `processing_restrictions` jest tylko do dopisywania (trigger, blokada TRUNCATE). Zdjęcie jest możliwe także po rozstrzygnięciu żądania (ograniczenie trwa po odpowiedzi), nie po jego odrzuceniu. Informowanie osoby przed zdjęciem (art. 18 ust. 3) odbywa się poza panelem.
+- **Ślad:** zdarzenia `processing_restriction.applied` / `processing_restriction.lifted` (domena `privacy`) z aktorem, czasem, identyfikatorem zapisu, identyfikatorem żądania i rodzajem podmiotu.
+- **Poza zakresem:** wykluczenie z innych przetwarzań niż e-mail i kartki (np. listy klas, zebrania, eksport roczny — wymaga decyzji zarządu, co ma znaczyć „ograniczone” dla danych księgowych, których Rada musi przechowywać); `processing_restrictions` nie wchodzi do eksportu rocznego (jak rejestr żądań).
 
 ## Testy
 
-`tests/pg-data-subject-requests.test.js` (rejestr), `tests/pg-data-subject-export.test.js` (eksport: rodzeństwo w dwóch klasach, dwoje opiekunów z różnych gospodarstw, opiekun w dwóch gospodarstwach, rodzeństwo przyrodnie, żądanie ucznia, znaczniki innych rodzin, sumy = `household_payment_totals`, podwójne kliknięcie, stan i rodzaj żądania, granice ról i MFA, CSV), `tests/pg-authz-matrix.test.js` (`admin.dataRequestExport`), `tests/pg-data-access-coverage.test.js`.
+`tests/pg-data-subject-requests.test.js` (rejestr), `tests/pg-processing-restrictions.test.js` (ograniczenie: role, podwójne kliknięcie, dwoje opiekunów, rodzeństwo, kampania, kartki, worker, zdjęcie jako nowy zapis), `tests/pg-data-subject-export.test.js` (eksport: rodzeństwo w dwóch klasach, dwoje opiekunów z różnych gospodarstw, opiekun w dwóch gospodarstwach, rodzeństwo przyrodnie, żądanie ucznia, znaczniki innych rodzin, sumy = `household_payment_totals`, podwójne kliknięcie, stan i rodzaj żądania, granice ról i MFA, CSV), `tests/pg-authz-matrix.test.js` (`admin.dataRequestExport`), `tests/pg-data-access-coverage.test.js`.

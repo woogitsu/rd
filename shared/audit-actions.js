@@ -216,6 +216,8 @@ const CATALOG = {
   'access_log.viewed': ['privacy', 'Odczyt dziennika dostępu do danych'],
   'data_subject_request.created': ['privacy', 'Rejestracja żądania osoby, której dane dotyczą'],
   'data_subject_request.status_changed': ['privacy', 'Zmiana stanu żądania osoby'],
+  'processing_restriction.applied': ['privacy', 'Nałożenie ograniczenia przetwarzania danych (gospodarstwo lub opiekun)'],
+  'processing_restriction.lifted': ['privacy', 'Zdjęcie ograniczenia przetwarzania danych (nowy zapis, historia zostaje)'],
   'data_subject_request.exported': ['privacy', 'Eksport danych jednej rodziny dla żądania osoby'],
   'privacy_notice.created': ['privacy', 'Utworzenie wersji informacji o prywatności'],
   'privacy_notice.approved': ['privacy', 'Zatwierdzenie informacji o prywatności'],

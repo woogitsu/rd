@@ -130,8 +130,8 @@ const EXEMPT_GROUPS = [
     routes: ['admin.users', 'admin.accountRequests', 'admin.grantRequests', 'admin.grants', 'admin.invitations', 'admin.schoolYears', 'privacyNotice.list'],
   },
   {
-    reason: 'rejestr żądań osób (#100): wyłącznie identyfikatory, rodzaj i daty; tylko admin z MFA',
-    routes: ['admin.dataRequests'],
+    reason: 'rejestr żądań osób i historia ograniczeń przetwarzania (#100): wyłącznie identyfikatory, rodzaj, akcja i daty; tylko admin z MFA',
+    routes: ['admin.dataRequests', 'admin.dataRequestRestrictions'],
   },
   {
     reason: 'właściciel jednorazowego tokenu widzi wyłącznie własne dane (bez sesji Rady)',
