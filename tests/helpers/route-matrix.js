@@ -1513,6 +1513,10 @@ export const ROUTE_MATRIX = Object.freeze([
   adminRoute('admin.audit', 'GET', '/api/admin/audit', {}),
   // Przegląd dziennika odczytu danych rodzin (#133): wariant zachowawczy do D-04/D-07/D-08 — wyłącznie admin + MFA.
   adminRoute('admin.accessLog', 'GET', '/api/admin/access-log', {}),
+  // Przegląd dostępu po kadencji (#133): tylko odczyt, wyłącznie admin + MFA; rok źródłowy z fixture promotionYears.
+  adminRoute('admin.accessReview', 'GET', '/api/admin/access-review', {
+    object: 'promotionYears', build: ({ obj }) => ({ path: `/api/admin/access-review?schoolYearId=${obj.fromSchoolYearId}` }),
+  }),
   // Rejestr żądań osób (#100): wariant zachowawczy, wyłącznie admin (jak cały moduł).
   adminRoute('admin.dataRequests', 'GET', '/api/admin/data-requests', {}),
   adminRoute('admin.dataRequestCreate', 'POST', '/api/admin/data-requests', {

@@ -140,6 +140,8 @@ export const REASON_LABELS = Object.freeze({
   idle: "bezczynność",
   invalid_password: "błędne hasło",
   invitation: "zaproszenie",
+  reads_without_valid_grant: "odczyty bez ważnego przydziału",
+  school_year_ended: "rok szkolny się zakończył",
   login_succeeded: "udane logowanie",
   logout: "wylogowanie",
   malformed: "błędny adres",

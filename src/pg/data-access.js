@@ -147,6 +147,7 @@ const EXEMPT_GROUPS = [
   { reason: 'nieudane doręczenia (adresy zamaskowane): osobny ślad audytu', audit: 'email.attention_list.viewed', routes: ['email.attention'] },
   { reason: 'przegląd dziennika zdarzeń (admin + MFA): sam zapisuje ślad', audit: 'audit.viewed', routes: ['admin.audit'] },
   { reason: 'przegląd dziennika odczytu (admin + MFA): sam zapisuje ślad', audit: 'access_log.viewed', routes: ['admin.accessLog'] },
+  { reason: 'przegląd dostępu po kadencji (admin + MFA): konta, role i liczby odczytów, bez imion i e-maili; sam zapisuje ślad', audit: 'access_review.viewed', routes: ['admin.accessReview'] },
   {
     reason: 'prośby opiekunów o aktualizację (imię opiekuna, proponowany adres): ślad audytu odczytu; rodzaj w data_access_log wymaga migracji CHECK',
     audit: 'guardian_update_request.list_viewed', routes: ['guardianUpdates.list'], followUp: true,
