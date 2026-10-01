@@ -3,7 +3,7 @@ import { errorMessage as sharedErrorMessage } from "../shared/messages.js";
 import { formatSchoolYear } from "../shared/school-year.js";
 import { shortId } from "../shared/short-id.js";
 import { formatDateOrTimestamp } from "../shared/zoned-time.js";
-import { AUDIT_ACTION_LABELS, AUDIT_DOMAINS } from "../shared/audit-actions.js";
+import { AUDIT_ACTION_LABELS, AUDIT_DOMAINS, AUDIT_SOURCE_LABELS } from "../shared/audit-actions.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -442,6 +442,7 @@ export function describeAuditEvent(event, users = []) {
   const label = ACTION_LABELS[event.action] ?? event.action;
   const meta = event.metadata ?? {};
   const details = [];
+  if (!event.actorId && event.source) details.push(`źródło: ${AUDIT_SOURCE_LABELS[event.source] ?? event.source}`);
   if (meta.role) details.push(ROLE_LABELS[meta.role] ?? meta.role);
   if (meta.userId) details.push(`konto ${accountName(meta.userId, users)}`);
   if (meta.classId) details.push(`klasa ${meta.classId}`);

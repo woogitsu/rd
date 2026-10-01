@@ -105,6 +105,12 @@ test('describeAuditEvent shows method and denial counter for access.denied', () 
   assert.equal(describeAuditEvent({ action: 'access.denied', metadata: {} }).details, '');
 });
 
+test('describeAuditEvent shows the source only for events without an actor (#181)', () => {
+  const system = describeAuditEvent({ action: 'email.sent', actorId: null, source: 'email_worker', metadata: {} });
+  assert.equal(system.details, 'źródło: Worker e-mail');
+  assert.equal(describeAuditEvent({ action: 'email.sent', actorId: 'u-1', source: null, metadata: {} }).details, '');
+});
+
 // #224: pole potwierdzenia resetu MFA musi dokładnie odpowiadać identyfikatorowi
 // konta (kontrakt POST /api/admin/users/{id}/mfa-reset) i rozróżniać anulowanie
 // okna (Escape/Anuluj -> null) od wpisania złego tekstu.
