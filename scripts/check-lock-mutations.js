@@ -50,6 +50,7 @@ export const MUTANTS = [
   { id: 'payments-allocation', file: 'src/pg/routes/payments.js', fn: 'createAllocation', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'payments-allocation-reversal', file: 'src/pg/routes/payments.js', fn: 'reverseAllocation', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'ledger-transfer-reversal', file: 'src/pg/routes/ledger-cash.js', fn: 'createTransfer', kind: 'for-update', test: PAYMENT_LOCKS },
+  { id: 'ledger-replacement', file: 'src/pg/routes/ledger.js', fn: 'createReplacement', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'email-cancel', file: 'src/pg/routes/email.js', fn: 'loadCampaign', kind: 'for-update', test: CONCURRENCY },
   { id: 'events-lock', file: 'src/pg/events.js', fn: 'lockEvent', kind: 'for-update', test: DOMAIN },
   { id: 'news-lock', file: 'src/pg/news.js', fn: 'lockPost', kind: 'for-update', test: DOMAIN },
