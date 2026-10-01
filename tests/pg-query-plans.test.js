@@ -97,7 +97,45 @@ before(async () => {
             repeat('b', 64), 'idem-pd-' || i, now() - i * interval '1 minute'
        FROM generate_series(1, ${VOLUME}) i`,
   );
-  for (const table of ['users', 'role_grants', 'invitations', 'audit_events', 'email_campaigns', 'documents']) {
+  // Księga i wpłaty z trzech lat (#159, dodatek): widoki netto agregują korekty,
+  // więc plan odczytu jednego roku/gospodarstwa nie może czytać korekt wszystkich lat.
+  await seedSchoolYear(db, 'y-plan-3');
+  const years = ['y-plan', 'y-plan-2', 'y-plan-3'];
+  for (const [n, year] of years.entries()) {
+    await db.query(
+      `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES
+         ('cat-in-${n}', $1, 'income', 'Przychody', 'u-admin'), ('cat-out-${n}', $1, 'expense', 'Wydatki', 'u-admin')`,
+      [year],
+    );
+  }
+  await db.query(
+    `INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description, occurred_on, method, created_by, idempotency_key)
+     SELECT 'le-' || i, (ARRAY['y-plan','y-plan-2','y-plan-3'])[i % 3 + 1],
+            CASE WHEN i % 2 = 0 THEN 'income' ELSE 'expense' END, 1000 + i % 500,
+            CASE WHEN i % 2 = 0 THEN 'cat-in-' ELSE 'cat-out-' END || (i % 3),
+            'Wpis syntetyczny ' || i, DATE '2026-09-01' + (i % 300), CASE WHEN i % 4 = 0 THEN 'cash' ELSE 'bank' END,
+            'u-admin', 'idem-le-' || i
+       FROM generate_series(1, ${VOLUME}) i`,
+  );
+  await db.query(
+    `INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
+     SELECT 'lc-' || i, 'le-' || i, 1, 'Korekta syntetyczna', 'u-admin', 'idem-lc-' || i
+       FROM generate_series(1, ${VOLUME}) i`,
+  );
+  await db.query(`INSERT INTO households (id) SELECT 'hh-' || i FROM generate_series(1, 2000) i`);
+  await db.query(
+    `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, status, created_by, idempotency_key)
+     SELECT 'pe-' || i, 'hh-' || (i % 2000 + 1), (ARRAY['y-plan','y-plan-2','y-plan-3'])[i % 3 + 1], 2000 + i % 100,
+            DATE '2026-09-01' + (i % 300), 'bank', 'recorded', 'u-admin', 'idem-pe-' || i
+       FROM generate_series(1, ${VOLUME}) i`,
+  );
+  await db.query(
+    `INSERT INTO payment_corrections (id, payment_entry_id, amount_cents, reason, created_by, idempotency_key)
+     SELECT 'pcor-' || i, 'pe-' || i, 1, 'Korekta syntetyczna', 'u-admin', 'idem-pcor-' || i
+       FROM generate_series(1, ${VOLUME}) i`,
+  );
+  for (const table of ['users', 'role_grants', 'invitations', 'audit_events', 'email_campaigns', 'documents',
+    'ledger_entries', 'ledger_corrections', 'payment_entries', 'payment_corrections']) {
     await db.query(`ANALYZE ${table}`);
   }
 });
@@ -148,4 +186,48 @@ test('GET /api/documents?cursor — bez Seq Scan po documents', async () => {
   const next = await call(`/api/documents?schoolYearId=y-plan&limit=50&cursor=${first.data.nextCursor}`, admin);
   assert.equal(next.status, 200);
   await assertNoSeqScan(next.queries, 'documents');
+});
+
+// Widoki netto agregują korekty. Plan odczytu jednego roku (lub gospodarstwa) nie może
+// czytać wszystkich korekt wszystkich lat (Seq Scan po tabeli korekt, > 10 000 wierszy).
+async function assertNoSeqScanOf(sql, params, tables, label) {
+  const nodes = await explain({ sql, params });
+  const scans = nodes.filter((n) => n['Node Type'] === 'Seq Scan' && tables.includes(n['Relation Name']));
+  assert.deepEqual(scans, [], `${label}: Seq Scan ${JSON.stringify(scans.map((n) => n['Relation Name']))}: ${JSON.stringify(nodes.map((n) => [n['Node Type'], n['Relation Name'], n['Index Name']]))}`);
+}
+
+test('ledger_entry_net dla jednego roku — bez Seq Scan po ledger_corrections', async () => {
+  await assertNoSeqScanOf(
+    'SELECT id, net_amount_cents FROM ledger_entry_net WHERE school_year_id = $1 AND occurred_on <= $2',
+    ['y-plan', '2027-03-01'], ['ledger_corrections'], 'ledger_entry_net',
+  );
+});
+
+test('ledger_balance_at i ledger_non_bank_net_at — treść funkcji bez Seq Scan po ledger_corrections', async () => {
+  // Plan funkcji SQL jest wbudowany (inlining) tylko dla prostych funkcji; sprawdzamy
+  // zapytanie z ciała funkcji oraz poprawność wyniku samej funkcji.
+  await assertNoSeqScanOf(
+    `SELECT sum(CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END)
+       FROM ledger_entry_net e WHERE e.school_year_id = $1 AND e.occurred_on <= $2`,
+    ['y-plan', '2027-03-01'], ['ledger_corrections'], 'ledger_balance_at (ciało)',
+  );
+  await assertNoSeqScanOf(
+    `SELECT sum(CASE WHEN e.direction = 'income' THEN e.net_amount_cents ELSE -e.net_amount_cents END)
+       FROM ledger_entry_net e WHERE e.school_year_id = $1 AND e.occurred_on <= $2 AND e.method <> 'bank'`,
+    ['y-plan', '2027-03-01'], ['ledger_corrections'], 'ledger_non_bank_net_at (ciało)',
+  );
+  const { rows } = await db.query(
+    `SELECT ledger_balance_at('y-plan', DATE '2027-03-01')::text AS balance,
+            (SELECT COALESCE(sum(CASE WHEN e.direction = 'income' THEN e.amount_cents - COALESCE(c.s, 0) ELSE -(e.amount_cents - COALESCE(c.s, 0)) END), 0)
+               FROM ledger_entries e LEFT JOIN (SELECT ledger_entry_id, sum(amount_cents) s FROM ledger_corrections GROUP BY 1) c ON c.ledger_entry_id = e.id
+              WHERE e.school_year_id = 'y-plan' AND e.occurred_on <= DATE '2027-03-01')::text AS expected`,
+  );
+  assert.equal(rows[0].balance, rows[0].expected);
+});
+
+test('household_payment_totals dla jednego gospodarstwa — bez Seq Scan po payment_corrections i payment_entries', async () => {
+  await assertNoSeqScanOf(
+    'SELECT household_id, school_year_id, net_amount_cents, payment_count FROM household_payment_totals WHERE household_id = ANY($1::text[])',
+    [['hh-7']], ['payment_corrections', 'payment_entries'], 'household_payment_totals',
+  );
 });

@@ -1444,3 +1444,12 @@ przed migracją (`approved`/`sending`/`paused`) nie ma zapisanej wersji —
 utworzyć nową. Kampanie `done`/`cancelled` bez zmian. ADD COLUMN bez DEFAULT nie
 przepisuje tabeli. Wycofanie: `DROP TRIGGER`, `DROP FUNCTION`, `DROP COLUMN`.
 Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).
+
+`0180_net_views_lateral.sql` (#159, test planów zapytań) przepisuje widoki
+`ledger_entry_net` i `payment_entry_net` z podzapytania `GROUP BY` na
+`LEFT JOIN LATERAL`, żeby filtr po roku lub gospodarstwie (także w
+`household_payment_totals`, `ledger_balance_at`, `ledger_non_bank_net_at`)
+korzystał z indeksów tabel korekt i zwrotów zamiast pełnego skanu. Skutki dla
+danych: wyłącznie `CREATE OR REPLACE VIEW` — kolumny, ich kolejność i typy bez
+zmian (`p.*` zastąpione jawną listą), tabele i dane nietknięte. Wycofanie:
+przywrócenie definicji widoków z 0040 i 0038.

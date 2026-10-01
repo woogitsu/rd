@@ -406,5 +406,9 @@
   {
     "name": "0179_email_campaign_privacy_notice.sql",
     "sha256": "d08bec14c9d3a7cfe01f711c850a1d6797e268d074822bbcc41b92776287ca5d"
+  },
+  {
+    "name": "0180_net_views_lateral.sql",
+    "sha256": "6d4fec8334fda9f37d685de82160990e8f61ff781e02bc75a6ebacf305c55269"
   }
 ]
