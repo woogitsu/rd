@@ -100,7 +100,9 @@ import {
   revokeUserSessions,
   revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
-import { freshMfaForbiddenCode, isAuthorizedScoped, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess } from '../authorization.js';
+import {
+  freshMfaForbiddenCode, isAuthorizedScoped, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS, requireAccess,
+} from '../authorization.js';
 import { auditMetadataForView, insertAuditEvent } from '../audit.js';
 import { AUDIT_DOMAINS, auditActionDomain, auditDomainActions } from '../../../shared/audit-actions.js';
 import { auditYearByObjectSql } from '../export.js';
@@ -1047,8 +1049,19 @@ function canReadAuditDomain(context, domain) {
 // do której należą te akcje (dziś: access i security).
 const DEFAULT_VIEW_DOMAINS = [...new Set(AUDIT_ACTIONS.map((action) => auditActionDomain(action)))];
 
-function requireAuditDomains(context, domains) {
-  if (!domains.every((domain) => canReadAuditDomain(context, domain))) throw new RequestError('forbidden', 403);
+// #184 etap 3: odmowa domeny to odmowa roli (`readRoles`), więc zostawia ten
+// sam ślad `access.denied` co bramka modułu — przed jakimkolwiek odczytem,
+// poza transakcją (listAudit/entityAudit jej nie otwierają). Dziś każda domena
+// ma `readRoles: ['admin']`, a moduł wpuszcza tylko admina, więc gałąź jest
+// nieosiągalna przez HTTP; ślad zaczyna działać dopiero, gdy decyzja D-08/D-09
+// zawęzi `readRoles` domeny bez admina. Odpowiedź 403 `forbidden` bez zmian.
+// Eksport wyłącznie dla testu tests/pg-access-denied.test.js.
+export async function requireAuditDomains(env, request, context, domains) {
+  const denied = domains.find((domain) => !canReadAuditDomain(context, domain));
+  if (denied === undefined) return;
+  const readRoles = AUDIT_DOMAINS[denied]?.readRoles ?? ['admin'];
+  await logAccessDenied(env, context, { roles: [...readRoles] }, request);
+  throw new RequestError('forbidden', 403);
 }
 
 function auditEventForView(row, { withEntity = true } = {}) {
@@ -1074,10 +1087,10 @@ function parseAuditFilters(url) {
   return { domain, actorId, schoolYearId, from, to };
 }
 
-async function listAudit(env, url, json, actorId, context) {
+async function listAudit(request, env, url, json, actorId, context) {
   const limit = listLimit(url, { defaultLimit: 100, maxLimit: MAX_LIST });
   const filters = parseAuditFilters(url);
-  requireAuditDomains(context, filters.domain ? [filters.domain] : DEFAULT_VIEW_DOMAINS);
+  await requireAuditDomains(env, request, context, filters.domain ? [filters.domain] : DEFAULT_VIEW_DOMAINS);
   // Kursor wiąże wszystkie filtry: zmiana `from`/`to`/`domain`… → 400 invalid_cursor.
   const scope = JSON.stringify(['audit', filters.domain, filters.actorId, filters.schoolYearId, filters.from, filters.to]);
   const cursor = listCursor(url, 'timestamp', scope);
@@ -1533,10 +1546,10 @@ const RELATED_METADATA_KEY = {
   email_campaign: 'campaignId',
 };
 
-async function entityAudit(env, entityType, entityId, json, actorId, context) {
+async function entityAudit(request, env, entityType, entityId, json, actorId, context) {
   const table = ENTITY_TABLES[entityType];
   if (!table) throw new RequestError('invalid_entity_type');
-  requireAuditDomains(context, [ENTITY_DOMAIN[entityType]]);
+  await requireAuditDomains(env, request, context, [ENTITY_DOMAIN[entityType]]);
   const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
   if (!exists.length) throw new RequestError('not_found', 404);
   const { rows } = await env.db.query(
@@ -1632,7 +1645,7 @@ async function route(request, env, url, json, actorId, context) {
   // GET /api/admin/audit/entity/{entityType}/{entityId} (#181): jedyna trasa
   // z czterema segmentami, więc obsługiwana przed ogólnym `if (rest.length)`.
   if (section === 'audit' && rawId === 'entity' && rest.length === 1 && method === 'GET') {
-    return entityAudit(env, action, decodeId(rest[0]), json, actorId, context);
+    return entityAudit(request, env, action, decodeId(rest[0]), json, actorId, context);
   }
   if (rest.length) return null;
 
@@ -1702,7 +1715,7 @@ async function route(request, env, url, json, actorId, context) {
     return routeInvitationBatches(env, actorId, request, path, json);
   }
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
-  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(env, url, json, actorId, context);
+  if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(request, env, url, json, actorId, context);
   if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
   if (section === 'data-requests') {
     if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);

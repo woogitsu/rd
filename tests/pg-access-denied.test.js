@@ -1,4 +1,4 @@
-// #184 pkt 1 i 3: ślad odmowy 403 (bez PII, jedno zdarzenie na okno 5 minut
+// #184 pkt 1 i 3 (etap 3: kontrola domeny dziennika admina): ślad odmowy 403 (bez PII, jedno zdarzenie na okno 5 minut
 // z licznikiem w access_denial_windows — migracja 0160, tylko dla zalogowanego
 // aktora, także dla żądań zmieniających stan) i zaostrzenie assertNoPii dla
 // pól-kodów. Dane wyłącznie syntetyczne.
@@ -9,6 +9,7 @@ import {
   loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, requireAccess, withDeferredAccessDenied,
 } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
+import { requireAuditDomains } from '../src/pg/routes/admin.js';
 import {
   createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession,
 } from './helpers/pg.js';
@@ -381,4 +382,26 @@ test('MFA-only denial (403 mfa_* code) leaves no access.denied; only `forbidden`
   assert.deepEqual(await statusOf(env, '/api/reports/audit?schoolYearId=y-test&format=json', { cookie }),
     { status: 403, error: 'forbidden' });
   await expectOneDenial(db, 'rep-nomfa', '/api/reports/audit', 'GET');
+}));
+
+// #184 etap 3: druga linia w dzienniku admina — kontrola domeny (`readRoles`).
+// Przez HTTP nieosiągalna (moduł wpuszcza tylko admina, każda domena ma dziś
+// `readRoles: ['admin']`), więc test woła bramkę bezpośrednio z kontekstem
+// konta bez roli admin — tak jak po zawężeniu `readRoles` decyzją D-08/D-09.
+test('admin audit domain check: denial → forbidden + one access.denied; admin passes without an event', async () => withDb(async (db, env) => {
+  const boardCookie = await seedUserSession(db, { userId: 'board-dom', mfa: true, roles: [{ role: 'board' }] });
+  const boardContext = await loadAuthorizationContext(request('/api/admin/audit', { cookie: boardCookie }), env);
+  const denied = () => requireAuditDomains(env, request('/api/admin/audit?domain=finance&actorId=u-secret'), boardContext, ['finance']);
+  await assert.rejects(denied, (error) => error.code === 'forbidden' && error.status === 403);
+  // Odświeżenie widoku w oknie 5 minut: bez nowego zdarzenia, tylko licznik.
+  await assert.rejects(denied, (error) => error.code === 'forbidden');
+  await expectOneDenial(db, 'board-dom', '/api/admin/audit', 'GET', 2);
+  const [event] = await accessDeniedEvents(db, 'board-dom');
+  assert.equal(event.metadata.requiredRole, 'admin');
+  assert.doesNotMatch(JSON.stringify(event.metadata), /u-secret|finance/);
+
+  const adminCookie = await seedUserSession(db, { userId: 'adm-dom', mfa: true, roles: [{ role: 'admin' }] });
+  const adminContext = await loadAuthorizationContext(request('/api/admin/audit', { cookie: adminCookie }), env);
+  await requireAuditDomains(env, request('/api/admin/audit?domain=finance'), adminContext, ['finance', 'email']);
+  assert.deepEqual(await accessDeniedEvents(db, 'adm-dom'), []);
 }));
