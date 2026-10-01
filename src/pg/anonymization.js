@@ -17,7 +17,7 @@
 // Co zmienia (tylko pola tekstowe z privacy/data-inventory.json, `personal:
 // direct`, powiązane z gospodarstwem — pełna lista kolumn w migracji 0174):
 // imiona i nazwiska uczniów/opiekunów, e-maile opiekunów, historia zmian
-// kontaktu i powiązań, powody w historii członkostw i zapisów, prośby o
+// kontaktu, sprostowań imienia/nazwiska (`identity_changes`, 0182) i powiązań, powody w historii członkostw i zapisów, prośby o
 // aktualizację danych, e-maile w migawkach kampanii oraz tytuł przelewu i
 // powody korekt/zwrotów/przeniesień/odwróceń przypisań. NIE zmienia
 // identyfikatorów, kwot, dat, statusów, gospodarstwa wpłaty, roku, księgi
@@ -78,6 +78,10 @@ const STUDENT_ALL_ANONYMIZED = `
       UNION SELECT sh.household_id FROM student_households sh WHERE sh.student_id = s.id
     ) l WHERE l.hid <> ALL ($2::text[]))`;
 
+const IDENTITY_CHANGE_NAME_COLUMNS = ['previous_first_name', 'previous_last_name', 'new_first_name', 'new_last_name'];
+const IDENTITY_CHANGE_DIRTY = `(${IDENTITY_CHANGE_NAME_COLUMNS.map((column) => `${column} <> '${ANONYMIZED_TEXT}'`).join(' OR ')} OR reason IS NOT NULL)`;
+const IDENTITY_CHANGE_SET = `${IDENTITY_CHANGE_NAME_COLUMNS.map((column) => `${column} = '${ANONYMIZED_TEXT}'`).join(', ')}, reason = NULL`;
+
 // Tabele zmieniane przebiegiem: SQL wyboru wierszy WYMAGAJĄCYCH zmiany ($1 =
 // lista id obiektu nadrzędnego) i SET. Kolejność = kolejność wykonania.
 const CHILD_TABLES = [
@@ -105,6 +109,17 @@ const CHILD_TABLES = [
     table: 'student_guardian_changes', parent: 'students',
     where: 'student_id = ANY($1::text[]) AND reason IS NOT NULL',
     set: 'reason = NULL',
+  },
+  // #100: historia sprostowań imienia/nazwiska (0182) — jedna tabela, dwa podmioty (osobne klucze planu).
+  {
+    table: 'identity_changes', key: 'identity_changes_guardians', parent: 'guardians',
+    where: `guardian_id = ANY($1::text[]) AND ${IDENTITY_CHANGE_DIRTY}`,
+    set: IDENTITY_CHANGE_SET,
+  },
+  {
+    table: 'identity_changes', key: 'identity_changes_students', parent: 'students',
+    where: `student_id = ANY($1::text[]) AND ${IDENTITY_CHANGE_DIRTY}`,
+    set: IDENTITY_CHANGE_SET,
   },
   {
     table: 'student_households', parent: 'students',
@@ -171,7 +186,7 @@ export async function planAnonymization(tx, householdId) {
   };
   for (const spec of CHILD_TABLES) {
     const { rows } = await tx.query(`SELECT id FROM ${spec.table} WHERE ${spec.where}`, [parents[spec.parent]]);
-    tables[spec.table] = ids(rows);
+    tables[spec.key ?? spec.table] = ids(rows);
   }
 
   const { rows: entryRows } = await tx.query('SELECT id FROM payment_entries WHERE household_id = $1', [householdId]);
@@ -345,7 +360,7 @@ export async function anonymizeHousehold(db, {
     await apply('guardians', `first_name = '${ANONYMIZED_TEXT}', last_name = '${ANONYMIZED_TEXT}', email = NULL, contact_allowed = false`, plan.tables.guardians);
     await apply('students', `first_name = '${ANONYMIZED_TEXT}', last_name = '${ANONYMIZED_TEXT}'`, plan.tables.students);
     for (const spec of [...CHILD_TABLES, { table: 'payment_entries', set: 'reference = NULL' }, ...PAYMENT_CHILD_TABLES]) {
-      await apply(spec.table, spec.set, plan.tables[spec.table]);
+      await apply(spec.table, spec.set, plan.tables[spec.key ?? spec.table]);
     }
     await tx.query("SELECT set_config('rd.anonymization_run', '', true)");
 

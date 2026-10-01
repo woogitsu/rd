@@ -14,6 +14,9 @@
     "src/pg/input.js",
     "src/pg/scope.js",
     "src/pg/pii-gate.js",
-    "src/pg/audit.js"
+    "src/pg/audit.js",
+    "src/pg/authorization.js",
+    "src/pg/auth.js",
+    "src/pg/http.js"
   ]
 }

@@ -140,7 +140,8 @@ Pełny cykl przechodzi przez API i panele, bez `INSERT` w bazie; kolejność spr
 |---|---|---|---|
 | Nowy rok | `POST /api/admin/school-years` | Konta i role → „Lata szkolne i klasy” | admin |
 | Klasy nowego roku | `POST /api/admin/school-years/:id/classes` albo kopia z mapą `POST /api/admin/promotions/classes/preview` i `…/apply` | Konta i role (dodanie klas); kopia z mapą — tylko API (#78) | admin |
-| Promocja uczniów | `POST /api/admin/promotions/preview` i `…/apply` (planDigest, Idempotency-Key) | tylko API (zakładka „Nowy rok” — #78) | admin |
+| Promocja uczniów | `POST /api/admin/promotions/preview` i `…/apply` (planDigest, Idempotency-Key) | zakładka „Nowy rok”, sekcja „promocja uczniów” (#78) | admin |
+| Przedłużenie przedstawicieli klas | `POST /api/admin/promotions/representatives/preview` i `…/apply` (planDigest, `confirm` = id roku docelowego, świeże MFA) | zakładka „Nowy rok”, sekcja „przedłużenie przydziałów przedstawicieli” (admin/, #78): podgląd z liczbami per klasa (bez imion), zatwierdzenie po oknie ze skutkami i kroku MFA; `409 plan_stale` odświeża podgląd, `422 nothing_to_extend` czyści ekran; osobny krok po promocji, zamiaru nie ma w podglądzie uczniów | admin |
 | Kategorie księgi | `POST /api/ledger/categories/copy` (`dryRun` → zapis) albo `POST /api/ledger/categories` | Księga → „Kopiuj kategorie z innego roku”, „Nowa kategoria” | admin, zarząd, skarbnik roku docelowego |
 | Preliminarz | `POST /api/ledger/budget` | Księga → „Dodaj linię planu” | jak wyżej |
 | Bilans otwarcia | pierwszy rok: `POST /api/ledger/opening-balance`; kolejne lata: zamknięcie roku poprzedniego | Księga → „Wpisz bilans otwarcia” (tylko rok bez bilansu) | zarząd |

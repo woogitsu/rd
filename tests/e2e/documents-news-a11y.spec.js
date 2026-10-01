@@ -66,6 +66,25 @@ test('documents/: „Szczegóły” — Enter otwiera, Esc i „Zamknij” oddaj
   await context.close();
 });
 
+for (const width of [320, 1280]) {
+  test(`documents/ przy ${width} px: pola wyboru filtrów mają pole i etykietę ≥ 24 px (WCAG 2.5.8)`, async ({ browser }) => {
+    const { context, page } = await boardPage(browser, { width, height: 800 });
+    await page.goto('/documents/');
+    await expect(page.locator('#documents-body tr')).toHaveCount(runtime.documents.length, { timeout: 10_000 });
+    const boxes = await page.locator('.filters input[type="checkbox"]').evaluateAll((nodes) => nodes.map((node) => {
+      const input = node.getBoundingClientRect();
+      const label = node.closest('label').getBoundingClientRect();
+      return { id: node.id, input: [input.width, input.height], label: [label.width, label.height] };
+    }));
+    expect(boxes.map((box) => box.id)).toEqual(['filter-inactive', 'filter-validation-outdated']);
+    for (const box of boxes) {
+      expect(Math.min(...box.input), `${box.id}: pole`).toBeGreaterThanOrEqual(24);
+      expect(Math.min(...box.label), `${box.id}: etykieta`).toBeGreaterThanOrEqual(24);
+    }
+    await context.close();
+  });
+}
+
 for (const width of [320, 390]) {
   test(`documents/ przy ${width} px: lista bez poziomego przewijania, cele akcji ≥ 24 px`, async ({ browser }) => {
     const { context, page } = await boardPage(browser, { width, height: 800 });

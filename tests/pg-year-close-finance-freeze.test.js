@@ -297,6 +297,37 @@ describe('#80: dokumenty zamkniętego roku', () => {
       await db.close();
     }
   });
+
+  test('zamknięty rok poprzedni nie blokuje dokumentu finansowego w roku następnym: 201, a w zamkniętym nadal 409', async () => {
+    const db = await createTestDb();
+    try {
+      await seedSchoolYear(db, OLD, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
+      await seedSchoolYear(db, NEW, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+      // Przydziały w obu latach powstają PRZED zamknięciem roku OLD.
+      const cookie = await seedUserSession(db, {
+        userId: 'u-tr-two-years', mfa: true,
+        roles: [{ role: 'treasurer', schoolYearId: OLD }, { role: 'treasurer', schoolYearId: NEW }],
+      });
+      await closeYear(db);
+      const env = { db, storage: createMemoryStorage() };
+      const upload = async (year, key) => handlePgRequest(request(`/api/documents?kind=financial&schoolYearId=${year}`, {
+        method: 'POST', cookie, body: new TextEncoder().encode('%PDF-1.4\n% syntetyczny\n%%EOF\n'),
+        headers: { 'Content-Type': 'application/pdf', 'Idempotency-Key': key },
+      }), env);
+
+      const closed = await upload(OLD, 'doc-two-years-old');
+      assert.equal(closed.status, 409);
+      assert.equal((await closed.json()).error, 'school_year_closed');
+
+      const open = await upload(NEW, 'doc-two-years-new');
+      assert.equal(open.status, 201);
+      const { document } = await open.json();
+      const { rows } = await db.query('SELECT school_year_id, kind FROM documents WHERE id = $1', [document.id]);
+      assert.deepEqual(rows, [{ school_year_id: NEW, kind: 'financial' }]);
+    } finally {
+      await db.close();
+    }
+  });
 });
 
 describe('#80: kampanie e-mail zamkniętego roku', () => {

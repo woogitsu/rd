@@ -202,3 +202,52 @@ test('#208 (bariera): dwa storna tego samego przeniesienia kasa → rachunek —
     assert.equal(await auditCount(db, 'ledger.transfer.reversed'), 1);
   });
 });
+
+// Przeksięgowanie wpisu księgi (ledger.js, createReplacement): storno pozostałej
+// kwoty + wpis zastępczy w jednej transakcji pod `FOR UPDATE` zastępowanego wpisu.
+async function ledgerEntrySetup(db) {
+  const cookie = await setup(db, { households: [] });
+  await db.query("INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES ('cat-in', $1, 'income', 'Składki dobrowolne', 'u-tr')", [YEAR]);
+  await db.query(`INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description, occurred_on, method, created_by, idempotency_key)
+    VALUES ('le-1', $1, 'income', 10000, 'cat-in', 'Wpis syntetyczny', '2026-10-01', 'bank', 'u-tr', 'le-1-key-0001')`, [YEAR]);
+  return cookie;
+}
+const replacementBody = (description) => ({
+  schoolYearId: YEAR, direction: 'income', amountCents: 10000, categoryId: 'cat-in', description, occurredOn: '2026-10-02', method: 'bank', reason: 'Przeksięgowanie syntetyczne',
+});
+const FOR_UPDATE_LEDGER_ENTRY = /FROM ledger_entries WHERE id = \$1 FOR UPDATE/;
+
+test('#208 (bariera): dwa przeksięgowania tego samego wpisu księgi różnymi kluczami — drugie czeka na blokadę wpisu i dostaje 409 ledger_entry_already_replaced', { skip }, async () => {
+  await withReal(async (db) => {
+    const cookie = await ledgerEntrySetup(db);
+    const { results: [a, b], waits, waitingSql, errors } = await race(db, {
+      pauseAfter: /INSERT INTO ledger_entries/,
+      first: (env) => callApi(env, 'POST', '/api/ledger/le-1/replacement', cookie, replacementBody('Zastępczy pierwszy'), key('lr')),
+      others: [(env) => callApi(env, 'POST', '/api/ledger/le-1/replacement', cookie, replacementBody('Zastępczy drugi'), key('lr'))],
+    });
+    assertWaitsOn({ waits, waitingSql }, FOR_UPDATE_LEDGER_ENTRY, 'drugie przeksięgowanie czeka na blokadę wpisu');
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    assert.deepEqual([b.status, b.body.error], [409, 'ledger_entry_already_replaced']);
+    assert.deepEqual(errors, []);
+    assert.equal(await count(db, "SELECT count(*)::int AS n FROM ledger_entries WHERE replaces_entry_id = 'le-1'"), 1);
+    assert.equal(await count(db, "SELECT count(*)::int AS n FROM ledger_corrections WHERE ledger_entry_id = 'le-1'"), 1);
+    assert.equal(await auditCount(db, 'ledger.entry.replaced'), 1);
+  });
+});
+
+test('#208 (bariera): przeksięgowanie i korekta 10 € tego samego wpisu księgi — korekta czeka na blokadę wpisu i dostaje 409 correction_exceeds_remaining_amount', { skip }, async () => {
+  await withReal(async (db) => {
+    const cookie = await ledgerEntrySetup(db);
+    const { results: [a, b], waits, waitingSql, errors } = await race(db, {
+      pauseAfter: /INSERT INTO ledger_entries/,
+      first: (env) => callApi(env, 'POST', '/api/ledger/le-1/replacement', cookie, replacementBody('Zastępczy wpis'), key('lr')),
+      others: [(env) => callApi(env, 'POST', '/api/ledger/le-1/corrections', cookie, { amountCents: 1000, reason: 'Korekta syntetyczna' }, key('lc'))],
+    });
+    assertWaitsOn({ waits, waitingSql }, FOR_UPDATE_LEDGER_ENTRY, 'korekta czeka na blokadę wpisu trzymaną przez przeksięgowanie');
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    assert.deepEqual([b.status, b.body.error], [409, 'correction_exceeds_remaining_amount']);
+    assert.deepEqual(errors, []);
+    assert.equal(await count(db, "SELECT COALESCE(sum(amount_cents), 0)::int AS n FROM ledger_corrections WHERE ledger_entry_id = 'le-1'"), 10000);
+    assert.equal(await auditCount(db, 'ledger.correction.created'), 0);
+  });
+});

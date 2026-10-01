@@ -118,6 +118,7 @@ Reguły determinizmu (te same dane → ten sam plik bajt w bajt):
 | `meetings`, `meeting_*`, `resolutions`, `resolution_execution_events` | zebrania roku, porządek, obecność, kworum, protokoły, publikacje, uchwały i historia ich wykonania (#102), wersje porządku obrad, zmiany terminu i zawiadomienia zebrań (0139, #113) |
 | `student_households`, `guardian_households` | członkostwo uczniów roku (także drugie gospodarstwo przy opiece dzielonej, `is_primary`) i opiekunów z zakresu w gospodarstwach, z historią (0014) |
 | `enrollment_history` | historia przypisań do klas w danym roku (0014) |
+| `identity_changes` (0182) | **poza paczką** — historia sprostowań imienia i nazwiska zawiera poprzednie (błędne) i nowe imię; wariant zachowawczy (D-03/D-04), tabela w `EXPORT_EXCLUDED_TABLES`; eksport danych jednej rodziny ją zawiera |
 | `guardian_contact_changes` | zmiany kontaktu opiekunów z zakresu, dokonane w datach roku — **bez** poprzedniego i nowego e-maila oraz bez treści powodu (tylko identyfikatory, flagi zgody, źródło, czas; do decyzji D-03) |
 | `student_guardian_changes` | historia relacji opiekun–dziecko uczniów roku (zgoda, kontakt główny, daty) z dat roku — bez treści powodu (0026, D-03) |
 | `ledger_transfers` | przeniesienia kasa ↔ rachunek roku (0028) |
@@ -237,7 +238,10 @@ sum w centach.
 Odtworzenie:
 
 - odmawia bazy, w której jakakolwiek tabela (poza `schema_migrations`) ma
-  wiersze; odmawia `APP_ENV=production` (także `prod`, brak lub nieznaną wartość) bez `--allow-production`;
+  wiersze; odmawia `APP_ENV=production` (także `prod`, brak lub nieznaną wartość) bez `--allow-production`
+  (flaga czyta tylko `APP_ENV` z powłoki, nie oznaczenie bazy: `DATABASE_URL`
+  produkcji z `APP_ENV=staging` przejdzie; jedyną twardą blokadą jest wymóg
+  pustej bazy, a znacznik środowiska w bazie czeka na D-20, #166);
 - działa w jednej transakcji — pierwszy błąd wycofuje całość;
 - przyjmuje paczki w wersji 2 i 1 (patrz „Wersje formatu”);
 - na czas transakcji wyłącza triggery i klucze obce

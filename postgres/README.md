@@ -79,7 +79,7 @@ plików SQL; zmianę schematu dodaje się jako następny plik.
 
 Na środowisku z `APP_ENV=production` (także `prod`/`Production`, a zachowawczo również przy braku lub nieznanej wartości `APP_ENV`; `src/app-env.js`) trzeba dodatkowo przekazać argument
 `--allow-production`; użycie wymaga wcześniej kopii zapasowej, zatwierdzonego
-planu przywracania i decyzji administratora szkoły. Nie wpisywać URL bazy ani
+planu przywracania i decyzji administratora szkoły. Flaga `--allow-production` sprawdza wyłącznie `APP_ENV` z powłoki operatora, nie oznaczenie docelowej bazy: `DATABASE_URL` produkcji podany z `APP_ENV=staging` przejdzie tę kontrolę. Realnie chroni przed pomyłką (brak lub literówka w `APP_ENV` daje odmowę), nie przed świadomym wpisaniem innego środowiska. Znacznik środowiska w bazie i `--expect-database` czekają na D-20 (#166); do tego czasu przed każdą operacją sprawdź host i nazwę bazy w `DATABASE_URL`. Nie wpisywać URL bazy ani
 jej zawartości do repozytorium, logów czy zgłoszeń. Najpierw testować na
 pustej bazie z danymi syntetycznymi.
 
@@ -1464,3 +1464,22 @@ Skutki dla danych: istniejące wiersze dostają NULL i nie są zmieniane; indeks
 częściowy ich nie obejmuje. Klucz to losowy token klienta, bez danych osobowych.
 Wycofanie: `DROP INDEX data_subject_requests_idempotency_key_key`, `ALTER TABLE
 data_subject_requests DROP COLUMN idempotency_key`.
+
+`0182_identity_changes.sql` (#100, art. 16 RODO) dodaje tabelę
+`identity_changes`: historię sprostowań imienia i nazwiska ucznia lub opiekuna
+(`subject_type`, poprzednie i nowe imię/nazwisko, powód 3–500 znaków, `source`
+`api`/`direct`, aktor, czas z zegara bazy, opcjonalne `data_request_id` z
+rejestru żądań osób). Wpis tworzą triggery `students_identity_history` i
+`guardians_identity_history` (wzorem `guardians_contact_history`; aktor, powód i
+żądanie z `rd.actor_id`/`rd.change_reason`/`rd.data_request_id`), tylko przy
+faktycznej zmianie wartości i nie w kontekście przebiegu anonimizacji. Tabela
+jest tylko do dopisywania (`identity_changes_no_change`, `identity_changes_no_truncate`
+z `deny_truncate()`); jedyny wyjątek to UPDATE w przebiegu anonimizacji,
+zastępujący imiona wartością `[zanonimizowano]` i zerujący powód (własny strażnik
+`identity_changes_immutable()`, funkcja `rd_anonymization_update_allowed` bez zmian).
+Skutki dla danych: tylko nowa tabela, funkcje i triggery; żaden wiersz nie jest
+zmieniany, historia zaczyna się od wdrożenia, a bezpośredni UPDATE imienia (import)
+zostawia odtąd wpis `direct`. Tabela zawiera dane osobowe (retencja — D-04), jest poza
+eksportem rocznym, a w audycie są wyłącznie identyfikatory i nazwy pól. Wycofanie:
+DROP TRIGGER na `students`/`guardians`, DROP FUNCTION trzech funkcji, DROP TABLE
+(na bazie z wpisami tylko po kopii zapasowej).

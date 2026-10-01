@@ -213,7 +213,7 @@ Wynik na danych demo (`npm run demo:seed`, `docs/DEMO.md`), Chromium, konta `prz
 |---|---|---|---|---|---|
 | `families/` klasy, klasa, karta gospodarstwa | brak (tabele i nawigacja paneli przewijają się we własnym kontenerze) | obrys 3 px `#8E2026` na każdym elemencie, skip link pierwszy | linki ścieżki (np. „Klasy”, krótka nazwa klasy) miały 16 px wysokości — **poprawione** (`.breadcrumbs a` min. 24×24 px) | bez par < 4,5:1 | spełnione |
 | `families/` okna „Kontakt opiekuna” i „Zmiana klasy” (320 i 1280 px) | okno mieści się w ekranie | Enter otwiera, fokus w oknie, Tab nie wychodzi na stronę, Esc zamyka i wraca na przycisk | — | — | spełnione; pole daty: przycisk kalendarza rysowany przez Chromium ma własny, cienki obrys (nie ze stylów aplikacji) — **do sprawdzenia ręcznie**, dotyczy wszystkich pól `type="date"` |
-| `documents/` | brak | obrys na każdym elemencie | pole „Pokaż też zastąpione i unieważnione” 13×13 px (etykieta przy 1280 px niższa niż 24 px, spełnia tylko wyjątek odstępu 2.5.8) | bez par < 4,5:1 | **do poprawy** w zakresie #124 (plik `documents/`); test e2e mierzy tu tylko układ i fokus |
+| `documents/` | brak | obrys na każdym elemencie | pola wyboru filtrów mają 24×24 px, a celem jest cała etykieta (min. 44 px; wcześniej 13×13 px) | bez par < 4,5:1 | spełnione; `tests/e2e/a11y-layout.spec.js` mierzy cele także w `documents/`, `tests/e2e/documents-news-a11y.spec.js` — pola wyboru filtrów |
 | `events/` | brak | obrys na każdym elemencie | brak | bez par < 4,5:1 | spełnione |
 | `meetings/`, `admin/` (konta zarządu i administratora) | brak | obrys na każdym elemencie | brak | bez par < 4,5:1 | spełnione (bez zrzutów w repo) |
 | `site/`, `login/` (tryb bez sesji) | brak | obrys na każdym elemencie | brak | — | spełnione |

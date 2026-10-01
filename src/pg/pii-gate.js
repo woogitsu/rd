@@ -82,6 +82,7 @@ export const GATED_FIELDS = Object.freeze([
   'enrollment_history.reason',
   'student_guardian_changes.reason',
   'guardian_contact_changes.reason',
+  'identity_changes.reason',
   'guardian_update_requests.note',
   'email_suppression_releases.confirmation_note',
   'role_grant_requests.reject_reason',
