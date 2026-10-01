@@ -51,6 +51,28 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
    (`fingerprints`). Porównać z zatwierdzonym raportem źródłowym, a następnie sprawdzić reprezentatywne rodziny, wspólną
    opiekę, rodzeństwo, przypisania klas, korekty, bilans i preliminarz.
 
+## Stare wiersze D1 niezgodne z regułami PostgreSQL (#179)
+
+D1 sprzed migracji 0005/0007 dopuszczało dane, których PostgreSQL nie przyjmie, a
+triggery D1 blokują ich poprawkę w miejscu. Dlatego:
+
+- `npm run db:restore:postgres -- <snapshot.json> --check` nie łączy się z bazą i
+  zbiera **wszystkie** naruszenia naraz jako listę `tabela / id wiersza / reguła`
+  (bez wartości osobowych; kod wyjścia 1, gdy są naruszenia). Reguły: długość
+  `idempotency_key` poza 8–128, kategoria nieznana lub z innego roku/kierunku,
+  brak albo niedozwolona `method` (`bank/cash/card/other`), wydatek powyżej
+  3000 EUR bez `resolution_reference`, powiązanie wpłaty z wydatkiem. Kolejne
+  kontrole normalizacji (zakresy ról, strefa wydarzeń, kolumny spoza mapowania)
+  są raportowane jako `otherError` — pierwszy błąd, dopiero gdy reguły przejdą.
+- Import (`--apply`) odrzuca taki snapshot przed transakcją tym samym raportem.
+  Brak `method` **nie** jest już zamieniany po cichu na `other`.
+- Narzędzie niczego nie poprawia samo. Poprawka należy do skarbnika (z wglądem
+  Komisji Rewizyjnej; D-09/D-12), np. przez poprawkę eksportu przed odtworzeniem.
+  Wydatek bez uchwały: decyzja D-15 — narzędzie nie wpisze fikcyjnego numeru.
+- Nie zrealizowano (do osobnej decyzji): plik mapowania poprawek ze zdarzeniem
+  audytu `migration.legacy_mapping` oraz kategoria nieaktywna z danymi (komentarz
+  w #179).
+
 ## Reguły mapowania
 
 - Flagi SQLite `0/1` są zmieniane na PostgreSQL `BOOLEAN`.

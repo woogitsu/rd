@@ -77,6 +77,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   email_suppression_release: "Zwolnienie adresu z listy wstrzymanych",
   email_suppression_release_request: "Prośba o zwolnienie adresu",
   email_provider_pause: "Wstrzymanie wysyłki u dostawcy e-mail",
+  email_send_ledger: "Dziennik dziennego limitu e-mail",
   email_webhook_event: "Zdarzenie dostawcy e-mail",
   audit_review_note: "Uwaga Komisji Rewizyjnej",
   enrollment: "Zapis do klasy",
@@ -329,6 +330,24 @@ export function formatDateTime(value) {
 // (przegląd demo 5). Pełny identyfikator zostaje w wartości opcji.
 export function userOptionLabel(user) {
   return `${user?.email ?? "—"} (${shortId(user?.id)})`;
+}
+
+// #128: filtr kont po stronie klienta na już wczytanej liście (e-mail i nazwa bez
+// rozróżniania wielkości liter i polskich znaków diakrytycznych, stan konta).
+const foldText = (value) => String(value ?? "").normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase();
+
+export function filterUsers(users = [], { q = "", state = "" } = {}) {
+  const needle = foldText(q).trim();
+  return users.filter((user) => {
+    if (state === "active" && user.disabledAt) return false;
+    if (state === "disabled" && !user.disabledAt) return false;
+    return !needle || foldText(user.email).includes(needle) || foldText(user.displayName).includes(needle);
+  });
+}
+
+export function usersSummary(shown, loaded, hasMore, filtered) {
+  const head = filtered ? `${shown} z ${loaded} wczytanych kont` : `${loaded} kont`;
+  return `${head}. Konta tworzy wyłącznie przyjęcie zaproszenia.${hasMore ? " Lista jest niepełna — użyj „Pokaż więcej”; filtr działa tylko na wczytanych kontach." : ""}`;
 }
 
 // Podpowiedź w UI (serwer i tak odmawia): czy wycofanie tego przydziału
