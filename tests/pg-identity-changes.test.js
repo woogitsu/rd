@@ -148,7 +148,7 @@ describe('sprostowanie imienia i nazwiska z historią (#100)', () => {
       assert.deepEqual(await snapshot(), before);
     });
 
-    test('równoległe żądania tej samej zmiany dają jeden wpis historii', async () => {
+    test('dwa żądania tej samej zmiany (PGlite wykonuje po kolei, nie wyścig) dają jeden wpis historii', async () => {
       const body = { lastName: 'MRK-NOWE-RÓWNOLEGLE', reason: REASON };
       const [a, b] = await Promise.all([patchStudent('s-b', body), patchStudent('s-b', body)]);
       assert.deepEqual([a.status, b.status], [200, 200]);
@@ -170,7 +170,7 @@ describe('sprostowanie imienia i nazwiska z historią (#100)', () => {
       }
     });
 
-    test('zmiana obu pól naraz: fields i jeden wpis historii z oboma parami wartości', async () => {
+    test('zmiana imienia i nazwiska w jednym żądaniu: fields i jeden wpis historii z oboma parami wartości', async () => {
       const res = await patchStudent('s-x', { firstName: 'Jakub', lastName: 'MRK-NOWE-OBCE', reason: REASON }, cookies.admin);
       assert.equal(res.status, 200, res.text);
       const event = (await auditEvents('student.identity.updated')).find((row) => row.entity_id === 's-x');
