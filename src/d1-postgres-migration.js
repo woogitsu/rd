@@ -58,6 +58,12 @@ export function verifySnapshot(snapshot) {
   if (snapshot.checksum !== snapshotChecksum(snapshot.tables)) throw new Error('Snapshot checksum mismatch');
 }
 
+// Klucz wiersza do raportów (identyfikatory, nigdy treść).
+const KEY_COLUMNS = { student_guardians: ['student_id', 'guardian_id'] };
+function rowKey(table, row) {
+  return (KEY_COLUMNS[table] ?? ['id']).map((column) => row[column]).join('|');
+}
+
 function bool(value) {
   return value === true || value === 1 || value === '1';
 }
@@ -145,8 +151,39 @@ function normalizeEventTimes(events, eventTimeZone) {
   }
 }
 
+// #182: lista kolumn jest zamknięta. `createSnapshot` robi `SELECT *`, a INSERT bierze tylko
+// kolumny z `specs`, więc niepusta wartość w innej kolumnie (np. `ledger_entries.approval_id`
+// z D1 0001) zniknęłaby po cichu. Wybór: PRZERYWAMY (nie ostrzegamy) — dane finansowe nie mogą
+// ginąć bez decyzji; przeniesienie albo świadome pominięcie kolumny wymaga zmiany mapowania
+// (D-03). Kolumna z NULL / pustym tekstem nie niesie danych i przechodzi. `ledger_entries.category`
+// jest legalnie zużywana przez mapowanie na `category_id`.
+const CONSUMED_LEGACY_COLUMNS = { ledger_entries: ['category'] };
+
+export function assertNoUnmappedColumns(snapshotTables) {
+  const problems = [];
+  for (const [table, columns] of specs) {
+    const known = new Set([...columns, ...(CONSUMED_LEGACY_COLUMNS[table] ?? [])]);
+    const found = new Map();
+    for (const row of snapshotTables[table]) {
+      for (const [column, value] of Object.entries(row)) {
+        if (known.has(column) || value == null || value === '') continue;
+        const entry = found.get(column) ?? { count: 0, example: rowKey(table, row) };
+        entry.count += 1;
+        found.set(column, entry);
+      }
+    }
+    for (const [column, { count, example }] of found) {
+      problems.push(`${table}.${column} (${count} rows with data, e.g. ${example})`);
+    }
+  }
+  if (problems.length) {
+    throw new Error(`Snapshot has columns outside the migration mapping; restore refused: ${problems.join('; ')}`);
+  }
+}
+
 export function normalizeSnapshot(snapshot, { eventTimeZone } = {}) {
   verifySnapshot(snapshot);
+  assertNoUnmappedColumns(snapshot.tables);
   const tables = structuredClone(snapshot.tables);
   const assignments = new Map(tables.payment_assignments.map((row) => [row.payment_entry_id, row]));
   tables.payment_entries = tables.payment_entries.map((row) => {
@@ -212,6 +249,92 @@ export function sourceReconciliation(tables) {
   };
 }
 
+// Postać kanoniczna wartości (#182): ta sama po stronie źródła (SQLite/JSON) i PostgreSQL.
+// Daty -> YYYY-MM-DD, czasy -> ISO UTC, flagi -> true/false, kwoty -> tekst liczby, JSON -> klucze posortowane.
+function sortKeys(value) {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])]));
+  return value;
+}
+
+function canonicalValue(dataType, value) {
+  if (value == null) return null;
+  if (dataType === 'boolean') return String(bool(value) || value === 't' || value === 'true');
+  if (dataType === 'date') return String(value).slice(0, 10);
+  if (dataType === 'timestamp with time zone') {
+    const text = String(value).trim().replace(' ', 'T');
+    const zoned = /(Z|[+-]\d{2}(:?\d{2})?)$/i.test(text) ? text.replace(/([+-]\d{2})$/, '$1:00') : `${text}Z`;
+    const time = new Date(zoned);
+    if (Number.isNaN(time.getTime())) return `invalid:${text}`;
+    return time.toISOString();
+  }
+  if (dataType === 'jsonb') {
+    try { return JSON.stringify(sortKeys(typeof value === 'string' ? JSON.parse(value) : value)); } catch { return `invalid:${String(value)}`; }
+  }
+  if (dataType === 'bigint' || dataType === 'integer' || dataType === 'smallint') return String(BigInt(value));
+  return String(value);
+}
+
+const DB_GENERATED = Symbol('db-generated');
+
+function rowDigest(columns, types, row, expectedRow) {
+  const parts = columns.map((column) => (
+    expectedRow?.[column] === DB_GENERATED
+      ? (row[column] == null ? null : 'db-generated')
+      : canonicalValue(types[column], row[column])));
+  return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+}
+
+function expectedCanonicalRows(rawTables, normalized) {
+  const rawPayments = new Map(rawTables.payment_entries.map((row) => [row.id, row]));
+  const rows = {};
+  for (const [table] of specs) rows[table] = normalized[table];
+  // Przypisanie wpłaty jest odtwarzane przez stan przejściowy `unmatched`; stan końcowy ma być jak w D1.
+  rows.payment_entries = normalized.payment_entries.map((row) => ({
+    ...row, status: rawPayments.get(row.id).status, household_id: rawPayments.get(row.id).household_id,
+  }));
+  // Udokumentowane wyjątki: opublikowane wydarzenie bez `published_at` dostaje w PostgreSQL (0008)
+  // czas importu — oczekujemy tylko, że wartość nie jest pusta.
+  rows.events = normalized.events.map((row) => (
+    row.visibility === 'published' && row.published_at == null ? { ...row, published_at: DB_GENERATED } : row));
+  return rows;
+}
+
+async function columnTypes(client) {
+  const { rows } = await client.query(
+    "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1)",
+    [SNAPSHOT_TABLES],
+  );
+  const types = {};
+  for (const row of rows) (types[row.table_name] ??= {})[row.column_name] = row.data_type;
+  return types;
+}
+
+// Czyta każdą tabelę z `specs` z bazy docelowej i porównuje odciski wierszy z oczekiwanymi.
+// Błąd wskazuje tabelę i identyfikatory wierszy, bez ich treści. Zwraca odcisk na tabelę.
+async function compareRowFingerprints(client, expectedRows) {
+  const types = await columnTypes(client);
+  const fingerprints = {};
+  const failures = [];
+  for (const [table, columns] of specs) {
+    const columnType = types[table] ?? {};
+    const select = columns.map((column) => `"${column}"::text AS "${column}"`).join(', ');
+    // Surowy tekst PostgreSQL liczymy w UTC, jak reszta odtworzenia.
+    const expectedByKey = new Map(expectedRows[table].map((row) => [rowKey(table, row), row]));
+    const actual = new Map((await client.query(`SELECT ${select} FROM "${table}"`)).rows
+      .map((row) => [rowKey(table, row), rowDigest(columns, columnType, row, expectedByKey.get(rowKey(table, row)))]));
+    const expected = new Map([...expectedByKey].map(([key, row]) => [key, rowDigest(columns, columnType, row, row)]));
+    const different = [...new Set([...expected.keys(), ...actual.keys()])]
+      .filter((key) => expected.get(key) !== actual.get(key)).sort();
+    if (different.length) {
+      failures.push(`${table}: ${different.length} rows (${different.slice(0, 5).join(', ')}${different.length > 5 ? ', ...' : ''})`);
+    }
+    fingerprints[table] = createHash('sha256').update([...actual.values()].sort().join('')).digest('hex');
+  }
+  if (failures.length) throw new Error(`Row fingerprint mismatch; restore was rolled back: ${failures.join('; ')}`);
+  return fingerprints;
+}
+
 async function ensureEmpty(client) {
   for (const [table] of specs) {
     const { rows } = await client.query(`SELECT count(*)::int AS count FROM "${table}"`);
@@ -221,7 +344,10 @@ async function ensureEmpty(client) {
 
 export async function restoreSnapshot(client, snapshot, options = {}) {
   const tables = normalizeSnapshot(snapshot, options);
-  const expected = sourceReconciliation(tables);
+  // #182: wartość oczekiwana pochodzi z SUROWEGO snapshotu (sumy), a odciski z wierszy źródłowych
+  // po udokumentowanym mapowaniu — nie z danych porównywanych same ze sobą po odczycie z bazy.
+  const expected = sourceReconciliation(snapshot.tables);
+  const expectedRows = expectedCanonicalRows(snapshot.tables, tables);
   await client.query('BEGIN');
   try {
     // D1 zapisuje CURRENT_TIMESTAMP jako tekst UTC bez strefy ('YYYY-MM-DD HH:MM:SS').
@@ -242,8 +368,9 @@ export async function restoreSnapshot(client, snapshot, options = {}) {
     if (JSON.stringify(report) !== JSON.stringify(expected)) {
       throw new Error('Reconciliation mismatch; restore was rolled back');
     }
+    const fingerprints = await compareRowFingerprints(client, expectedRows);
     await client.query('COMMIT');
-    return report;
+    return { ...report, fingerprints };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
