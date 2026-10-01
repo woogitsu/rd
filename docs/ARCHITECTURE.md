@@ -2,7 +2,7 @@
 
 Frontend (publiczny i chroniony) → serwer Node.js na Railway → prywatny PostgreSQL. Prywatne pliki → Railway Storage Bucket za autoryzowanym API. Zadania pocztowe → kolejka PostgreSQL, Railway cron/worker i Brevo API; zdarzenia dostarczenia → weryfikowany webhook → historia. Granica publiczna nigdy nie wykonuje zapytań do list rodzin.
 
-To stan docelowy, nie opis gotowego wdrożenia. Serwer Node.js i większość API (`src/pg/app.js`, 27 modułów tras) działają dziś wyłącznie na PostgreSQL; oryginalny Worker/D1 (`src/index.js`) ma tylko 5 tras (sesja, przydziały, wpłaty, księga, wylogowanie) i pozostaje jako kontrakt równoważności ([docs/EQUIVALENCE.md](EQUIVALENCE.md)) na czas [migracji](RAILWAY_MIGRATION.md), nie jako produkcyjna ścieżka.
+To stan docelowy, nie opis gotowego wdrożenia. Serwer Node.js i większość API (`src/pg/app.js`, 28 modułów tras) działają dziś wyłącznie na PostgreSQL; oryginalny Worker/D1 (`src/index.js`) ma tylko 5 tras (sesja, przydziały, wpłaty, księga, wylogowanie) i pozostaje jako kontrakt równoważności ([docs/EQUIVALENCE.md](EQUIVALENCE.md)) na czas [migracji](RAILWAY_MIGRATION.md), nie jako produkcyjna ścieżka.
 
 ## Główne encje
 

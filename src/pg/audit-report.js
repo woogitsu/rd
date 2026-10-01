@@ -319,7 +319,7 @@ ${table([['Dokument'], ['Wpisy księgi']], duplicateEvidenceRows, 'Brak powtórz
 
 ${accountOperationsSection(report.accountOperations)}
 <h2>Uwagi Komisji Rewizyjnej</h2>
-<p class="empty">&nbsp;</p>
+${reviewNotesSection(report.reviewNotes)}
 <div class="signatures"><div>Data i podpis</div><div>Data i podpis</div><div>Data i podpis</div></div>
 </body>
 </html>
@@ -329,6 +329,36 @@ ${accountOperationsSection(report.accountOperations)}
 // #146: operacje administracyjne na kontach — same liczby (bez identyfikatorów
 // kont i aktorów: domeny access/security dziennika czyta dziś tylko admin,
 // D-08/D-09). Raporty sprzed tej zmiany (np. z archiwum) nie mają tej sekcji.
+const NOTE_KIND = { question: 'pytanie', finding: 'ustalenie' };
+const NOTE_TARGET = { ledger_entry: 'wpis księgi', reconciliation: 'uzgodnienie', year: 'rok szkolny' };
+const NOTE_STATUS = { open: 'otwarta', answered: 'odpowiedź bez zamknięcia', closed: 'zamknięta' };
+
+// #137: wątki uwag KR (migracja 0176). Raporty sprzed tej zmiany (archiwum) nie mają pola —
+// wtedy zostaje puste miejsce na uwagi odręczne. Treść pochodzi z wolnego tekstu (escapeHtml).
+function reviewNotesSection(notes) {
+  if (!notes) return '<p class="empty">&nbsp;</p>';
+  const threadRows = notes.threads.map((thread) => {
+    const answers = thread.answers.map((answer) => `${e(formatDate(answer.createdAt))}: ${e(answer.body)}`).join('<br>');
+    const closed = thread.closed
+      ? `${e(formatDate(thread.closed.createdAt))}${thread.closed.body ? `: ${e(thread.closed.body)}` : ''}`
+      : '';
+    return row([
+      [e(formatDate(thread.createdAt))], [e(NOTE_KIND[thread.kind] ?? thread.kind)],
+      [`${e(NOTE_TARGET[thread.targetType] ?? thread.targetType)} ${idHtml(thread.targetId)}`], [e(thread.body)],
+      [thread.status === 'closed' ? e(NOTE_STATUS.closed) : `<span class="flag">${e(NOTE_STATUS[thread.status] ?? thread.status)}</span>`],
+      [answers || '—'], [closed || '—'],
+    ]);
+  });
+  const conclusion = notes.currentConclusion
+    ? `<p><strong>Wniosek końcowy</strong> (${e(formatDate(notes.currentConclusion.createdAt))}): ${e(notes.currentConclusion.body)}</p>${notes.conclusions.length > 1 ? `<p class="meta">Wcześniejsze wnioski (zachowane, nie zmieniane): ${e(notes.conclusions.length - 1)}.</p>` : ''}`
+    : '<p class="empty">Brak wniosku końcowego Komisji Rewizyjnej w systemie.</p>';
+  return `<p>Otwarte: ${e(notes.counts.open)}; z odpowiedzią, bez zamknięcia: ${e(notes.counts.answered)}; zamknięte: ${e(notes.counts.closed)}. Uwagi są niezmienne — korekta to nowy zapis.</p>
+${table([['Zapisano'], ['Rodzaj'], ['Dotyczy'], ['Treść'], ['Stan'], ['Odpowiedzi zarządu/skarbnika'], ['Zamknięcie']], threadRows, 'Brak uwag zapisanych w systemie.')}
+${conclusion}
+<p class="meta">Miejsce na uwagi odręczne:</p>
+<p class="empty">&nbsp;</p>`;
+}
+
 export const ACCOUNT_OPERATION_ROWS = Object.freeze([
   ['protectedGrants', 'Nadania ról administratora, zarządu i skarbnika'],
   ['protectedGrantsApproved', 'w tym po zatwierdzeniu wniosku przez drugą osobę'],

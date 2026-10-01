@@ -125,6 +125,10 @@ const CATALOG = {
   'report.cash_flow.generated': ['finance', 'Raport przepływów bank/kasa'],
   'report.snapshot.created': ['finance', 'Utworzenie migawki sprawozdania'],
   'report.snapshot.approved': ['finance', 'Zatwierdzenie migawki sprawozdania'],
+  'audit_review.note_added': ['finance', 'Uwaga Komisji Rewizyjnej'],
+  'audit_review.answered': ['finance', 'Odpowiedź na uwagę Komisji Rewizyjnej'],
+  'audit_review.closed': ['finance', 'Zamknięcie uwagi Komisji Rewizyjnej'],
+  'audit_review.conclusion_recorded': ['finance', 'Wniosek końcowy Komisji Rewizyjnej'],
   'board.overview.exported': ['finance', 'Eksport przeglądu zarządu'],
 
   // --- year_close ---

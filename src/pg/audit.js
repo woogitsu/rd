@@ -32,7 +32,7 @@ const CODE_PATTERN = /^[a-z0-9_]{1,60}$/;
 // 'reconciliation_*.' — nowa trasa nie ominie wymogu nową nazwą akcji.
 const SCHOOL_YEAR_REQUIRED_PREFIXES = [
   'payment.', 'ledger.', 'reconciliation.', 'email.', 'meeting.', 'resolution.', 'event.', 'news_post.',
-  'year_close.', 'report.',
+  'year_close.', 'report.', 'audit_review.',
 ];
 export const FINANCIAL_FAMILY = /^(payment|ledger|reconciliation)(_[a-z_]+)?\./;
 // 'email.address_suppressed' dotyczy ADRESU (email_suppressions, bez
