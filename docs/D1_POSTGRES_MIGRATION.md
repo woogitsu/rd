@@ -46,6 +46,10 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
      /private/path/rd-snapshot.json --apply
    ```
 
+   `APP_ENV=staging` wpisane w powłoce nie dowodzi, że `DATABASE_URL` wskazuje
+   staging: strażnik `--allow-production` go nie weryfikuje. Przed `--apply`
+   sprawdź host i nazwę bazy w adresie; twardą blokadą pozostaje wymóg pustej bazy.
+
 5. Zachować raport bez danych osobowych: liczności wszystkich tabel, sumę
    netto wpłat, sumy przychodów i wydatków oraz odcisk SHA-256 każdej tabeli
    (`fingerprints`). Porównać z zatwierdzonym raportem źródłowym, a następnie sprawdzić reprezentatywne rodziny, wspólną

@@ -238,7 +238,10 @@ sum w centach.
 Odtworzenie:
 
 - odmawia bazy, w której jakakolwiek tabela (poza `schema_migrations`) ma
-  wiersze; odmawia `APP_ENV=production` (także `prod`, brak lub nieznaną wartość) bez `--allow-production`;
+  wiersze; odmawia `APP_ENV=production` (także `prod`, brak lub nieznaną wartość) bez `--allow-production`
+  (flaga czyta tylko `APP_ENV` z powłoki, nie oznaczenie bazy: `DATABASE_URL`
+  produkcji z `APP_ENV=staging` przejdzie; jedyną twardą blokadą jest wymóg
+  pustej bazy, a znacznik środowiska w bazie czeka na D-20, #166);
 - działa w jednej transakcji — pierwszy błąd wycofuje całość;
 - przyjmuje paczki w wersji 2 i 1 (patrz „Wersje formatu”);
 - na czas transakcji wyłącza triggery i klucze obce

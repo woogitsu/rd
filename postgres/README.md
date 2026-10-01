@@ -79,7 +79,7 @@ plików SQL; zmianę schematu dodaje się jako następny plik.
 
 Na środowisku z `APP_ENV=production` (także `prod`/`Production`, a zachowawczo również przy braku lub nieznanej wartości `APP_ENV`; `src/app-env.js`) trzeba dodatkowo przekazać argument
 `--allow-production`; użycie wymaga wcześniej kopii zapasowej, zatwierdzonego
-planu przywracania i decyzji administratora szkoły. Nie wpisywać URL bazy ani
+planu przywracania i decyzji administratora szkoły. Flaga `--allow-production` sprawdza wyłącznie `APP_ENV` z powłoki operatora, nie oznaczenie docelowej bazy: `DATABASE_URL` produkcji podany z `APP_ENV=staging` przejdzie tę kontrolę. Realnie chroni przed pomyłką (brak lub literówka w `APP_ENV` daje odmowę), nie przed świadomym wpisaniem innego środowiska. Znacznik środowiska w bazie i `--expect-database` czekają na D-20 (#166); do tego czasu przed każdą operacją sprawdź host i nazwę bazy w `DATABASE_URL`. Nie wpisywać URL bazy ani
 jej zawartości do repozytorium, logów czy zgłoszeń. Najpierw testować na
 pustej bazie z danymi syntetycznymi.
 
