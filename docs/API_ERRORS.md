@@ -396,7 +396,7 @@ wpisów).
 | `preview_campaign_limit` | Wyczerpano limit wiadomości testowych dla tej kampanii. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
 | `preview_stale` | Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
-| `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import. | Zależy od kontekstu (patrz moduł trasy). |
+| `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie. | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_approved` | Najpierw zatwierdź tę wersję (inna osoba niż autor). | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_draft` | Tę wersję już zatwierdzono albo opublikowano. | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_found` | Nie znaleziono tej wersji informacji. | Nie — popraw dane żądania. |

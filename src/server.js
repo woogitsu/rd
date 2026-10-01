@@ -108,6 +108,9 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         EMAIL_QUEUE_MAX_AGE_HOURS: processEnv.EMAIL_QUEUE_MAX_AGE_HOURS,
         // #130: próg alarmu „brak przebiegów” w GET /api/email/worker-status (zarząd/skarbnik).
         EMAIL_WORKER_ALARM_HOURS: processEnv.EMAIL_WORKER_ALARM_HOURS,
+        // #145: adres bazowy do odnośnika do informacji o przetwarzaniu danych
+        // (stopka podglądu/testu e-maila i kartki); wcześniej tylko dla workera.
+        PUBLIC_BASE_URL: processEnv.PUBLIC_BASE_URL,
       },
       fetchHandler: handlePgRequest,
       bodyLimit: bodyLimitForApp(documentMaxBytes),

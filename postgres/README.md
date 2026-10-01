@@ -1430,3 +1430,17 @@ Wycofanie: `DROP VIEW processing_restricted_subjects`, `DROP TABLE
 processing_restrictions`, `DROP FUNCTION processing_restrictions_guard()` oraz
 przywrócenie CHECK z 0158 (tylko bez wierszy `processing_restricted`); znika
 ślad ograniczeń, dane rodzin zostają.
+
+`0179_email_campaign_privacy_notice.sql` (issue #145, D-06) dodaje
+`email_campaigns.privacy_notice_id` (FK do `privacy_notices`, nullable, bez
+DEFAULT) oraz trigger `email_campaigns_privacy_notice_guard`: kolumnę ustawia
+wyłącznie przejście `draft → approved` (wyłącznie wersja o statusie
+`published`), czyści wyłącznie `approved → draft`, w innych stanach jest
+niezmienna; CHECK — szkic nie nosi wersji. Skutki dla danych: istniejące
+kampanie dostają NULL, nic nie jest uzupełniane wstecznie. Kampania zatwierdzona
+przed migracją (`approved`/`sending`/`paused`) nie ma zapisanej wersji —
+`queue`/`resume` odmawiają `409 privacy_notice_missing`, a worker ją pomija
+(wiersze zostają `queued`); trzeba ją zatwierdzić ponownie albo anulować i
+utworzyć nową. Kampanie `done`/`cancelled` bez zmian. ADD COLUMN bez DEFAULT nie
+przepisuje tabeli. Wycofanie: `DROP TRIGGER`, `DROP FUNCTION`, `DROP COLUMN`.
+Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).

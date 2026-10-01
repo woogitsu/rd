@@ -20,7 +20,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { guessMapping, parseCsv, toServerPayload, validateRows } from '../import/core.js';
-import { createRealTestDb, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createRealTestDb, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 import {
   barrierEnv, callApi, countRows, dropAdvisoryLock, dropForUpdate, settledWithin, waitForLockWaitersWithQuery,
 } from './helpers/pg-barrier.js';
@@ -287,6 +287,7 @@ const BODY = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok
 // Bez EMAIL_SENDING_ENABLED i bez klucza dostawcy: zatwierdzenie tylko zmienia
 // stan kampanii; nic nie trafia do kolejki ani do transportu.
 async function campaignSetup(db) {
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const cookies = {
     treasurer: await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),

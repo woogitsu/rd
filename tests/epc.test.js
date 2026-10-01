@@ -82,3 +82,59 @@ test('buildEpcPayload: koniec linii \\n, brak CRLF', () => {
   assert.equal(payload.includes('\r'), false);
   assert.equal(payload.split('\n').length, 12);
 });
+
+// Wektor pełnego ładunku (dane syntetyczne: testowy IBAN BE z poprawną sumą, nazwa
+// i referencja wymyślone) — chroni kolejność i separatory pól przed regresją.
+test('buildEpcPayload: pełny wektor referencyjny (bajt w bajt)', () => {
+  const payload = buildEpcPayload({
+    iban: 'be68 5390 0754 7034', bic: 'gebabebb', name: 'Rada Rodziców Test',
+    structuredReference: REF, amountCents: 2500, info: 'Skladka dobrowolna',
+  });
+  assert.equal(
+    payload,
+    ['BCD', '002', '1', 'SCT', 'GEBABEBB', 'Rada Rodziców Test', IBAN, 'EUR25.00', '', REF, '', 'Skladka dobrowolna'].join('\n'),
+  );
+});
+
+test('buildEpcPayload: referencja strukturalna z błędną sumą kontrolną odrzucona', () => {
+  assert.throws(() => buildEpcPayload({ iban: IBAN, name: 'Test', structuredReference: '123456789003' }), /invalid_structured_reference/);
+  assert.throws(() => buildEpcPayload({ iban: IBAN, name: 'Test', structuredReference: '+++123/4567/89002+++' }), /invalid_structured_reference/);
+});
+
+test('buildEpcPayload: BIC musi mieć poprawny kształt (8 lub 11 znaków)', () => {
+  assert.doesNotThrow(() => buildEpcPayload({ iban: IBAN, bic: 'GEBABEBB', name: 'Test' }));
+  assert.doesNotThrow(() => buildEpcPayload({ iban: IBAN, bic: 'GEBABEBB123', name: 'Test' }));
+  for (const bic of ['GEBABEB', 'GEBABEBB12', '1EBABEBB', 'GEBA-EBB']) {
+    assert.throws(() => buildEpcPayload({ iban: IBAN, bic, name: 'Test' }), /invalid_bic/, bic);
+  }
+});
+
+test('buildEpcPayload: znaki końca linii i sterujące w polach tekstowych odrzucone (brak wstrzyknięcia pól)', () => {
+  const fields = [
+    ['name', 'invalid_name'], ['unstructuredText', 'invalid_unstructured_text'], ['info', 'invalid_info'],
+  ];
+  for (const [field, code] of fields) {
+    for (const bad of ['Rada\nBE00', 'Rada\r\nX', 'Rada\tX', 'Rada X']) {
+      const input = { iban: IBAN, name: 'Test', [field]: bad };
+      assert.throws(() => buildEpcPayload(input), new RegExp(code), `${field} ${JSON.stringify(bad)}`);
+    }
+  }
+});
+
+test('buildEpcPayload: kwota — granice i niepoprawne wartości', () => {
+  const amountLine = (amountCents) => lines(buildEpcPayload({ iban: IBAN, name: 'Test', amountCents }))[7];
+  assert.equal(amountLine(1), 'EUR0.01');
+  assert.equal(amountLine(100), 'EUR1.00');
+  assert.equal(amountLine(99_999_999_999), 'EUR999999999.99');
+  for (const bad of [0, -5, 12.5, 100_000_000_000, '10', Number.NaN]) {
+    assert.throws(() => buildEpcPayload({ iban: IBAN, name: 'Test', amountCents: bad }), /invalid_amount/, String(bad));
+  }
+});
+
+test('buildEpcPayload: limit 331 bajtów liczy bajty UTF-8, nie znaki', () => {
+  // 70 + 140 znaków mieści się w limitach pól, ale wielobajtowe "Ą" przekracza 331 bajtów.
+  assert.throws(() => buildEpcPayload({
+    iban: IBAN, name: 'Ą'.repeat(70), unstructuredText: 'Ą'.repeat(140),
+  }), /epc_payload_too_large/);
+  assert.doesNotThrow(() => buildEpcPayload({ iban: IBAN, name: 'x'.repeat(70), unstructuredText: 'x'.repeat(140) }));
+});

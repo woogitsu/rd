@@ -17,15 +17,10 @@ import { assertEvery } from './helpers/assertions.js';
 const YEAR = 'y-2026';
 const HOUR = 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+import { syntheticJpeg, syntheticPng } from './helpers/synthetic-images.js';
 const encoder = new TextEncoder();
 const PDF = encoder.encode('%PDF-1.4\n% syntetyczny dokument testowy\n1 0 obj <<>> endobj\n%%EOF\n');
-// Sygnatura + IHDR (13 B danych) + IEND: minimalny, strukturalnie poprawny PNG
-// (CRC nieużywany przez kontrolę struktury z issue #89 — dowolny bajt starcza).
-const PNG = Uint8Array.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, ...new Array(13).fill(0), 0, 0, 0, 0,
-  0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0, 0, 0, 0,
-]);
+const PNG = syntheticPng();
 const HTML = encoder.encode('<html><script>alert(1)</script></html>');
 
 async function withEnv(fn, extra = {}) {
@@ -1256,7 +1251,7 @@ async function insertLegacyDocument(db, storage, {
   return id;
 }
 
-const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
+const JPEG = syntheticJpeg();
 const preview = (env, id, cookie, extra = '') => get(env, `/api/documents/${id}/content?disposition=inline${extra}`, cookie);
 
 test('inline preview of PDF, PNG and JPEG: safe headers, byte-identical body, audited as document.viewed only', async () => withEnv(async (db, env) => {
@@ -1390,6 +1385,10 @@ test('malicious synthetic files are refused with 415 before putObject, also on r
     ['jpeg with data after FFD9', jpegTrailer, 'image/jpeg', 'document_malformed'],
     ['pdf /JavaScript hidden in a compressed object stream', pdfWithHiddenScript(), 'application/pdf', 'document_active_content'],
     ['pdf /SubmitForm', pdfWith('/S /SubmitForm /F (https://example.invalid/x)'), 'application/pdf', 'document_active_content'],
+    ['png with zero width in IHDR', syntheticPng({ width: 0 }), 'image/png', 'document_malformed'],
+    ['png with oversized dimensions', syntheticPng({ width: 20000, height: 20000 }), 'image/png', 'document_malformed'],
+    ['png without IDAT', syntheticPng({ idat: false }), 'image/png', 'document_malformed'],
+    ['jpeg with zero height in SOF', syntheticJpeg({ height: 0 }), 'image/jpeg', 'document_malformed'],
     ['svg declared as svg', SVG, 'image/svg+xml', 'unsupported_media_type'],
     ['svg declared as png', SVG, 'image/png', 'unsupported_media_type'],
   ];
@@ -1406,6 +1405,17 @@ test('malicious synthetic files are refused with 415 before putObject, also on r
   assert.equal((await upload(env, { cookie, bytes: PDF, type: 'image/png' })).response.status, 415);
   assert.equal(storage.keys().length, 0);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM documents')).rows[0].n, 0);
+}));
+
+test('preview of an image accepted under rules v1 but failing the image-header checks is 409; current-version image opens (#89)', async () => withEnv(async (db, env, storage) => {
+  const cookie = await treasurer(db);
+  const zeroWidth = await insertLegacyDocument(db, storage, { bytes: syntheticPng({ width: 0 }), mimeType: 'image/png', validationVersion: 1 });
+  const fine = await insertLegacyDocument(db, storage, { bytes: PNG, mimeType: 'image/png', validationVersion: DOCUMENT_VALIDATION_VERSION });
+  const blocked = await preview(env, zeroWidth, cookie);
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json()).error, 'document_preview_blocked');
+  assert.equal((await preview(env, fine, cookie)).status, 200);
+  assert.deepEqual((await auditRows(db, 'document.preview_blocked')).map((event) => `${event.entity_id}:${event.metadata_json.reason}`), [`${zeroWidth}:document_malformed`]);
 }));
 
 test('preview re-checks stored bytes with current rules: legacy file failing them is 409 document_preview_blocked, still downloadable (#89)', async () => withEnv(async (db, env, storage) => {

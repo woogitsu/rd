@@ -173,6 +173,23 @@ export async function seedUser(db, { userId, email = `${String(userId).toLowerCa
 }
 
 /**
+ * #145 (D-06): opublikowana wersja informacji o przetwarzaniu danych — warunek
+ * importu, zatwierdzenia kampanii e-mail i wydruku kartek. Wstawiana wprost
+ * (poza API), z syntetyczną treścią; autor i zatwierdzający to dwa różne konta.
+ */
+export async function seedPublishedPrivacyNotice(db, { id = 'pn-test', createdBy = 'u-pn-author', approvedBy = 'u-pn-approver' } = {}) {
+  await seedUser(db, { userId: createdBy });
+  await seedUser(db, { userId: approvedBy });
+  await db.query(
+    `INSERT INTO privacy_notices (id, body_text, content_hash, decision_ref, status, created_by, approved_by, approved_at, published_by, published_at)
+     VALUES ($1, 'Testowa informacja o przetwarzaniu danych.', repeat('a', 64), 'D-06/test', 'published',
+             $2, $3, now(), $3, now())`,
+    [id, createdBy, approvedBy],
+  );
+  return id;
+}
+
+/**
  * Tworzy (w razie potrzeby) użytkownika, przydziały ról i sesję.
  * Brakujące lata i klasy wskazane w roles są tworzone syntetycznie
  * (klasa bez schoolYearId trafia do roku 'y-test').

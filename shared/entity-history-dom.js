@@ -1,8 +1,10 @@
 // Zwijana sekcja „Historia” (#181) — wiązanie DOM dla paneli wpłat, księgi i e-mail.
-// Wstawia <details> do `host`, a po `load()` pokazuje ją tylko gdy serwer zwrócił 200.
-// Ukrycie przy 403/404 to UX, nie kontrola dostępu (ta jest po stronie serwera).
+// Wstawia <details> do `host`. `grants` to funkcja zwracająca (także asynchronicznie)
+// przydziały z powłoki; rola wybiera trasę, a bez trasy sekcja zostaje ukryta i
+// nic nie jest wysyłane. 404 ukrywa sekcję, 403 pokazuje komunikat. To UX, nie
+// kontrola dostępu (ta jest po stronie serwera).
 
-import { entityHistoryPath, historyOutcome, historyRows } from "./entity-history-core.js";
+import { entityHistoryPath, historyOutcome, historyRoute, historyRows } from "./entity-history-core.js";
 
 function cell(text, title = "") {
   const td = document.createElement("td");
@@ -11,7 +13,7 @@ function cell(text, title = "") {
   return td;
 }
 
-export function mountEntityHistory(host, { api, idPrefix }) {
+export function mountEntityHistory(host, { api, idPrefix, grants }) {
   const details = document.createElement("details");
   details.className = "entity-history";
   details.hidden = true;
@@ -59,8 +61,15 @@ export function mountEntityHistory(host, { api, idPrefix }) {
     const mine = token;
     let result = null;
     let failure = null;
+    let route = null;
     try {
-      result = await api(entityHistoryPath(entityType, entityId));
+      route = historyRoute(await grants());
+    } catch {
+      route = null;
+    }
+    if (mine !== token || !route) return;
+    try {
+      result = await api(entityHistoryPath(entityType, entityId, route));
     } catch (error) {
       failure = error;
     }
@@ -68,6 +77,11 @@ export function mountEntityHistory(host, { api, idPrefix }) {
     const outcome = historyOutcome(failure);
     if (outcome === "hidden") return;
     details.hidden = false;
+    if (outcome === "forbidden") {
+      wrap.hidden = true;
+      note.textContent = "Brak uprawnień do historii tego obiektu.";
+      return;
+    }
     if (outcome === "unavailable") {
       wrap.hidden = true;
       note.textContent = "Historia jest chwilowo niedostępna.";
