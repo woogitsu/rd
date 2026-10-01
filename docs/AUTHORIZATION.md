@@ -431,7 +431,7 @@ Zestawienie faktów dla decyzji D-09 (#137), wyprowadzone z macierzy `tests/help
 | `year-close` | 5 | 0 | 5 |
 | `audit-history` | 4 | 0 | 4 |
 | `import` | 3 | 0 | 3 |
-| `families` | 12 | 0 | 12 |
+| `families` | 15 | 0 | 15 |
 | `email` | 30 | 0 | 30 |
 | `board` | 3 | 0 | 3 |
 | `audit-reviews` | 5 | 4 | 1 |
