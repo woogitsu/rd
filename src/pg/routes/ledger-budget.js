@@ -42,6 +42,7 @@ import {
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { csvResponse, csvRow, safeFileSegment, toCsv } from '../csv.js';
+import { toXlsx, xlsxResponse } from '../xlsx.js';
 import { renderBudgetExecutionHtml } from '../budget-report.js';
 import { reportContentSecurityPolicy } from '../audit-report.js';
 import { toSafeInteger } from './payments.js';
@@ -52,7 +53,7 @@ export const name = 'ledger-budget';
 const FINANCIAL_ROLES = ['admin', 'board', 'treasurer'];
 const ADOPTION_ROLES = ['board'];
 const DIRECTIONS = new Set(['income', 'expense']);
-const FORMATS = new Set(['json', 'csv', 'html']);
+const FORMATS = new Set(['json', 'csv', 'xlsx', 'html']);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_PLANNED_CENTS = 100_000_000;
@@ -581,6 +582,11 @@ async function execution(request, env, url, json) {
   if (format === 'csv') {
     return csvResponse(toCsv(BUDGET_CSV_COLUMNS, report.items.map(budgetCsvValues)),
       `preliminarz-${safeFileSegment(schoolYearId)}.csv`);
+  }
+  if (format === 'xlsx') {
+    // #121: te same kolumny co CSV; kwoty to liczby, brak planu to pusta komórka.
+    return xlsxResponse(toXlsx(BUDGET_CSV_COLUMNS, report.items.map(budgetCsvValues), { sheetName: `Preliminarz ${schoolYearId}` }),
+      `preliminarz-${safeFileSegment(schoolYearId)}.xlsx`);
   }
   const html = renderBudgetExecutionHtml({
     schoolYear: { id: year.id, label: year.label, startsOn: year.starts_on, endsOn: year.ends_on },

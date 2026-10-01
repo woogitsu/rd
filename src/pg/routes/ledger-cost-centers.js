@@ -3,7 +3,7 @@
 //
 //   GET  /api/ledger/{id}/allocations                           historia wersji przypisania wpisu
 //   POST /api/ledger/{id}/allocations                           (Idempotency-Key) nowa wersja
-//   GET  /api/ledger/cost-centers?schoolYearId=…&type=event|class&format=json|csv
+//   GET  /api/ledger/cost-centers?schoolYearId=…&type=event|class&format=json|csv|xlsx
 //   GET  /api/ledger/cost-centers/events/{eventId}              rozliczenie jednego wydarzenia
 //
 // Dostęp: admin, board, treasurer z MFA w zakresie roku (jak księga). Przedstawiciel
@@ -24,6 +24,7 @@ import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
 import { toSafeInteger } from './payments.js';
 import { csvResponse, safeFileSegment, toCsv } from '../csv.js';
+import { toXlsx, xlsxResponse } from '../xlsx.js';
 import { readSnapshot } from '../db-snapshot.js';
 import { createIdempotencyKeyReader, createJsonReader } from '../input.js';
 
@@ -346,7 +347,7 @@ async function readCostCenters(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
   const type = url.searchParams.get('type') ?? 'event';
   const format = url.searchParams.get('format') ?? 'json';
-  if (!validId(schoolYearId) || !TYPES.has(type) || !['json', 'csv'].includes(format)) {
+  if (!validId(schoolYearId) || !TYPES.has(type) || !['json', 'csv', 'xlsx'].includes(format)) {
     throw new RequestError('invalid_request');
   }
   await requireFinancial(request, env, schoolYearId);
@@ -360,6 +361,10 @@ async function readCostCenters(request, env, url, json) {
       report.general.resultCents],
     ['razem', '', 'Razem rok', '', report.totals.incomeCents, report.totals.expenseCents, report.totals.resultCents],
   ];
+  if (format === 'xlsx') {
+    return xlsxResponse(toXlsx(COST_CENTER_CSV_COLUMNS, rows, { sheetName: `Centra ${TYPE_LABEL[type]} ${schoolYearId}` }),
+      `centra-${type}-${safeFileSegment(schoolYearId)}.xlsx`);
+  }
   return csvResponse(toCsv(COST_CENTER_CSV_COLUMNS, rows), `centra-${type}-${safeFileSegment(schoolYearId)}.csv`);
 }
 
