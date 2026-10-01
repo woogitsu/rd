@@ -175,7 +175,7 @@ test('wpłata częściowo podzielona: reszta jako „nieprzypisana część”; 
   await assert.rejects(db.query('TRUNCATE payment_allocations CASCADE'), /truncate_not_allowed/);
 });
 
-test('podwójne kliknięcie: ten sam klucz powtarza odpowiedź; nowy klucz dla tego samego gospodarstwa — 409; równoległe przekroczenie — jedno odrzucone', async () => {
+test('podwójne kliknięcie: ten sam klucz powtarza odpowiedź; nowy klucz dla tego samego gospodarstwa — 409; równoległe przekroczenie — jedno odrzucone (PGlite: po kolei, nie wyścig)', async () => {
   const { db, cookies, call } = await setup();
   const paymentId = await createPayment(call, cookies.treasurer, { amountCents: 5000 });
   const idempotencyKey = key('dbl');
