@@ -1505,6 +1505,15 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
+  // Anonimizacja gospodarstwa (#91): wariant zachowawczy — admin + krok w górę MFA. Macierz wywołuje tylko podgląd
+  // (dryRun), który niczego nie zmienia; wykonanie i odmowy: tests/pg-anonymization.test.js.
+  adminRoute('admin.anonymizationPreview', 'POST', '/api/admin/anonymizations', {
+    object: 'dataRequestErasure',
+    build: ({ obj }) => ({
+      path: '/api/admin/anonymizations',
+      body: { householdId: 'hh-1', reasonCode: 'data_subject_request', dataRequestId: obj.requestId, dryRun: true },
+    }),
+  }),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
   adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 

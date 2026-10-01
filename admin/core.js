@@ -61,6 +61,7 @@ export function auditListPath(domain) {
 // (`rotated`). Zestawy pokrywa test tests/admin-core.test.js (skan src/pg/**).
 export const ENTITY_TYPE_LABELS = Object.freeze({
   account_recovery_request: "Prośba o odzyskanie konta",
+  anonymization_run: "Przebieg anonimizacji gospodarstwa",
   audit_log: "Dziennik zdarzeń",
   bank_reconciliation: "Uzgodnienie wyciągu",
   bank_reconciliation_group_match: "Dopasowanie grupowe wyciągu",
