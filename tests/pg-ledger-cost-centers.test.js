@@ -2,6 +2,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { unzipSync, strFromU8 } from 'fflate';
 import { PGlite } from '@electric-sql/pglite';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { handlePgRequest } from '../src/pg/app.js';
@@ -103,6 +104,24 @@ test('allocations to an event and split across two classes; report sums to the y
   const text = await csv.text();
   assert.match(text, /wydarzenie;ev-fair;Kiermasz testowy;draft;400,00;150,00;250,00/);
   assert.match(text, /ogólne;;Bez przypisania;;0,00;100,00;-100,00/);
+
+  // XLSX (#121): te same wiersze co CSV; kwoty liczbowe, suma wydarzeń + ogólne = razem rok = ledger_summary.
+  const xlsx = await call(`/api/ledger/cost-centers?schoolYearId=${YEAR}&type=event&format=xlsx`, { cookie: cookies.treasurer });
+  assert.equal(xlsx.status, 200);
+  assert.equal(xlsx.headers.get('Content-Type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.equal(xlsx.headers.get('Content-Disposition'), `attachment; filename="centra-event-${YEAR}.xlsx"`);
+  const xlsxBytes = new Uint8Array(await xlsx.arrayBuffer());
+  for (const [name, part] of Object.entries(unzipSync(xlsxBytes))) assert.ok(!/<f[\s>/]/.test(strFromU8(part)), `${name} bez formuł`);
+  const { default: readXlsxFileNode } = await import('read-excel-file/node');
+  const parsed = await readXlsxFileNode(Buffer.from(xlsxBytes));
+  const sheetRows = (parsed[0].data ?? parsed[0]).slice(1);
+  assert.deepEqual(sheetRows.find((row) => row[0] === 'wydarzenie'), ['wydarzenie', 'ev-fair', 'Kiermasz testowy', 'draft', 400, 150, 250]);
+  assert.deepEqual(sheetRows.find((row) => row[0] === 'ogólne').slice(4), [0, 100, -100]);
+  const total = sheetRows.find((row) => row[0] === 'razem');
+  assert.deepEqual([total[4] * 100, total[5] * 100], [summary.incomeCents, summary.expenseCents]);
+  const treasurerOnly = await call(`/api/ledger/cost-centers?schoolYearId=${YEAR}&type=event&format=xlsx`, { cookie: cookies.rep });
+  assert.equal(treasurerOnly.status, 403);
+  assert.equal((await call(`/api/ledger/cost-centers?schoolYearId=${YEAR}&type=event&format=pdf`, { cookie: cookies.treasurer })).status, 400);
 
   const finance = await (await call('/api/ledger/cost-centers/events/ev-fair', { cookie: cookies.board })).json();
   assert.equal(finance.event.resultCents, 25000);

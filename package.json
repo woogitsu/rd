@@ -27,6 +27,7 @@
     "dev:print": "vite print",
     "build:print": "vite build print --outDir ../dist/print --base ./ --emptyOutDir",
     "db:migrate:postgres": "node scripts/migrate-postgres.js",
+    "typecheck": "tsc -p jsconfig.json --noEmit",
     "openapi:build": "node scripts/build-openapi.js",
     "migrations:manifest": "node scripts/generate-migrations-manifest.js",
     "migrations:check-order": "node scripts/check-migrations-order.js",
@@ -90,6 +91,8 @@
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
     "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "7.0.2",
     "vite": "^8.3.1",
     "wrangler": "^4.143.1"
   }

@@ -66,13 +66,140 @@ logach, zgłoszeniach ani buildzie frontendu.
 | `BREVO_WEBHOOK_SECRET` | aplikacja | **wymagany** poza środowiskiem lokalnym: co najmniej 32 znaki (sekret) |
 | `DATABASE_URL` | aplikacja / worker e-mail | referencja do prywatnego adresu PostgreSQL (`*.railway.internal`), nie publiczny TCP proxy; docelowo rola `rd_app` (sekcja „Role bazy”) |
 | `DATABASE_MIGRATION_URL` | tylko operator (migrator, odtworzenie) | opcjonalny adres roli WŁAŚCICIELA schematu dla `db:migrate:postgres`, `restore:postgres-snapshot` i `verify-export --restore-database`; brak = fallback na `DATABASE_URL`. Nie ustawiać w usłudze aplikacji ani workera |
-| `BUCKET`, `ENDPOINT`, `REGION`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39) |
+| `BUCKET_ENDPOINT`, `BUCKET_REGION`, `BUCKET_NAME`, `BUCKET_ACCESS_KEY_ID`, `BUCKET_SECRET_ACCESS_KEY` | aplikacja | referencje do zmiennych Storage Bucket (#39); aplikacja czyta nazwy z prefiksem `BUCKET_` (`src/storage.js`), a nie nazwy źródłowe bucketu (`BUCKET`, `ENDPOINT` itd.); wszystkie pięć albo żadna |
 | `BREVO_API_KEY` | aplikacja / worker | dopiero w #40; na stagingu klucz bez możliwości wysyłki do rodziców |
 | `APP_WRITE_MODE` | aplikacja i worker e-mail | `normal` (domyślnie, także gdy brak) albo `read_only` (#143); inna wartość to błąd konfiguracji — serwer nie startuje, worker kończy z błędem. Procedura: sekcja „Tryb tylko do odczytu” |
 | `EMAIL_SEND_WINDOW_ENABLED`, `EMAIL_SEND_WINDOW_START`, `EMAIL_SEND_WINDOW_END`, `EMAIL_SEND_WINDOW_TIMEZONE`, `EMAIL_SEND_WINDOW_DAYS` | aplikacja i worker e-mail | te same wartości w obu usługach (#130): zadanie liczy okno w strefie Brukseli, aplikacja pokazuje na tej podstawie szacowany start/koniec kampanii; godziny i dni ustala zarząd (D-16) |
 | `EMAIL_WORKER_ALARM_HOURS` | aplikacja | próg alarmu „brak przebiegów” dla zarządu (`GET /api/email/worker-status`, domyślnie 2 h, #130); przy cronie co godzinę 2 h = jeden opuszczony przebieg zapasu |
 
-Sesje i MFA mogą wymagać dodatkowych sekretów — ich nazwy dopisuje PR #35.
+Pełna lista wszystkich zmiennych (z wartościami domyślnymi i skutkiem braku) jest w katalogu poniżej.
+
+### Katalog zmiennych środowiskowych (#166)
+
+Jedyna pełna lista zmiennych czytanych przez kod (`src/`, `scripts/`, pliki w
+katalogach modułów). Pilnuje jej `tests/env-catalog.test.js`: nowa zmienna w
+kodzie bez wiersza tutaj oraz wiersz bez użycia w kodzie wywracają test (wyjątki
+mają jawną listę z uzasadnieniem w teście). Tabela wyżej opisuje zasady
+konfiguracji usług Railway; inne dokumenty (`EMAIL.md`, `AUTH.md`,
+`NODE_SERVER.md`, `DOCUMENTS.md`) linkują tutaj. Tabela zawiera wyłącznie
+**nazwy**, znaczenie i wartości domyślne, bez sekretów ani prawdziwych wartości.
+Kolumna „Wymagana”: `tak` (brak = start odmówiony lub funkcja niedostępna),
+`poza lokalnie` (wymagana, gdy `APP_ENV` jest inny niż lokalny), `nie`
+(działa wartość domyślna), `skrypt` (tylko dla wskazanego polecenia). Opis ze
+słowem „sekret” oznacza zmienną ustawianą wyłącznie w Railway.
+
+| Zmienna | Usługa | Wymagana | Domyślna | Opis |
+|---|---|---|---|---|
+| `APP_ENV` | aplikacja, worker, skrypty | tak (Railway) | `development` lokalnie | `development`, `test`, `staging`, `production`; pozostałe traktowane zachowawczo, patrz tabela wyżej |
+| `PORT` | aplikacja | tak (ustawia Railway) | `3000` lokalnie | port nasłuchu HTTP |
+| `PUBLIC_BASE_URL` | aplikacja, worker | poza lokalnie | brak | `https://host` bez ścieżki; baza linków w e-mailach (wypisanie) |
+| `DATABASE_URL` | aplikacja, worker, skrypty | tak | brak | prywatny adres PostgreSQL (`*.railway.internal`), sekret |
+| `DATABASE_MIGRATION_URL` | skrypty operatora (migrator, odtworzenie) | nie | brak (fallback na `DATABASE_URL`) | adres roli właściciela schematu dla `db:migrate:postgres`, `restore:postgres-snapshot`, `verify-export --restore-database` (SR-05, #101); sekret, nie ustawiać w usłudze aplikacji ani workera |
+| `PG_POOL_MAX` | aplikacja, worker | nie | `10` | maksymalna liczba połączeń puli |
+| `PG_STATEMENT_TIMEOUT_MS` | aplikacja, worker | nie | `10000` | limit czasu zapytania |
+| `PG_LOCK_TIMEOUT_MS` | aplikacja, worker | nie | `3000` | limit oczekiwania na blokadę wiersza |
+| `LOG_LEVEL` | aplikacja, worker | nie | `info` | poziom logów strukturalnych |
+| `SHUTDOWN_TIMEOUT_MS` | aplikacja | nie | `10000` | czas łagodnego zamknięcia po SIGTERM |
+| `METRICS_LOG_INTERVAL_MS` | aplikacja | nie | `300000` | odstęp wpisów z metrykami w logu |
+| `TRUST_PROXY` | aplikacja | poza lokalnie | brak | `1` lub `true` za proxy Railway; inaczej wspólny licznik prób na adres |
+| `MFA_ENCRYPTION_KEY` | aplikacja, `rotate-mfa-key` | poza lokalnie | brak | klucz 32 bajty (hex lub base64), sekret; bez niego MFA zwraca `503 mfa_unavailable` |
+| `MFA_ENCRYPTION_KEYS` | aplikacja, `rotate-mfa-key` | nie | brak | lista kluczy przy rotacji, sekret; sekcja „Rotacja klucza szyfrowania MFA” |
+| `MFA_REQUIRED_ROLES` | aplikacja | nie | `admin,board,treasurer` | role z obowiązkowym MFA; pusty ciąg = bez obowiązku |
+| `SCRYPT_COST_LOG2` | aplikacja | nie | `17` | koszt haszowania haseł (15–20) |
+| `PASSWORD_CONTEXT_STEMS` | aplikacja | nie | brak | rdzenie słabych haseł oddzielone przecinkami |
+| `LOGIN_EMAIL_DELAY_MS` | aplikacja | nie | `1000`/`2000` | opóźnienie po błędach logowania na adres e-mail; `0` = brak |
+| `LOGIN_PRESSURE_THRESHOLD` | aplikacja | nie | `15` | błędne próby na konto w 15 min, od których administrator dostaje sygnał |
+| `LOGIN_QUEUE_MAX_PER_IP` | aplikacja | nie | `5` | limit kolejki obliczeń haseł na adres klienta |
+| `SESSION_IDLE_TIMEOUT_SECONDS` | aplikacja | nie | `1800` | wygaśnięcie sesji po bezczynności; `0` wyłącza (tylko lokalnie) |
+| `ALLOW_PENDING_ROLES` | aplikacja | nie | wyłączone | `true` zezwala na rolę `pending_decision` (D-09); domyślnie odrzucana |
+| `MEETINGS_CLASS_HOST` | aplikacja | nie | wyłączone | `representative` pozwala przedstawicielowi prowadzić zebranie klasy |
+| `ICAL_UID_DOMAIN` | aplikacja | nie | `rd.example.invalid` | domena w UID kalendarza do czasu D-20 |
+| `IMPORT_ENABLED` | aplikacja | nie | wyłączony poza lokalnymi | `true` odblokuje import na produkcji po decyzji szkoły (D-01–D-06) |
+| `RECONCILIATION_BANK_ACCOUNT_IBAN` | aplikacja | nie | brak | rachunek Rady do importu wyciągu (D-13) |
+| `BANK_TRANSACTION_HASH_KEY` | aplikacja | nie | brak | klucz HMAC (min. 32 znaki), sekret; bez niego import wyciągu jest niedostępny |
+| `RATE_LIMIT_DISABLED` | aplikacja | nie | wyłączone | `1` wyłącza ogólny limiter (tylko lokalnie/testy) |
+| `RATE_LIMIT_PUBLIC_PER_MIN` | aplikacja | nie | `300` | żądania publiczne na minutę; `0` = bez limitu |
+| `RATE_LIMIT_WEBHOOK_PER_MIN` | aplikacja | nie | `600` | żądania webhooka na minutę |
+| `RATE_LIMIT_SESSION_PER_MIN` | aplikacja | nie | `1200` | żądania zalogowanej sesji na minutę |
+| `RATE_LIMIT_SESSION_ADDRESS_PER_MIN` | aplikacja | nie | `3000` | suma sesji z jednego adresu na minutę |
+| `RATE_LIMIT_HEAVY_CONCURRENCY` | aplikacja | nie | `2` | równoległe kosztowne trasy (eksport, import, raporty) na sesję |
+| `APP_WRITE_MODE` | aplikacja, worker | nie | `normal` | `read_only` blokuje zapisy (#143); inna wartość = błąd konfiguracji |
+| `RAILWAY_GIT_COMMIT_SHA` | aplikacja | nie (ustawia Railway) | brak | wersja pokazywana w `ops-status` |
+| `HEALTH_JOBS_TOKEN` | aplikacja | nie | brak | token Bearer dla `GET /health/jobs`, sekret; brak = zawsze 401 |
+| `BACKUP_MAX_AGE_HOURS` | aplikacja | nie | `26` | próg alarmu „stara kopia” w `/health/jobs` |
+| `EMAIL_WORKER_MAX_AGE_HOURS` | aplikacja | nie | `6` | próg alarmu „brak przebiegu workera” w `/health/jobs` |
+| `EMAIL_QUEUE_MAX_AGE_HOURS` | aplikacja | nie | `24` | próg alarmu „stara wiadomość w kolejce” |
+| `EMAIL_WORKER_ALARM_HOURS` | aplikacja | nie | `2` | alarm „brak przebiegów” dla zarządu (`/api/email/worker-status`) |
+| `DOCUMENT_MAX_BYTES` | aplikacja | nie | `10485760` | limit pliku dokumentu w bajtach (najwyżej 25 MiB) |
+| `DOCUMENT_MAX_CONCURRENT_UPLOADS` | aplikacja | nie | `4` | równoległe wysyłki dokumentów |
+| `BUCKET_ENDPOINT` | aplikacja | tak (dokumenty) | brak | adres Storage Bucket; wszystkie pięć `BUCKET_*` albo żadna (częściowa konfiguracja zatrzymuje start) |
+| `BUCKET_REGION` | aplikacja | tak (dokumenty) | brak | region bucketu |
+| `BUCKET_NAME` | aplikacja | tak (dokumenty) | brak | nazwa bucketu |
+| `BUCKET_ACCESS_KEY_ID` | aplikacja | tak (dokumenty) | brak | identyfikator klucza bucketu, sekret |
+| `BUCKET_SECRET_ACCESS_KEY` | aplikacja | tak (dokumenty) | brak | klucz dostępu bucketu, sekret |
+| `BUCKET_URL_STYLE` | aplikacja | nie | `virtual` | `virtual` albo `path`, zgodnie z zakładką Credentials bucketu |
+| `BREVO_API_KEY` | worker, `email-preflight` | tak (wysyłka) | brak | klucz Brevo, sekret; na stagingu bez możliwości wysyłki do rodziców |
+| `BREVO_FROM_EMAIL` | worker, aplikacja | tak (wysyłka) | brak | adres nadawcy zatwierdzony przez szkołę |
+| `BREVO_FROM_NAME` | worker, aplikacja | nie | `Rada Rodziców` | nazwa nadawcy |
+| `BREVO_REPLY_TO` | worker, aplikacja | tak (produkcja) | brak | adres odpowiedzi; pusty na produkcji = odmowa wysyłki |
+| `BREVO_WEBHOOK_SECRET` | aplikacja | poza lokalnie | brak | min. 32 znaki, sekret; brak = `503 webhook_not_configured` |
+| `BREVO_WEBHOOK_SECRET_PREVIOUS` | aplikacja | nie | brak | poprzedni sekret w oknie rotacji, sekret |
+| `BREVO_WEBHOOK_ALLOWED_CIDRS` | aplikacja | nie | brak | lista CIDR adresów Brevo (sprawdzana przy `TRUST_PROXY`) |
+| `EMAIL_UNSUBSCRIBE_SECRET` | aplikacja, worker | tak (wysyłka) | brak | sekret podpisu linku wypisania; brak = brak stopki |
+| `EMAIL_SENDING_ENABLED` | worker | nie | wyłączone | wysyłka tylko przy dokładnie `true` |
+| `EMAIL_TEST_ALLOWLIST` | worker, `email-preflight` | nie | brak | poza produkcją jedyni dozwoleni odbiorcy, np. `*@example.invalid` |
+| `EMAIL_PREVIEW_RECIPIENTS` | worker, `email-preflight` | nie | brak | adresy techniczne dla wiadomości testowej kampanii |
+| `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` | aplikacja | nie | wyłączone | `true` wymaga testu przed zatwierdzeniem (D-16) |
+| `EMAIL_DAILY_LIMIT` | aplikacja, worker | nie | `300` | dzienny limit wiadomości (plan Brevo) |
+| `EMAIL_DAILY_RESERVED` | aplikacja, worker | nie | `0` | część limitu zarezerwowana poza kampaniami |
+| `EMAIL_QUOTA_TIMEZONE` | aplikacja, worker | nie | `Europe/Brussels` | strefa doby limitu |
+| `EMAIL_CAMPAIGN_MIN_DAYS` | aplikacja, worker | nie | `7` | najmniejsza liczba dni rozłożenia kampanii |
+| `EMAIL_CAMPAIGN_MIN_DAILY` | aplikacja, worker | nie | `50` | najmniejszy dzienny udział kampanii |
+| `EMAIL_BATCH_SIZE` | worker | nie | `50` | wiadomości na partię |
+| `EMAIL_MAX_ATTEMPTS` | worker | nie | `5` | liczba prób dostarczenia |
+| `EMAIL_BREAKER_UNCERTAIN` | worker | nie | `2` | wyłącznik: kolejne wyniki niepewne zatrzymują przebieg |
+| `EMAIL_SEND_WINDOW_ENABLED` | aplikacja, worker | nie | wyłączone | `true` włącza okno wysyłki (D-16) |
+| `EMAIL_SEND_WINDOW_START` | aplikacja, worker | nie | `09:00` | początek okna (`GG:MM`) |
+| `EMAIL_SEND_WINDOW_END` | aplikacja, worker | nie | `18:00` | koniec okna (`GG:MM`) |
+| `EMAIL_SEND_WINDOW_TIMEZONE` | aplikacja, worker | nie | `Europe/Brussels` | strefa okna |
+| `EMAIL_SEND_WINDOW_DAYS` | aplikacja, worker | nie | `1-5` | dni tygodnia okna (1 = poniedziałek) |
+| `EMAIL_PREFERENCES_RATE_LIMIT` | aplikacja | nie | `200` | żądań na minutę do publicznej trasy preferencji |
+| `EMAIL_DKIM_HOSTS` | `email-preflight` | skrypt | brak | selektory DKIM do sprawdzenia |
+| `BACKUP_ENCRYPTION_PUBLIC_KEY` | `backup:postgres` | skrypt | brak | klucz publiczny szyfrowania kopii |
+| `BACKUP_DECRYPTION_PRIVATE_KEY` | `restore:drill` | skrypt | brak | klucz prywatny, sekret, tylko na czas próby odtworzenia |
+| `BACKUP_S3_ENDPOINT` | `backup:postgres`, `restore:drill` | skrypt | brak | magazyn kopii baz |
+| `BACKUP_S3_REGION` | `backup:postgres`, `restore:drill` | skrypt | brak | region magazynu kopii baz |
+| `BACKUP_S3_BUCKET` | `backup:postgres`, `restore:drill` | skrypt | brak | bucket kopii baz |
+| `BACKUP_S3_ACCESS_KEY_ID` | `backup:postgres`, `restore:drill` | skrypt | brak | identyfikator klucza, sekret |
+| `BACKUP_S3_SECRET_ACCESS_KEY` | `backup:postgres`, `restore:drill` | skrypt | brak | klucz dostępu, sekret |
+| `BACKUP_S3_URL_STYLE` | `backup:postgres`, `restore:drill` | skrypt | `virtual` | `virtual` albo `path` |
+| `STORAGE_BACKUP_S3_ENDPOINT` | `backup:storage` | skrypt | brak | magazyn docelowy kopii dokumentów (drugi dostawca) |
+| `STORAGE_BACKUP_S3_REGION` | `backup:storage` | skrypt | brak | region magazynu docelowego |
+| `STORAGE_BACKUP_S3_BUCKET` | `backup:storage` | skrypt | brak | bucket docelowy |
+| `STORAGE_BACKUP_S3_ACCESS_KEY_ID` | `backup:storage` | skrypt | brak | identyfikator klucza, sekret |
+| `STORAGE_BACKUP_S3_SECRET_ACCESS_KEY` | `backup:storage` | skrypt | brak | klucz dostępu, sekret |
+| `STORAGE_BACKUP_S3_URL_STYLE` | `backup:storage` | skrypt | `virtual` | `virtual` albo `path` |
+| `RESTORE_DRILL_TARGET_DATABASE_URL` | `restore:drill` | skrypt | brak | baza docelowa próby, musi różnić się od `DATABASE_URL` |
+| `RD_LOCAL_PG_ADMIN_URL` | `restore:drill:local` | skrypt | brak | lokalny PostgreSQL administratora do próby na danych syntetycznych |
+| `LOAD_TEST_ALLOWED_HOSTS` | `load:test`, `smoke:remote` | skrypt | brak | hosty dozwolone dla testu zdalnego (wyłącznie staging) |
+| `LOAD_TEST_SCHOOL_YEAR_ID` | `load:test` | skrypt | brak | rok szkolny syntetyczny dla testu zdalnego |
+| `NODE_ENV` | `demo:seed` | nie | brak | wartość inna niż lokalna blokuje seed demo |
+| `NODE_TEST_CONTEXT` | testy | nie (ustawia `node --test`) | brak | wyłącza opóźnienia i pętle czasowe w testach |
+| `RD_TEST_PG_URL` | testy, `restore:drill:local` | nie | brak | prawdziwy PostgreSQL do testów `test:pg-real` (baza testowa) |
+| `RD_TEST_PG_BACKEND` | testy | nie | `pglite` | `real` uruchamia testy na prawdziwym PostgreSQL |
+| `PG_BIN` | `test:pg-real` | nie | `pg_config --bindir` | katalog z `initdb` i `pg_ctl` |
+| `E2E_PORT` | testy e2e | nie | zob. `playwright.config.js` | port serwera testów przeglądarkowych |
+| `PLAYWRIGHT_BROWSERS_PATH` | testy e2e | nie | domyślna Playwright | katalog przeglądarek |
+| `CI` | testy e2e | nie (ustawia runner CI) | brak | `true` włącza ponowienia testu i raport HTML Playwright |
+| `RAILWAY_ENVIRONMENT_ID` | aplikacja | nie (ustawia Railway) | brak | znacznik platformy: brak `APP_ENV` w usłudze Railway zatrzymuje start |
+| `RAILWAY_ENVIRONMENT_NAME` | aplikacja | nie (ustawia Railway) | brak | jak wyżej |
+| `RAILWAY_ENVIRONMENT` | aplikacja | nie (ustawia Railway) | brak | jak wyżej |
+| `RAILWAY_PROJECT_ID` | aplikacja | nie (ustawia Railway) | brak | jak wyżej |
+| `RAILWAY_SERVICE_ID` | aplikacja | nie (ustawia Railway) | brak | jak wyżej |
+
+Nie ma tu zmiennych dla `--expect-database=<nazwa bazy>` ani znacznika
+środowiska w bazie (część #166 zależna od D-20): to osobny, jeszcze nie
+zrealizowany zakres.
 
 ### Walidacja konfiguracji przy starcie (#114)
 
