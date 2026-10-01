@@ -1,6 +1,6 @@
 # Stan prototypu — zestawienie dla zarządu Rady
 
-Stan na 30.09.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #553 (przegląd #175). Dokument opisuje wyłącznie to, co potwierdza kod, scalone PR-y i dokumentacja w `docs/`. Nie zawiera prognoz ani deklaracji gotowości. Wszystkie PR, które poprzednia wersja (28.09) oznaczała jako „w przygotowaniu (niescalony)”, są już scalone — sprawdzone przez API GitHuba i w kodzie (`tests/helpers/route-matrix.js`, `src/pg/app.js`). W chwili tego przeglądu nie ma otwartych PR z nową funkcją.
+Stan na 1.10.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #627 (wcześniejsza wersja: 30.09, po #553; PR #605–#627 scalone 1.10 dopisano w sekcjach modułów jako „Scalone 1.10”). Dokument opisuje wyłącznie to, co potwierdza kod, scalone PR-y i dokumentacja w `docs/`. Nie zawiera prognoz ani deklaracji gotowości. Wszystkie PR, które poprzednia wersja (28.09) oznaczała jako „w przygotowaniu (niescalony)”, są już scalone — sprawdzone przez API GitHuba i w kodzie (`tests/helpers/route-matrix.js`, `src/pg/app.js`). W chwili tego przeglądu otwarte są cztery PR (#625, #628, #629, #630), opisane w sekcjach modułów jako „W przygotowaniu (niescalone)” — nie są częścią `main`.
 
 ## Zastrzeżenia (dotyczą całości poniższego zestawienia)
 
@@ -16,21 +16,21 @@ Stan na 30.09.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #553 
 
 | Moduł | Stan na main | Otwarte PR | Czeka na zarząd |
 |---|---|---|---|
-| Konta / logowanie / MFA | działa (PostgreSQL) + panel `admin/` i ekran `login/` | — | D‑08, D‑09, D‑10 |
-| Rodziny i uczniowie | działa (PostgreSQL) + panel `families/` | — | D‑01–D‑04, D‑11 |
+| Konta / logowanie / MFA | działa (PostgreSQL) + panel `admin/` (w tym ekran promocji uczniów na nowy rok) i ekran `login/` | — | D‑08, D‑09, D‑10 |
+| Rodziny i uczniowie | działa (PostgreSQL) + panel `families/` | #629 | D‑01–D‑04, D‑11 |
 | Import CSV/XLSX | działa, bez zapisu produkcyjnych danych | — | D‑01–D‑03, D‑06 |
-| Wpłaty | działa (ewidencja, korekty, zwroty, podział, OGM‑VCS, dane do wpłaty, eksport CSV) + panel `panel/` | — | D‑11–D‑14 |
+| Wpłaty | działa (ewidencja, korekty, zwroty, podział, OGM‑VCS, dane do wpłaty, eksport CSV) + panel `panel/` | #628 | D‑11–D‑14 |
 | Księga | działa (wpisy, korekty, preliminarz, cztery oczy przy wydatkach, dowody, centra kosztów, sprawozdanie z migawkami) + panel `ledger/` | — | D‑15, D‑21 |
 | Uzgodnienia wyciągu | działa (CODA/CAMT.053, porzucenie szkicu, dopasowania wsadowe i zwroty) + panel `reconciliation/` | — | D‑13 |
 | Zamknięcie roku | działa (API) + panel `year-close/` | — | pośrednio D‑04, D‑13 |
 | Eksport roczny / kopie | działa (+ panel `data-export/`, próba odtworzenia lokalnie) | — | D‑04, D‑21 |
-| Raport Komisji Rewizyjnej | działa, tylko odczyt + panel `audit/` | — | D‑09 |
-| E‑mail | działa jako kolejka/worker + panel `email/` (bez wysyłki w demie) | — | D‑16, D‑17 |
+| Raport Komisji Rewizyjnej | działa, odczyt + ścieżka kontroli (uwagi, odpowiedzi, wniosek — API) + panel `audit/` | — | D‑09 |
+| E‑mail | działa jako kolejka/worker + panel `email/` (bez wysyłki w demie) | #625 | D‑16, D‑17 |
 | Zebrania / uchwały | działa (w tym zebranie klasowe, odwołanie i zmiana terminu) + panel `meetings/` | — | D‑15, D‑19, D‑21 |
 | Dokumenty | działa (panel, wersje i unieważnienie, podgląd, limity uploadu) | — | D‑04, D‑05, D‑08, D‑09 |
-| Wydarzenia / wolontariat | działa; zadania i zapisy tylko przez API (panel `events/` bez tego widoku) | — | — |
+| Wydarzenia / wolontariat | działa; zadania i zapisy w API i w panelu `events/` (#579) | — | — |
 | Strona publiczna i aktualności | działa (odczyt, galeria, kalendarz) + panel `news/` | — | D‑18, D‑22 |
-| RODO | rejestry i mechanizmy cząstkowe (retencja, żądania osób, informacja o przetwarzaniu, zgody na wizerunek) | — | D‑01, D‑02, D‑04, D‑06, D‑07 |
+| RODO | rejestry i mechanizmy cząstkowe (retencja, żądania osób z eksportem danych jednej rodziny, anonimizacja gospodarstwa, informacja o przetwarzaniu, zgody na wizerunek) | #630 | D‑01, D‑02, D‑04, D‑06, D‑07 |
 
 ---
 
@@ -42,6 +42,8 @@ Stan na 30.09.2026, gałąź `main` repozytorium `woogitsu/rd` po scaleniu #553 
 
 Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (#553, #161) — same testy, bez nowej funkcji.
 
+**Scalone 1.10:** rola aplikacji `rd_app` w PostgreSQL i osobny `DATABASE_MIGRATION_URL` (#618, część #101, SR‑05, migracja 0170); ekran „Nowy rok — promocja uczniów” w `admin/` z podglądem i potwierdzeniem (#619, część #78); ślad `access.denied` w bramkach pozostałych modułów i dla odmowy domeny dziennika admina (#606, #609, część #184); źródło zdarzeń bez aktora (worker, webhook, logowanie) w dzienniku admina (#622, część #181).
+
 **W przygotowaniu (niescalone):** brak.
 
 **Czeka na zarząd:** D‑08 (macierz ról), D‑09 (dostęp dyrekcji i Komisji Rewizyjnej), D‑10 (formalne potwierdzenie metody logowania i towarzyszących parametrów: polityka haseł, limity prób, ważność tokenu resetu, procedura odzyskania dostępu, progi bezczynności/kroku w górę z #369/#384).
@@ -52,7 +54,9 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Scalone 28–30.09 (dawniej „w przygotowaniu”):** wniosek rodzica o aktualizację kontaktu przez jednorazowy link (#365, #140); zmiana opieki w trakcie roku — zakończenie relacji i członkostwa w gospodarstwie przez API, ostrzeżenie w kampaniach (#453, #86); promocja uczniów na nowy rok i kopiowanie klas z podglądem (#462, część #78); cykl roku szkolnego bez SQL (#532, #207).
 
-**W przygotowaniu (niescalone):** brak.
+**Scalone 1.10:** zakończenie członkostwa opiekuna w gospodarstwie (#610, #86, #535, migracja 0163); anonimizacja gospodarstwa z zachowaniem księgi i sum wpłat — mechanizm techniczny, bez zatwierdzonych okresów retencji (#623, część #91, migracja 0174); listy zebrań i próśb opiekunów o zmianę kontaktu z kursorem zamiast cichego obcięcia (#626, część #159).
+
+**W przygotowaniu (niescalone):** #629 — ekrany zmiany opieki na karcie gospodarstwa w panelu `families/` (#535, punkt #86); otwarty PR, nie jest na `main`.
 
 **Czeka na zarząd:** D‑01–D‑04 (administrator danych, podstawa i cele, zakres importu, retencja), D‑11 (jednostka ewidencji składki i opieka dzielona).
 
@@ -72,7 +76,9 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Scalone 28–30.09 (dawniej „w przygotowaniu”):** belgijska komunikacja strukturalna OGM‑VCS (#345, #83); zatwierdzone dane do wpłaty i generator EPC/QR (#341, #92) oraz kartki z kodem QR EPC (#377, #92) — w demie bez zatwierdzonych danych, więc kartki są szkicem bez QR; eksport CSV wpisów wpłat i korekt (#340, #141); podział nieprzypisanej wpłaty na gospodarstwa z ekranem w `panel/` (migracja 0104, #537, #127); filtry serwerowe listy wpłat (#541).
 
-**W przygotowaniu (niescalone):** brak.
+**Scalone 1.10:** „Historia” wpłaty jako zwijana sekcja w panelu (#627, część #181).
+
+**W przygotowaniu (niescalone):** #628 — widoki netto księgi i wpłat jako `LEFT JOIN LATERAL` z testem planów zapytań (część #159, migracja 0180); otwarty PR, nie jest na `main`.
 
 **Czeka na zarząd:** D‑11 (jednostka ewidencji i opieka dzielona), D‑12 (zasady korekt i zatwierdzania), D‑13 (rachunek bankowy i gotówka), D‑14 (sugerowana składka). Przypominamy: żaden automatyczny status „dłużnik” nie jest i nie będzie wdrożony — składki są dobrowolne.
 
@@ -81,6 +87,8 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 **Na main:** księga i preliminarz na PostgreSQL (#59, #38); przeksięgowanie wpisu — storno i wpis zastępczy atomowo (#261, #144); bilans otwarcia z podziałem rachunek/kasa, przenoszenie kasa↔rachunek (#270, #199); eksport CSV z kwotami jako liczby i neutralizacją formuł w polach tekstowych (#206); dowody księgowe — walidacja dokumentu, wszystkie załączniki wpisu, sekcja KR (#328, #87); kategorie księgi przez API zamiast SQL co roku, część 1 (#366, #207); projekt sprawozdania rocznego (bilans, przychody/wydatki wg kategorii z preliminarzem, wynik roku) i przepływy środków bank/kasa per miesiąc, wyłącznie do wewnętrznego podglądu zarządu/skarbnika z MFA, z nagłówkiem „projekt… nie jest wersją zatwierdzoną” (#382, część #125) — nie obejmuje niezmiennych migawek sprawozdań ani publikacji przez aktualności, to czeka na D‑21/D‑04.
 
 **Scalone 28–30.09 (dawniej „w przygotowaniu”):** preliminarz przez API — kategorie, wersje linii, przyjęcie, plan vs wykonanie (#334, #107) i jego ekran w `ledger/` (#478); zasada czterech oczu przy wydatkach i uchwała jako upoważnienie do wydatku (#332, #97, #93) z wyborem uchwały w panelu (#431); centra kosztów i „Wynik wydarzeń” w raporcie KR (#445, #117); przeksięgowanie wpisu powiązanego z wpłatą (#460, #144); niezmienne, zatwierdzane migawki sprawozdania rocznego (#450, część #125, migracja 0138); eksport księgi w XLSX (#471).
+
+**Scalone 1.10:** eksport XLSX wykonania preliminarza i centrów kosztów (#613, część #121); zwijana sekcja „Historia” wpisu księgi (#627, część #181).
 
 **W przygotowaniu (niescalone):** brak.
 
@@ -102,6 +110,8 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Scalone 28–30.09:** wymóg świeżego MFA dla zamknięcia roku (#384, część 2 #150); zamrożenie pozostałych tabel z rokiem (#426, #80); kontrola salda końca roku (#449, #169); ostrzeżenia informacyjne z liczbami (#540); testy równoległego „Zamknij rok” na prawdziwym PostgreSQL (#546, #212).
 
+**Scalone 1.10:** testy wyścigu zamknięcia roku z uzgodnieniami na PostgreSQL i dokończenie kampanii po zamknięciu (#615, część #80).
+
 **W przygotowaniu (niescalone):** brak.
 
 **Czeka na zarząd:** brak odrębnej pozycji D‑xx wyłącznie dla tego modułu; zależy pośrednio od D‑04 (retencja) i D‑13 (uzgadnianie rachunku przed zamknięciem).
@@ -109,6 +119,8 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 ## Eksport roczny i kopie zapasowe
 
 **Na main:** eksport roczny z manifestem SHA‑256 i testem odtworzenia (#72, #9); eksport roczny v2 — gospodarstwa, uzgodnienia i zamknięcie roku przetrwają odtworzenie (#281); kopia zapasowa PostgreSQL — dziennik przebiegów, szyfrowanie po stronie klienta, próbne odtworzenie (#297, #90); kopia prywatnego bucketu dokumentów — `listObjects` i skrypt weryfikowany SHA‑256 (#302, #103). Tabele wprowadzone przez PR scalone 28.09 (`payment_instructions`, referencje OGM‑VCS, wycofania zgody na wizerunek, pliki zdjęć galerii, żądania aktualizacji danych opiekunów, `email_outbox_resolutions` i inne) są dziś w schemacie `main` i każda jest przypisana w `src/pg/export.js` albo do `EXPORT_TABLES`, albo do `EXPORT_EXCLUDED_TABLES` z uzasadnieniem (lista w `docs/EXPORT.md`; pilnuje tego `tests/pg-export-v2.test.js`). Wyłączenia są zachowawcze do decyzji o zakresie eksportu (D‑04, D‑08). Dodatkowo: ekran `data-export/` z krokiem w górę MFA (#454), eksport w partiach z przyrostowym SHA‑256 (#470), automatyczna próba odtworzenia lokalnie na danych syntetycznych (#517, część #90), weryfikacja kopii dokumentów (#509, część #103).
+
+**Scalone 1.10:** kopia bucketu obejmuje zdjęcia galerii (`photos/`), raport zgodności bucketu z bazą (#621, część #103); odtworzenie z D1 — jawna reguła strefy dla `begins_at` wydarzeń bez strefy (#611, #183).
 
 **W przygotowaniu (niescalone):** brak.
 
@@ -120,7 +132,9 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Scalone 28–30.09 (dawniej „w przygotowaniu”):** kategorie komunikatów i wypisanie jednym kliknięciem (#307, #110; testy #467); raport doręczeń i rozstrzyganie `delivery_unknown` (#309, #139; ekran raportu #463); lista wyłączeń — zdjęcie blokady jako nowy zapis (#326, #94; ekran #512); podgląd harmonogramu w czasie brukselskim (#465, #130).
 
-**W przygotowaniu (niescalone):** brak.
+**Scalone 1.10:** kampania zapamiętuje zatwierdzoną wersję danych do wpłaty (#608, #92, migracja 0162); zwijana sekcja „Historia” kampanii (#627, część #181) i test historii kampanii (#622).
+
+**W przygotowaniu (niescalone):** #625 — limit Brevo: stan puli i ewidencja wiadomości spoza kolejki z korektą (#84, migracja 0177); otwarty PR, nie jest na `main`.
 
 **Czeka na zarząd:** D‑16 (szablon wiadomości i kartki), D‑17 (adres nadawcy i liczba adresatów). Przypomnienie z AGENTS.md: żadne zadanie testowe nie wysyła wiadomości do prawdziwego rodzica; wysyłka wymaga jawnego zatwierdzenia treści i listy odbiorców.
 
@@ -142,6 +156,8 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Scalone 28–30.09 (dawniej „w przygotowaniu”):** wersje dokumentu i unieważnienie bez usuwania historii (#329, #82) z ekranem w `documents/` (#477) — uprawnienie do unieważnienia/zastąpienia jest dziś tożsame z uprawnieniem do odczytu, do potwierdzenia (sekcja „Założenia techniczne”); sesja sprawdzana przed ciałem żądania i limit współbieżnych uploadów (#370, #185), limit na użytkownika i 413 bez dopijania ciała (#549); podgląd PDF/PNG/JPEG w panelu (#466, część #89); filtr daty i sortowanie (#502).
 
+**Scalone 1.10:** wersja reguł kontroli struktury pliku zapisana przy dokumencie (#605, #89, migracja 0161); rodzaj dokumentu `council_shared` — dokumenty Rady udostępnione przedstawicielom wszystkich klas (#614, #167, migracja 0167).
+
 **W przygotowaniu (niescalone):** brak.
 
 **Czeka na zarząd:** D‑04 (retencja dokumentów), D‑05 (dostawca bucketu jako podmiot przetwarzający), D‑08/D‑09 (kto z ról widzi i unieważnia które dokumenty).
@@ -150,7 +166,7 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Na main:** wydarzenia — szkic, zatwierdzenie i publiczny kalendarz na PostgreSQL (#55, #12); wewnętrzny panel szkiców, zatwierdzania i publikacji (#60, #12); eksport kalendarza iCal (RFC 5545) dla publicznego kanału wydarzeń (#277); pulpit przedstawiciela klasy — klasa, kontakt, wydarzenia (#294, #118).
 
-**Scalone 28–29.09:** zadania i zapisy wolontariuszy wydarzeń, Etap 1 — wyłącznie API i testy (#330, #500, #142); panel `events/` nie ma jeszcze widoku zadań i zapisów (docs/EVENTS.md); czasy iCal w UTC (#434, #122).
+**Scalone 28–29.09:** zadania i zapisy wolontariuszy wydarzeń, Etap 1 — API i testy (#330, #500, #142); panel `events/` dostał widok zadań i zapisów w #579 (#142; opis w docs/EVENTS.md); czasy iCal w UTC (#434, #122).
 
 **W przygotowaniu (niescalone):** brak.
 
@@ -162,6 +178,8 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Scalone 28–29.09:** magazyn plików zdjęć galerii, warianty web/thumb bez EXIF/GPS, publiczny odczyt (#351, #96; zdjęcia na stronie tylko przez publiczne API #439); ekran aktualności `news/` — szkic, zatwierdzenie, publikacja, wycofanie (#455); „Dodaj do kalendarza” i subskrypcja webcal (#496); stały adres wpisu i archiwum według roku (#511). Dane demo nie zawierają zdjęć (D‑18).
 
+**Scalone 1.10:** przezroczyste PNG w galerii spłaszczane na białe tło zamiast czarnego (#624, #96).
+
 **W przygotowaniu (niescalone):** brak.
 
 **Czeka na zarząd:** D‑18 (zasady publikacji zdjęć, w tym zgody na wizerunek dzieci), D‑22 (czy i jak wprowadzić wersje językowe strony publicznej — treść pytania i warianty już w DECISIONS.md, bez rozstrzygnięcia).
@@ -172,7 +190,9 @@ Testy odmów MFA generowane z macierzy tras i ścieżka persony od zaproszenia (
 
 **Scalone 28–29.09 (dawniej „w przygotowaniu”):** rejestr polityk retencji i raport kandydatów do usunięcia — projekt pod D‑04, bez zatwierdzonych okresów (#318, #91); rejestr żądań osób — wyłącznie rejestr i przejścia stanu, bez eksportu danych rodziny, sprostowania ani ograniczenia przetwarzania, co czeka na D‑07 (#323, #100); wersjonowana informacja o przetwarzaniu danych jako warunek importu — mechanizm pod D‑06 (#333, #145); rejestr zgód na wizerunek — zakres, wygaśnięcie i wycofanie jednej zgody (#337, #106); dziennik odczytu danych rodzin z przeglądem dla admina (#456, #133); bramka danych osobowych w polach wolnego tekstu (#469, #152, #529).
 
-**W przygotowaniu (niescalone):** brak.
+**Scalone 1.10:** mechanizm anonimizacji gospodarstwa z zachowaniem księgi i sum wpłat (#623, część #91, migracja 0174) — to praca techniczna pod D‑04, nie zatwierdzona procedura retencji; ścieżka kontroli Komisji Rewizyjnej z niezmiennymi uwagami, odpowiedziami i wnioskiem (#620, część #137, migracja 0172 — przenumerowana przy scaleniu).
+
+**W przygotowaniu (niescalone):** #630 — ekran „Żądania osób (RODO)” w panelu admina: rejestr, zmiana stanu, eksport z potwierdzeniem (część #100); otwarty PR, nie jest na `main`.
 
 **Czeka na zarząd:** D‑01 (administrator danych), D‑02 (podstawa i cele przetwarzania), D‑04 (retencja), D‑06 (obowiązek informacyjny), D‑07 (procedura incydentowa, sprostowanie, usuwanie danych — obejmuje też, czy rejestr żądań #323 ma zyskać funkcje wykonawcze). Zbudowane rejestry (#318, #323, #333, #337 — wszystkie scalone) są pracą techniczną — same nie zastępują żadnej z tych decyzji.
 
@@ -197,6 +217,7 @@ Poniższe to konkretne wybory przyjęte w kodzie na main tam, gdzie regulamin al
 - **Dostępność:** przegląd WCAG 2.2 AA i widoku mobilnego (#65, #16); rozszerzenie przeglądu na `admin/`, `families/` i test na wszystkie aplikacje (#310, #112); poprawka poziomego scrolla strony na telefonie w nawigacji paneli ze wspólną powłoką (#400, #182).
 - **Tryb tylko do odczytu:** `APP_WRITE_MODE=read_only` do bezpiecznych demonstracji bez ryzyka zapisu (#289, #143).
 - **Wspólna nawigacja paneli:** `reconciliation/` i `email/` przełączone na wzorzec wspólnej powłoki `shared/shell.js` używany przez pozostałe panele, zamiast osobnego, statycznego paska (#374, follow-up #298); ekran startowy panelu pokazuje stan roli zamiast listy 10 modułów kończących się odmową dla ról bez dostępu (#342, #176).
+- **Zmiany przekrojowe 1.10:** sprawdzanie typów JSDoc (`tsc --noEmit`) w CI dla kluczowych modułów (#617, część #160); katalog zmiennych środowiskowych z testem zgodności z kodem (#616, część #166); test konfliktu serializacji 40001 na prawdziwym PostgreSQL (#612, #156); naprawa testu obciążeniowego `heavy` (#607).
 - **Dokumentacja pokazu:** scenariusz demonstracji prototypu dla zarządu — `docs/DEMO.md` (#406, poprawki z przeglądów #484, #495, #522–#526, #531, #539) i lokalny seed danych demo `npm run demo:seed` (#404).
 
 ---

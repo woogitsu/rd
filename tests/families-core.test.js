@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildContactPatch,
+  buildEndRequest,
+  canEndGuardianHousehold,
+  endResultMessages,
+  isValidDate,
   canEditFamilies,
   filterStudentsByName,
   formatPercent,
@@ -131,4 +135,45 @@ test('adres eksportu statystyk klas (#131) jest kodowany i walidowany', () => {
   assert.equal(exportFilename('attachment; filename="statystyki-klas-y-2026-20260929.csv"', 'x.csv'), 'statystyki-klas-y-2026-20260929.csv');
   assert.equal(exportFilename('attachment; filename="../../etc"', 'x.csv'), 'x.csv');
   assert.equal(exportFilename(null, 'x.csv'), 'x.csv');
+});
+
+test('zakończenie opieki: adresy tras, ciała żądań i walidacja (#86)', () => {
+  const ok = { date: '2026-10-01', reason: '  Przeprowadzka rodziny  ' };
+  assert.deepEqual(buildEndRequest({ kind: 'enrollment', studentId: 's-1', enrollmentId: 'e-1' }, ok), {
+    url: '/api/students/s-1/enrollments/e-1/end', method: 'POST', body: { endedOn: '2026-10-01', reason: 'Przeprowadzka rodziny' },
+  });
+  const relation = { kind: 'relation', guardianId: 'g-1', studentId: 's-1' };
+  assert.deepEqual(buildEndRequest(relation, ok).body, { endsOn: '2026-10-01', reason: 'Przeprowadzka rodziny' });
+  assert.equal(buildEndRequest(relation, ok).url, '/api/guardians/g-1/students/s-1/end');
+  assert.equal(buildEndRequest({ kind: 'studentHousehold', studentId: 's-1', membershipId: 'm-1' }, ok).url, '/api/students/s-1/households/m-1/end');
+  assert.equal(buildEndRequest({ kind: 'guardianHousehold', guardianId: 'g-1', membershipId: 'm-2' }, ok).url, '/api/guardians/g-1/households/m-2/end');
+  assert.equal(buildEndRequest(relation, { ...ok, confirmPersonalData: true }).body.confirmPersonalData, true);
+  // Błędne dane: brak identyfikatora, ścieżka w id, data, krótki i zbyt długi powód.
+  assert.ok(buildEndRequest({ kind: 'enrollment', studentId: 's-1' }, ok).error);
+  assert.ok(buildEndRequest({ kind: 'enrollment', studentId: '../x', enrollmentId: 'e-1' }, ok).error);
+  assert.ok(buildEndRequest({ kind: 'nieznany' }, ok).error);
+  assert.ok(buildEndRequest(relation, { ...ok, date: '2026-02-30' }).error);
+  assert.ok(buildEndRequest(relation, { ...ok, reason: 'ab' }).error);
+  assert.ok(buildEndRequest(relation, { ...ok, reason: 'x'.repeat(501) }).error);
+  assert.equal(isValidDate('2026-10-01'), true);
+  assert.equal(isValidDate('01-10-2026'), false);
+});
+
+test('zakończenie opieki: komunikaty i ostrzeżenia z odpowiedzi serwera (#86)', () => {
+  assert.deepEqual(endResultMessages('enrollment', { changed: true }), ['Zapisano odejście ucznia ze szkoły.']);
+  assert.match(endResultMessages('relation', { changed: false })[0], /już zapisana/);
+  const withCampaigns = endResultMessages('relation', { changed: true, campaignsToReview: ['k-1', 'k-2'] });
+  assert.equal(withCampaigns.length, 2);
+  assert.match(withCampaigns[1], /k-1, k-2/);
+  assert.match(endResultMessages('studentHousehold', { changed: true, withoutPrimaryHousehold: true })[1], /głównego gospodarstwa/);
+  assert.match(endResultMessages('guardianHousehold', { changed: true, withoutHousehold: true })[1], /żadnego bieżącego gospodarstwa/);
+  assert.equal(endResultMessages('relation', { changed: true, campaignsToReview: [] }).length, 1);
+});
+
+test('zakończenie członkostwa opiekuna: przycisk tylko dla zakresu szerokiego (UX, decyduje serwer)', () => {
+  assert.equal(canEndGuardianHousehold([{ role: 'admin', classId: null }]), true);
+  assert.equal(canEndGuardianHousehold([{ role: 'board' }]), true);
+  assert.equal(canEndGuardianHousehold([{ role: 'board', classId: 'c-1' }]), false);
+  assert.equal(canEndGuardianHousehold([{ role: 'treasurer' }, { role: 'representative', classId: 'c' }]), false);
+  assert.equal(canEndGuardianHousehold(null), false);
 });

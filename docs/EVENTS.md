@@ -1,6 +1,6 @@
 # Wydarzenia i publiczny kalendarz (#12)
 
-Status: API na PostgreSQL (`src/pg/routes/events.js`, w `ROUTES` routera `src/pg/app.js`) i panel `events/` — prototyp na danych syntetycznych, niewdrożony na Railway, nie gotowa funkcja do pracy na danych rodzin. Panel nie ma jeszcze widoku zadań i zapisów (tylko API).
+Status: API na PostgreSQL (`src/pg/routes/events.js`, w `ROUTES` routera `src/pg/app.js`) i panel `events/` — prototyp na danych syntetycznych, niewdrożony na Railway, nie gotowa funkcja do pracy na danych rodzin. Panel ma widok zadań i zapisów wolontariuszy (#579, issue #142, Etap 1) — zob. sekcję „Zadania i zapisy wolontariuszy” niżej.
 
 ## Przebieg
 

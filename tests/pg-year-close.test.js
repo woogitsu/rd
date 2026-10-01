@@ -200,7 +200,7 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
       recordedCount: 1, recordedNetCents: 2000, unmatchedCount: 1, unmatchedNetCents: 1500, unmatchedAllocatedCents: 0, correctionCount: 0,
     });
     assert.deepEqual(summary.meetings.byStatus, { draft: 1 });
-    assert.equal(summary.checklist.every((entry) => entry.confirmed && entry.confirmedBy && entry.confirmedAt), true);
+    assert.ok(summary.checklist.length > 0 && summary.checklist.every((entry) => entry.confirmed && entry.confirmedBy && entry.confirmedAt), 'lista kontrolna jest niepusta i w całości potwierdzona');
     assert.equal(JSON.stringify(summary).includes('@'), false, 'zestawienie bez adresów e-mail');
   });
 

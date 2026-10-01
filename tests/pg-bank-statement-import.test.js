@@ -266,7 +266,7 @@ test('same file again (new key, other reconciliation) is refused; same key repla
   [october, importId, hash]), /bank_statement_transaction_already_imported/);
 });
 
-test('double click: two simultaneous imports of one file — one creates, the other replays or is refused', async () => {
+test('double click: two simultaneous imports of one file — one creates, the other replays or is refused (PGlite: po kolei, nie wyścig)', async () => {
   const { db, cookies, call } = await setup();
   const reconciliationId = await draft(call, cookies.treasurer);
   const sameKey = key('imp');
