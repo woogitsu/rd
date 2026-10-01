@@ -322,6 +322,17 @@ UTC daje większą pulę. Zegar: `now` jest wstrzykiwany, ale `recorded_at` nowy
 dziennika pochodzi z zegara bazy, więc test nie robi przebiegu po zakończeniu A; wpisy
 „other” są zasiewane z jawnym `recorded_at`. Dane syntetyczne, atrapa transportu, brak sieci.
 
+`tests/pg-real-type-parity.test.js` (#208 pkt 5, część na `pg` pomijana bez `RD_TEST_PG_URL`): te same zapytania
+(kolumny `bigint`, `integer`, `numeric`, `date`, `timestamptz`, `boolean`, `jsonb`, `uuid`, `text[]`, `bigint[]`, NULL, agregaty
+`count`/`sum`/`avg`/`max`) przez adapter na PGlite i na `createPgDatabase` (`src/db.js`); porównuje typy JS.
+`src/db.js` nie ma `setTypeParser` ani normalizacji wierszy, więc test DOKUMENTUJE stan, nie naprawia go.
+Znane rozbieżności: `bigint`/`int8`, `count(*)`, `sum(integer)`, `max(bigint)`, `bigint[]` to `number` na PGlite,
+a `string` na `pg`; `date` to północ UTC na PGlite, a północ lokalna na `pg` (inny `toISOString()` poza UTC).
+`sum(bigint)`, `sum(numeric)`, `avg`, `numeric` są tekstem na obu. Test porównawczy wymaga dokładnie tej listy:
+dodanie parsera typów albo nowa rozbieżność czerwieni go i wymaga aktualizacji oczekiwań oraz tego opisu.
+Konwencja aplikacji (`::int`, `toSafeInteger`, `to_char`) daje identyczny JSON na obu backendach. Nowy kod nie
+może porównywać `rows[0].n === 0` ani dodawać wartości `bigint` bez `toSafeInteger`/rzutowania `::int`.
+
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
 `scripts/check-lock-mutations.js` usuwa po kolei każdą blokadę z listy `MUTANTS`
