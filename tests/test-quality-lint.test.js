@@ -66,7 +66,7 @@ export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
 // Limity (#214): lista jest sufitem, który może tylko maleć. Nowy plik albo
 // kolejne użycie obejścia ponad limit oblewa meta-test; przy usunięciu obejścia
 // obniż limit do stanu faktycznego (meta-test wymaga równości, nie nierówności).
-export const TRIGGER_BYPASS_LIMITS = Object.freeze({ files: 35, lines: 50 });
+export const TRIGGER_BYPASS_LIMITS = Object.freeze({ files: 35, lines: 48 });
 const TRIGGER_BYPASS = /DISABLE\s+TRIGGER|session_replication_role\s*=\s*replica/i;
 
 // Negatywna asercja na KRÓTKIM podciągu cyfr (`!meta.includes('470')`) jest

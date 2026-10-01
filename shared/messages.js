@@ -536,6 +536,7 @@ export const MESSAGES = Object.freeze({
   plan_too_large: "Plan promocji jest zbyt duży (najwyżej 2000 uczniów). Skontaktuj się z administratorem.",
   plan_stale: "Dane zmieniły się od podglądu promocji. Wygeneruj podgląd ponownie.",
   nothing_to_promote: "Plan nie zawiera żadnego ucznia do przeniesienia.",
+  nothing_to_extend: "Plan nie zawiera żadnego przedstawiciela do przedłużenia.",
   invalid_plan_digest: "Brak poprawnego skrótu planu (planDigest) z podglądu.",
 });
 

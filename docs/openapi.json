@@ -2462,6 +2462,110 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/promotions/representatives/apply": {
+      "post": {
+        "operationId": "admin_promotionRepresentativesApply",
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.promotionRepresentativesApply",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.promotionRepresentativesApply"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/promotions/representatives/preview": {
+      "post": {
+        "operationId": "admin_promotionRepresentativesPreview",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "admin.promotionRepresentativesPreview",
+        "tags": [
+          "admin"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "admin.promotionRepresentativesPreview"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/retention/preview": {
       "get": {
         "operationId": "admin_retentionPreview",
@@ -19060,6 +19164,7 @@
           "not_first_school_year",
           "not_found",
           "not_resolvable",
+          "nothing_to_extend",
           "nothing_to_promote",
           "notice_calendar_unavailable",
           "notice_campaign_audience_unsupported",
@@ -20774,6 +20879,11 @@
       {
         "code": "not_resolvable",
         "meaning": "Tej wiadomości nie można jeszcze rozstrzygnąć.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "nothing_to_extend",
+        "meaning": "Plan nie zawiera żadnego przedstawiciela do przedłużenia.",
         "retry": "Nie — popraw dane żądania."
       },
       {

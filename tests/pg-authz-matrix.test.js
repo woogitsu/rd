@@ -98,6 +98,7 @@ export const AUDIT_EXEMPT_ROUTES = new Map([
   ['import.preview', 'podgląd: walidacja i różnica względem bazy, nic nie zapisuje (import.committed loguje commit)'],
   ['login.invitationPreview', 'podgląd zaproszenia (#164): tylko odczyt po tokenie, nic nie zapisuje; odmowy loguje auth.invitation_preview_failed — tests/pg-login.test.js'],
   ['admin.promotionPreview', 'podgląd promocji (#78): plan i skrót, nic nie zapisuje; zapis loguje promotion.applied/enrollment.promoted — tests/pg-promotions.test.js'],
+  ['admin.promotionRepresentativesPreview', 'propozycja przedłużenia przedstawicieli (#78): nic nie zapisuje; zapis loguje role_grant.created/promotion.representatives_extended — tests/pg-promotions.test.js'],
   ['admin.promotionClassesPreview', 'podgląd kopii klas (#78): nic nie zapisuje; zapis loguje class.created — tests/pg-promotions.test.js'],
   ['admin.invitationBatchPreview', 'podgląd zaproszeń zbiorczych (#108): walidacja wierszy i skrót, nic nie zapisuje; zatwierdzenie loguje invitation.created/invitation.batch_created — tests/pg-invitation-batch.test.js'],
   ['ledger.categoryCopy', 'macierz wykonuje tylko podgląd (dryRun); rzeczywiste kopiowanie loguje ledger_category.copied — scenariusz w tests/audit-write-coverage.test.js'],
@@ -650,7 +651,12 @@ async function makeAdminTarget(ctx, stage) {
     await ctx.db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, 'Test', 'Promocja')", [studentId, householdId]);
     await ctx.db.query('INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)',
       [enrollmentId, studentId, fromClassId, fromSchoolYearId]);
-    return { fromSchoolYearId, toSchoolYearId, fromClassId, toClassId, studentId, enrollmentId };
+    // Przedstawiciel klasy źródłowej (#78) — cel propozycji przedłużenia na klasę docelową.
+    const representativeId = nextKey('u-przedst');
+    await seedUser(ctx.db, { userId: representativeId });
+    await ctx.db.query("INSERT INTO role_grants (id, user_id, role, class_id, school_year_id) VALUES ($1, $2, 'representative', $3, $4)",
+      [randomUUID(), representativeId, fromClassId, fromSchoolYearId]);
+    return { fromSchoolYearId, toSchoolYearId, fromClassId, toClassId, studentId, enrollmentId, representativeId };
   }
   if (stage === 'dataRequest') {
     // Rejestr żądań osób (#100) — cel dla przejścia stanu; gospodarstwo ogólnoszkolne (hh-1).
