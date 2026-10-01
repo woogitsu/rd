@@ -182,15 +182,24 @@ async function publishNotice(env, actorId, id, json) {
   });
 }
 
-async function publicNotice(env, json) {
-  const { rows } = await env.db.query("SELECT * FROM privacy_notices WHERE status = 'published' ORDER BY version DESC LIMIT 1");
-  if (!rows[0]) return json({ error: 'privacy_notice_not_found' }, 404, { 'Cache-Control': 'no-store' });
+// Publiczny kształt opublikowanej wersji (bez identyfikatorów użytkowników) —
+// wspólny dla GET /api/public/privacy-notice i renderowania serwerowego strony
+// publicznej (src/pg/public-site.js). null = nic nie opublikowano.
+export async function loadPublicNotice(executor) {
+  const { rows } = await executor.query("SELECT * FROM privacy_notices WHERE status = 'published' ORDER BY version DESC LIMIT 1");
   const row = rows[0];
-  return json({
+  if (!row) return null;
+  return {
     version: row.version,
     bodyText: row.body_text,
     publishedAt: row.published_at ? new Date(row.published_at).toISOString() : null,
-  }, 200, { 'Cache-Control': 'public, max-age=60' });
+  };
+}
+
+async function publicNotice(env, json) {
+  const notice = await loadPublicNotice(env.db);
+  if (!notice) return json({ error: 'privacy_notice_not_found' }, 404, { 'Cache-Control': 'no-store' });
+  return json(notice, 200, { 'Cache-Control': 'public, max-age=60' });
 }
 
 const ADMIN_PREFIX = '/api/admin/privacy-notices';

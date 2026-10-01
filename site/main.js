@@ -2,6 +2,9 @@
 // storage. API data is rendered exclusively through textContent.
 import {
   NEWS_URL,
+  PRIVACY_NOTICE_UNAVAILABLE_MESSAGE,
+  PRIVACY_NOTICE_URL,
+  normalizePrivacyNotice,
   calendarFeedUrls,
   eventIcsUrl,
   eventPagePath,
@@ -289,6 +292,36 @@ async function loadNotices() {
   }
 }
 
+// #145: informacja o przetwarzaniu danych — wyłącznie opublikowana wersja z API.
+// 404 (brak publikacji) i 405 (starsze wdrożenie): neutralny komunikat.
+function renderPrivacyNotice(notice) {
+  const meta = byId("privacy-meta");
+  const text = byId("privacy-text");
+  meta.replaceChildren();
+  text.replaceChildren();
+  if (!notice) {
+    meta.hidden = true;
+    setStatus("privacy-status", PRIVACY_NOTICE_UNAVAILABLE_MESSAGE);
+    return;
+  }
+  setStatus("privacy-status", "");
+  detailRow(meta, "Wersja", String(notice.version));
+  detailRow(meta, "Data publikacji", notice.publishedAt ? formatDate(notice.publishedAt) : null);
+  meta.hidden = !meta.childElementCount;
+  text.textContent = notice.bodyText;
+}
+
+async function loadPrivacyNotice() {
+  try {
+    renderPrivacyNotice(normalizePrivacyNotice(await getJson(PRIVACY_NOTICE_URL)));
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 404 || error.status === 405)) renderPrivacyNotice(null);
+    else setStatus("privacy-status", "Nie udało się wczytać informacji o przetwarzaniu danych. Spróbuj ponownie później.", true);
+  } finally {
+    done("informacja-o-danych");
+  }
+}
+
 // #124: pozycja "Aktualności" jest teraz zawsze widoczna w nawigacji i na
 // stronie (WCAG 3.2.3 — nawigacja nie zmienia się po załadowaniu). Brak
 // trasy API (404/405 — starsze wdrożenie bez tego modułu) i brak
@@ -450,3 +483,4 @@ showCalendarFeed();
 loadEvents();
 loadMinutes();
 loadNotices();
+loadPrivacyNotice();

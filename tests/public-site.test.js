@@ -19,7 +19,7 @@ import { PUBLIC_SITE_DYNAMIC_PATH, createNodeHandler, robotsTxtBody } from '../s
 import { classifyRequest } from '../src/rate-limit.js';
 import { COUNCIL_FULL_NAME } from '../shared/school.js';
 import { NEWS_UNAVAILABLE_MESSAGE, excerpt, newsArchiveHref, newsCursorFromSearch, newsListUrl } from '../site/core.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const ORIGIN = 'https://rd.test';
@@ -410,3 +410,37 @@ test('serwer Node: strona publiczna przez siteHandler z CSP stron statycznych; r
   assert.equal(robotsTxtBody('javascript:alert(1)', true).includes('Sitemap'), false);
   assert.deepEqual(classifyRequest('/site/feed.xml', ''), { cls: 'public', session: null });
 });
+
+test('strona główna: informacja o przetwarzaniu danych tylko z opublikowanej wersji; brak publikacji = neutralny komunikat (#145)', () => withDb(async ({ db }) => {
+  const missing = await site(db, '/site/');
+  assert.equal(missing.status, 200);
+  assert.ok(missing.text.includes('Informacja o przetwarzaniu danych nie została jeszcze opublikowana.'));
+  assert.ok(missing.text.includes('<dl class="minutes-meta" id="privacy-meta" hidden></dl>'));
+  assert.ok(missing.text.includes('href="#informacja-o-danych"'));
+
+  const author = await seedUserSession(db, { userId: 'u-author', roles: [{ role: 'admin' }], mfa: true });
+  const approver = await seedUserSession(db, { userId: 'u-approver', roles: [{ role: 'board' }], mfa: true });
+  const env = { db };
+  const call = async (path, cookie, body) => {
+    const response = await handlePgRequest(request(path, { method: 'POST', cookie, body }), env);
+    return { status: response.status, data: await response.json() };
+  };
+  const created = await call('/api/admin/privacy-notices', author, { bodyText: 'Treść syntetyczna <b>x</b> & "y".\nDruga linia.', decisionRef: 'D-06/test' });
+  assert.equal(created.status, 201);
+  const id = created.data.notice.id;
+  assert.equal((await site(db, '/site/')).text.includes('Treść syntetyczna'), false, 'szkic niewidoczny');
+  assert.equal((await call(`/api/admin/privacy-notices/${id}/approve`, approver)).status, 200);
+  assert.equal((await site(db, '/site/')).text.includes('Treść syntetyczna'), false, 'zatwierdzona, ale nieopublikowana — niewidoczna');
+  assert.equal((await call(`/api/admin/privacy-notices/${id}/publish`, approver)).status, 200);
+
+  const published = await site(db, '/site/');
+  assert.ok(published.text.includes('<div class="privacy-text" id="privacy-text">Treść syntetyczna &lt;b&gt;x&lt;/b&gt; &amp; &quot;y&quot;.\nDruga linia.</div>'));
+  assert.equal(published.text.includes('<b>x</b>'), false);
+  assert.match(published.text, /<dl class="minutes-meta" id="privacy-meta"><dt>Wersja<\/dt><dd>1<\/dd><dt>Data publikacji<\/dt><dd>[^<]+<\/dd><\/dl>/);
+  assert.equal(published.text.includes('nie została jeszcze opublikowana'), false);
+  for (const leak of ['u-author', 'u-approver', 'D-06/test', 'decisionRef']) {
+    assert.equal(published.text.includes(leak), false, `strona ujawnia ${leak}`);
+  }
+  const eventPage = await site(db, '/site/wydarzenia/nie-ma');
+  assert.ok(eventPage.text.includes('href="/site/#informacja-o-danych"'), 'link w nawigacji i stopce stron serwera');
+}));

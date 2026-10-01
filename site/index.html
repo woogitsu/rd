@@ -18,6 +18,7 @@
           <li><a href="#wydarzenia">Wydarzenia</a></li>
           <li><a href="#zawiadomienia">Zebrania</a></li>
           <li><a href="#protokoly">Protokoły</a></li>
+          <li><a href="#informacja-o-danych">Informacja o danych</a></li>
         </ul>
       </nav>
     </header>
@@ -61,11 +62,19 @@
         <p class="status" id="minutes-status" role="status">Wczytywanie…</p>
         <div id="minutes-list"></div>
       </section>
+
+      <section id="informacja-o-danych" aria-labelledby="privacy-title" aria-busy="true">
+        <h2 id="privacy-title">Informacja o przetwarzaniu danych</h2>
+        <p class="status" id="privacy-status" role="status">Wczytywanie…</p>
+        <dl class="minutes-meta" id="privacy-meta" hidden></dl>
+        <div class="privacy-text" id="privacy-text"></div>
+      </section>
     </main>
 
     <footer class="site-footer">
       <p data-school-name="council"></p>
       <p>Strona nie używa plików cookie i nie wymaga logowania.</p>
+      <p><a href="#informacja-o-danych">Informacja o przetwarzaniu danych</a></p>
     </footer>
 
     <script type="module" src="/main.js"></script>

@@ -1,7 +1,8 @@
 // #116: strona publiczna renderowana po stronie serwera (Node + PostgreSQL).
 //
 //   GET /site/ (i /site/index.html)   szablon z dist/site/index.html z treścią
-//                                      aktualności, wydarzeń, zawiadomień i protokołów
+//                                      aktualności, wydarzeń, zawiadomień, protokołów
+//                                      i opublikowanej informacji o przetwarzaniu danych (#145)
 //   GET /site/aktualnosci/{id}         stały adres wpisu (tytuł, treść, canonical, Open Graph)
 //   GET /site/wydarzenia/{id}          stały adres wydarzenia (schema.org/Event w mikrodanych)
 //   GET /site/feed.xml                 kanał Atom: 20 ostatnio opublikowanych wpisów
@@ -31,9 +32,10 @@ import {
   EVENT_UNAVAILABLE_MESSAGE, FEED_PATH, NEWS_UNAVAILABLE_MESSAGE, SITE_PATH,
   brusselsDate, cleanText, eventIcsUrl, eventPagePath, excerpt, formatDate, formatDay, formatEventTime,
   formatSchoolYear, formatTime, groupByMonth, newsAnchorId, newsArchiveHref, newsCursorFromSearch,
-  newsItems, newsPagePath, newsYearFromSearch, normalizeEvent, publicMinutes, publicNotices,
+  PRIVACY_NOTICE_UNAVAILABLE_MESSAGE, newsItems, newsPagePath, newsYearFromSearch, normalizeEvent, normalizePrivacyNotice, publicMinutes, publicNotices,
   schoolYearFromSearch, upcomingEvents, volunteerTaskLabel,
 } from '../../site/core.js';
+import { loadPublicNotice } from './routes/privacy-notice.js';
 import { getPublic as getPublicEvent, listPublic as listPublicEvents } from './events.js';
 import { listPublicMeetingNotices, listPublicMinutes } from './meetings.js';
 import {
@@ -133,6 +135,7 @@ function page({ title, description, canonical, type = 'article', stylesheets, ma
           <li><a href="/site/#wydarzenia">Wydarzenia</a></li>
           <li><a href="/site/#zawiadomienia">Zebrania</a></li>
           <li><a href="/site/#protokoly">Protokoły</a></li>
+          <li><a href="/site/#informacja-o-danych">Informacja o danych</a></li>
         </ul>
       </nav>
     </header>
@@ -142,6 +145,7 @@ ${main}
     <footer class="site-footer">
       <p>${COUNCIL_FULL_NAME}</p>
       <p>${FOOTER_NOTE}</p>
+      <p><a href="/site/#informacja-o-danych">Informacja o przetwarzaniu danych</a></p>
     </footer>
   </body>
 </html>
@@ -215,6 +219,24 @@ function minutesListHtml(minutes) {
   ].filter(([, value]) => value).map(([label, value]) => h`<dt>${label}</dt><dd>${value}</dd>`)}</dl><details class="minutes-body"><summary>Treść protokołu</summary><div class="minutes-text">${item.body}</div></details></li>`)}</ol></div>`;
 }
 
+// #145: treść i numer wersji wyłącznie z opublikowanej wersji (ten sam odczyt co
+// GET /api/public/privacy-notice); null = nic nie opublikowano (komunikat neutralny).
+function privacyNoticeHtml(notice) {
+  if (!notice) {
+    return {
+      status: statusHtml('privacy-status', PRIVACY_NOTICE_UNAVAILABLE_MESSAGE),
+      meta: h`<dl class="minutes-meta" id="privacy-meta" hidden></dl>`,
+      text: h`<div class="privacy-text" id="privacy-text"></div>`,
+    };
+  }
+  const published = notice.publishedAt ? formatDate(notice.publishedAt) : null;
+  return {
+    status: statusHtml('privacy-status', ''),
+    meta: h`<dl class="minutes-meta" id="privacy-meta"><dt>Wersja</dt><dd>${String(notice.version)}</dd>${published ? h`<dt>Data publikacji</dt><dd>${published}</dd>` : ''}</dl>`,
+    text: h`<div class="privacy-text" id="privacy-text">${notice.bodyText}</div>`,
+  };
+}
+
 // Podmiana znacznika szablonu; brak znacznika = szablon niezgodny (zwracamy
 // null, a serwer Node wydaje wtedy zwykły plik statyczny).
 class TemplateMismatch extends Error {}
@@ -254,6 +276,10 @@ export const INDEX_MARKERS = Object.freeze({
   minutesYear: '<p class="section-note" id="minutes-year"></p>',
   minutesStatus: '<p class="status" id="minutes-status" role="status">Wczytywanie…</p>',
   minutesList: '<div id="minutes-list"></div>',
+  privacySection: '<section id="informacja-o-danych" aria-labelledby="privacy-title" aria-busy="true">',
+  privacyStatus: '<p class="status" id="privacy-status" role="status">Wczytywanie…</p>',
+  privacyMeta: '<dl class="minutes-meta" id="privacy-meta" hidden></dl>',
+  privacyText: '<div class="privacy-text" id="privacy-text"></div>',
 });
 
 export async function renderIndex(db, template, { origin, search = '', now = new Date() } = {}) {
@@ -262,7 +288,7 @@ export async function renderIndex(db, template, { origin, search = '', now = new
   const schoolYearId = newsYearFromSearch(search);
   const cursor = newsCursorFromSearch(search);
   const minutesYear = schoolYearFromSearch(search, now);
-  const [news, years, events, notices, minutes] = await Promise.all([
+  const [news, years, events, notices, minutes, privacy] = await Promise.all([
     section(async () => {
       let result;
       try {
@@ -278,6 +304,7 @@ export async function renderIndex(db, template, { origin, search = '', now = new
     section(async () => upcomingEvents((await listPublicEvents(db, { from: brusselsDate(now), limit: 200 })).events, now)),
     section(async () => publicNotices((await listPublicMeetingNotices(db, { schoolYearId: minutesYear })).notices)),
     section(async () => publicMinutes((await listPublicMinutes(db, { schoolYearId: minutesYear })).minutes)),
+    section(async () => ({ notice: normalizePrivacyNotice(await loadPublicNotice(db)) })),
   ]);
   const canonical = absolute(origin, `${SITE_PATH}${schoolYearId ? `?${new URLSearchParams({ rok: schoolYearId })}` : ''}`);
   try {
@@ -310,6 +337,13 @@ export async function renderIndex(db, template, { origin, search = '', now = new
       html = replaceOnce(html, m.minutesSection, h`<section id="protokoly" aria-labelledby="minutes-title">`);
       html = replaceOnce(html, m.minutesStatus, statusHtml('minutes-status', minutes.length ? '' : 'Brak opublikowanych protokołów.'));
       html = replaceOnce(html, m.minutesList, minutesListHtml(minutes));
+    }
+    if (privacy) {
+      const view = privacyNoticeHtml(privacy.notice);
+      html = replaceOnce(html, m.privacySection, h`<section id="informacja-o-danych" aria-labelledby="privacy-title">`);
+      html = replaceOnce(html, m.privacyStatus, view.status);
+      html = replaceOnce(html, m.privacyMeta, view.meta);
+      html = replaceOnce(html, m.privacyText, view.text);
     }
     return html;
   } catch (error) {
