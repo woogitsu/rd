@@ -32,6 +32,10 @@ import {
 import {
   batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
 } from "./onboarding.js";
+import {
+  attentionStudents, canApplyPromotion, MAP_FINAL, MAP_SKIP, missingRepresentativeNote, newPromotionKey, promotionBody,
+  promotionConfirmation, promotionResultMessage, promotionRows, promotionSummary,
+} from "./promotion.js";
 import { api as apiRequest } from "../shared/api.js";
 import { buildEffectsHtml, confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
@@ -949,6 +953,7 @@ async function loadYears() {
   state.classes = indexClasses(schoolYears);
   state.yearMap = new Map(schoolYears.map((year) => [year.id, year]));
   renderYears();
+  renderPromoYears();
 }
 
 function renderYears() {
@@ -1040,6 +1045,138 @@ byId("classes-form").addEventListener("submit", async (event) => {
     errorBox.textContent = error.message;
   } finally {
     submit.disabled = false;
+  }
+});
+
+// --- Nowy rok: promocja uczniów (#78; trasy src/pg/promotions.js, wyłącznie admin) ---
+
+// Podgląd i klucz zatwierdzenia żyją tylko w pamięci; zmiana formularza unieważnia podgląd.
+const promo = { preview: null, body: null, key: null };
+
+function resetPromoPreview() {
+  promo.preview = null;
+  promo.body = null;
+  promo.key = null;
+  byId("promo-preview").hidden = true;
+  byId("promo-preview-body").replaceChildren();
+  byId("promo-apply").disabled = true;
+}
+
+function renderPromoYears() {
+  const options = state.years.map((year) => [year.id, `${year.label} (${year.id})`]);
+  const from = byId("promo-from");
+  const to = byId("promo-to");
+  fillSelect(from, options);
+  fillSelect(to, options);
+  // Lata są od najnowszego: domyślnie z poprzedniego roku do najnowszego.
+  if (state.years.length > 1 && from.value === to.value) from.value = state.years[1].id;
+  renderPromoMap();
+}
+
+// Tabela mapy: dla każdej klasy roku źródłowego wybór klasy docelowej; domyślnie „nie przenoś”.
+function renderPromoMap() {
+  const from = state.yearMap.get(byId("promo-from").value);
+  const to = state.yearMap.get(byId("promo-to").value);
+  const tbody = byId("promo-map-body");
+  resetPromoPreview();
+  if (!from?.classes?.length) return emptyRow(tbody, 2, "Rok źródłowy nie ma klas.");
+  tbody.replaceChildren(...from.classes.map((klass) => {
+    const tr = document.createElement("tr");
+    const select = document.createElement("select");
+    select.dataset.fromClass = klass.id;
+    select.setAttribute("aria-label", `Klasa docelowa dla klasy ${klass.name}`);
+    fillSelect(select, [[MAP_SKIP, "Nie przenoś"], [MAP_FINAL, "Klasa końcowa (bez przypisania)"], ...(to?.classes ?? []).map((item) => [item.id, item.name])]);
+    const td = document.createElement("td");
+    td.append(select);
+    tr.append(cell(klass.name), td);
+    return tr;
+  }));
+}
+
+function promoFormBody(form) {
+  const mapping = {};
+  for (const select of byId("promo-map-body").querySelectorAll("select[data-from-class]")) mapping[select.dataset.fromClass] = select.value;
+  return promotionBody({
+    fromSchoolYearId: form.elements.fromSchoolYearId.value, toSchoolYearId: form.elements.toSchoolYearId.value,
+    mapping, exclusionsText: form.elements.exclusions.value,
+  });
+}
+
+function renderPromoPreview(plan) {
+  byId("promo-preview-summary").textContent = promotionSummary(plan);
+  byId("promo-preview-body").replaceChildren(...promotionRows(plan).map((row) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(row.fromName), cell(row.toName));
+    for (const key of ["total", "promote", "graduating", "unmapped", "excluded", "conflict", "withdrawn"]) tr.append(cell(String(row[key]), "num"));
+    return tr;
+  }));
+  const names = new Map((plan.classes ?? []).map((row) => [row.fromClassId, row.fromName]));
+  const attention = attentionStudents(plan, names);
+  byId("promo-attention").hidden = !attention.length;
+  byId("promo-attention-body").replaceChildren(...attention.map((item) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(item.studentId, "mono"), cell(item.fromName), cell(item.status));
+    return tr;
+  }));
+  byId("promo-representatives").textContent = missingRepresentativeNote(plan);
+  byId("promo-apply").disabled = !canApplyPromotion(plan);
+  byId("promo-preview").hidden = false;
+}
+
+byId("promo-from").addEventListener("change", renderPromoMap);
+byId("promo-to").addEventListener("change", renderPromoMap);
+byId("promo-map-body").addEventListener("change", resetPromoPreview);
+byId("promo-exclusions").addEventListener("input", resetPromoPreview);
+
+byId("promo-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const errorBox = byId("promo-error");
+  const submit = form.querySelector("button[type=submit]");
+  errorBox.textContent = "";
+  resetPromoPreview();
+  let body;
+  try {
+    body = promoFormBody(form);
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  submit.disabled = true;
+  try {
+    const plan = await withStepUp(() => api("/api/admin/promotions/preview", { method: "POST", body }));
+    promo.preview = plan;
+    promo.body = body;
+    promo.key = newPromotionKey();
+    renderPromoPreview(plan);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+byId("promo-apply").addEventListener("click", async (event) => {
+  const element = event.currentTarget;
+  if (!canApplyPromotion(promo.preview)) return;
+  const labels = { from: yearLabel(promo.body.fromSchoolYearId), to: yearLabel(promo.body.toSchoolYearId) };
+  const confirmed = await confirmAction(promotionConfirmation(promo.preview, labels));
+  if (!confirmed) return;
+  element.disabled = true; // podwójne kliknięcie; klucz i tak jest jeden na podgląd
+  const errorBox = byId("promo-error");
+  errorBox.textContent = "";
+  try {
+    const result = await withStepUp(() => api("/api/admin/promotions/apply", {
+      method: "POST", body: { ...promo.body, planDigest: promo.preview.planDigest }, idempotencyKey: promo.key,
+    }));
+    showMessage(promotionResultMessage(result));
+    resetPromoPreview();
+    await loadAudit();
+  } catch (error) {
+    errorBox.textContent = error.message;
+    // Błąd sieci: ten sam podgląd i klucz można ponowić. Inny błąd (np. plan_stale): nowy podgląd.
+    if (error?.network) element.disabled = !canApplyPromotion(promo.preview);
+    else resetPromoPreview();
   }
 });
 
