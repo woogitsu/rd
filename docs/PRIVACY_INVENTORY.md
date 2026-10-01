@@ -16,6 +16,9 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`account_recovery_requests`|`decided_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`account_recovery_requests`|`requested_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`account_recovery_requests`|`target_user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`anonymization_runs`|`data_subject_request_id`|Opiekun|pseudonymous|identyfikacja|powiązanie przebiegu z żądaniem osoby|nieustalona (D-04)|nie|nie|
+|`anonymization_runs`|`executed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie przebiegu z administratorem, który go wykonał|nieustalona (D-04)|nie|nie|
+|`anonymization_runs`|`household_id`|Opiekun|pseudonymous|identyfikacja|wskazanie zanonimizowanego gospodarstwa (bez danych osobowych)|nieustalona (D-04)|nie|nie|
 |`audit_review_notes`|`body`|Osoba trzecia|direct|wolny tekst|treść uwagi, odpowiedzi, zamknięcia lub wniosku końcowego Komisji Rewizyjnej|document_financial|tak|tak|
 |`audit_review_notes`|`created_by`|Członek Rady|pseudonymous|identyfikacja|autor uwagi, odpowiedzi lub wniosku w ścieżce kontroli Komisji Rewizyjnej|nieustalona (D-04)|nie|tak|
 |`bank_reconciliation_group_match_revocations`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|tak|
@@ -224,7 +227,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **211**, w tym wolnego tekstu: **60** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **214**, w tym wolnego tekstu: **60** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -255,6 +258,20 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `status` | none | — | nie |
 | `target_user_id` | pseudonymous | board_member | nie |
 | `ttl_seconds` | none | — | nie |
+
+### `anonymization_runs`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `counts` | none | — | nie |
+| `data_subject_request_id` | pseudonymous | guardian | nie |
+| `executed_at` | none | — | nie |
+| `executed_by` | pseudonymous | board_member | nie |
+| `household_id` | pseudonymous | guardian | nie |
+| `id` | none | — | nie |
+| `plan_sha256` | none | — | nie |
+| `reason_code` | none | — | nie |
+| `retention_policy_ids` | none | — | nie |
 
 ### `audit_events`
 

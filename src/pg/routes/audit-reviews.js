@@ -1,4 +1,4 @@
-// Ścieżka kontroli Komisji Rewizyjnej (#137, migracja 0172). Prototyp — nie jest wdrożony.
+// Ścieżka kontroli Komisji Rewizyjnej (#137, migracja 0176). Prototyp — nie jest wdrożony.
 //
 //   GET  /api/audit-reviews/{schoolYearId}                       wątki uwag i wnioski końcowe roku
 //   POST /api/audit-reviews/{schoolYearId}/notes                 { kind: question|finding, targetType, targetId, body }   (KR)

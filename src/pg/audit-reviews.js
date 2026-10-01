@@ -1,4 +1,4 @@
-// Ścieżka kontroli Komisji Rewizyjnej (#137, migracja 0172): uwagi, odpowiedzi,
+// Ścieżka kontroli Komisji Rewizyjnej (#137, migracja 0176): uwagi, odpowiedzi,
 // zamknięcia i wnioski końcowe w niezmiennej tabeli audit_review_notes.
 // Prototyp — nie jest wdrożony.
 //

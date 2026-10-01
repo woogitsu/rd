@@ -1518,6 +1518,15 @@ export const ROUTE_MATRIX = Object.freeze([
   }),
   // Rejestr polityk retencji i raport kandydatów (D-04, #91) — bez adresów i nazw rodzin.
   adminRoute('admin.retentionPreview', 'GET', '/api/admin/retention/preview', {}),
+  // Anonimizacja gospodarstwa (#91): wariant zachowawczy — admin + krok w górę MFA. Macierz wywołuje tylko podgląd
+  // (dryRun), który niczego nie zmienia; wykonanie i odmowy: tests/pg-anonymization.test.js.
+  adminRoute('admin.anonymizationPreview', 'POST', '/api/admin/anonymizations', {
+    object: 'dataRequestErasure',
+    build: ({ obj }) => ({
+      path: '/api/admin/anonymizations',
+      body: { householdId: 'hh-1', reasonCode: 'data_subject_request', dataRequestId: obj.requestId, dryRun: true },
+    }),
+  }),
   // Stan operacyjny (#149): kolejka e-mail, ostatnie kopie zapasowe — bez adresów, nazw rodzin i treści.
   adminRoute('admin.opsStatus', 'GET', '/api/admin/ops-status', {}),
 
@@ -1588,7 +1597,7 @@ export const ROUTE_MATRIX = Object.freeze([
     build: ({ target }) => ({ path: `/api/reports/audit?schoolYearId=${target.schoolYearId}&format=xlsx` }),
   },
 
-  // ---------- ścieżka kontroli Komisji Rewizyjnej (#137, 0172) ----------
+  // ---------- ścieżka kontroli Komisji Rewizyjnej (#137, 0176) ----------
   // Odczyt: audit, zarząd, skarbnik (przydział bez klasy, rok 1, MFA). Pytanie, zamknięcie i wniosek: tylko audit;
   // odpowiedź: zarząd i skarbnik. Admin, dyrekcja, przedstawiciel i przydział klasowy: 403 (D-09, wariant zachowawczy).
   {

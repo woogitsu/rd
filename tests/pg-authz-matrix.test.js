@@ -665,6 +665,13 @@ async function makeAdminTarget(ctx, stage) {
     await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/data-requests/${json.request.id}/status`, { status: 'identity_verified' });
     return { requestId: json.request.id };
   }
+  if (stage === 'dataRequestErasure') {
+    // #91: anonimizacja wymaga żądania usunięcia po weryfikacji tożsamości (hh-1); macierz robi tylko podgląd.
+    const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/data-requests',
+      { kind: 'erasure', householdId: 'hh-1', receivedOn: '2026-10-01' });
+    await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/data-requests/${json.request.id}/status`, { status: 'identity_verified' });
+    return { requestId: json.request.id };
+  }
   throw new Error(`unknown admin fixture ${stage}`);
 }
 

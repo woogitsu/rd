@@ -194,7 +194,7 @@ Raport nie jest zatwierdzonym sprawozdaniem finansowym. Zakres i forma sprawozda
 
 ## Ścieżka kontroli Komisji Rewizyjnej: uwagi, odpowiedzi, wniosek (#137)
 
-Migracja `0172_audit_review_notes.sql` dodaje niezmienną tabelę `audit_review_notes`; trasy: `GET /api/audit-reviews/{rok}`, `POST …/notes` (pytanie lub ustalenie do wpisu księgi, uzgodnienia albo roku), `POST …/notes/{id}/answers`, `POST …/notes/{id}/closure`, `POST …/conclusion` (src/pg/routes/audit-reviews.js, tabela uprawnień w docs/AUTHORIZATION.md).
+Migracja `0176_audit_review_notes.sql` dodaje niezmienną tabelę `audit_review_notes`; trasy: `GET /api/audit-reviews/{rok}`, `POST …/notes` (pytanie lub ustalenie do wpisu księgi, uzgodnienia albo roku), `POST …/notes/{id}/answers`, `POST …/notes/{id}/closure`, `POST …/conclusion` (src/pg/routes/audit-reviews.js, tabela uprawnień w docs/AUTHORIZATION.md).
 
 Założenia, **do zatwierdzenia przez zarząd (D-09, D-21)** — kod przyjmuje wariant zachowawczy:
 

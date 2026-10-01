@@ -221,6 +221,8 @@ const CATALOG = {
   'data_subject_request.created': ['privacy', 'Rejestracja żądania osoby, której dane dotyczą'],
   'data_subject_request.status_changed': ['privacy', 'Zmiana stanu żądania osoby'],
   'data_subject_request.exported': ['privacy', 'Eksport danych jednej rodziny dla żądania osoby'],
+  'household.anonymization_previewed': ['privacy', 'Podgląd anonimizacji gospodarstwa (bez zmian danych)'],
+  'household.anonymized': ['privacy', 'Anonimizacja danych osobowych gospodarstwa z zachowaniem księgi'],
   'privacy_notice.created': ['privacy', 'Utworzenie wersji informacji o prywatności'],
   'privacy_notice.approved': ['privacy', 'Zatwierdzenie informacji o prywatności'],
   'privacy_notice.published': ['privacy', 'Publikacja informacji o prywatności'],

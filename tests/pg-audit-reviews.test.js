@@ -1,5 +1,5 @@
 // #137: ścieżka kontroli Komisji Rewizyjnej — niezmienne uwagi (pytanie KR → odpowiedź
-// zarządu/skarbnika → zamknięcie) i wniosek końcowy roku (migracja 0172,
+// zarządu/skarbnika → zamknięcie) i wniosek końcowy roku (migracja 0176,
 // src/pg/routes/audit-reviews.js). Dane wyłącznie syntetyczne.
 import test from 'node:test';
 import assert from 'node:assert/strict';

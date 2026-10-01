@@ -333,7 +333,7 @@ const NOTE_KIND = { question: 'pytanie', finding: 'ustalenie' };
 const NOTE_TARGET = { ledger_entry: 'wpis księgi', reconciliation: 'uzgodnienie', year: 'rok szkolny' };
 const NOTE_STATUS = { open: 'otwarta', answered: 'odpowiedź bez zamknięcia', closed: 'zamknięta' };
 
-// #137: wątki uwag KR (migracja 0172). Raporty sprzed tej zmiany (archiwum) nie mają pola —
+// #137: wątki uwag KR (migracja 0176). Raporty sprzed tej zmiany (archiwum) nie mają pola —
 // wtedy zostaje puste miejsce na uwagi odręczne. Treść pochodzi z wolnego tekstu (escapeHtml).
 function reviewNotesSection(notes) {
   if (!notes) return '<p class="empty">&nbsp;</p>';
