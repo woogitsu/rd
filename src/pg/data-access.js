@@ -148,6 +148,11 @@ const EXEMPT_GROUPS = [
   { reason: 'przegląd dziennika zdarzeń (admin + MFA): sam zapisuje ślad', audit: 'audit.viewed', routes: ['admin.audit'] },
   { reason: 'przegląd dziennika odczytu (admin + MFA): sam zapisuje ślad', audit: 'access_log.viewed', routes: ['admin.accessLog'] },
   {
+    reason: 'historia jednego obiektu finansowego lub kampanii (zarząd, skarbnik; #181): zdarzenia domeny obiektu, metadane bez wolnego tekstu, e-maili i imion; sam zapisuje ślad',
+    audit: 'audit.viewed',
+    routes: ['auditHistory.payment_entry', 'auditHistory.ledger_entry', 'auditHistory.email_campaign', 'auditHistory.reconciliation'],
+  },
+  {
     reason: 'prośby opiekunów o aktualizację (imię opiekuna, proponowany adres): ślad audytu odczytu; rodzaj w data_access_log wymaga migracji CHECK',
     audit: 'guardian_update_request.list_viewed', routes: ['guardianUpdates.list'], followUp: true,
   },

@@ -1450,6 +1450,7 @@ const MODULE_SOURCES = {
   reconciliation: ['../src/pg/routes/reconciliation.js'],
   'financial-reports': ['../src/pg/routes/financial-reports.js'],
   'audit-reviews': ['../src/pg/routes/audit-reviews.js'],
+  'audit-history': ['../src/pg/routes/audit-history.js'],
   exports: ['../src/pg/routes/exports.js'],
   families: ['../src/pg/routes/families.js'],
   print: ['../src/pg/routes/print.js'],

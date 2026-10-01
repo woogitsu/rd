@@ -10,6 +10,9 @@
       "name": "admin"
     },
     {
+      "name": "audit-history"
+    },
+    {
       "name": "audit-reviews"
     },
     {
@@ -3148,6 +3151,314 @@
         ],
         "x-rd-roles": [
           "audit"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/email_campaign/{id}": {
+      "get": {
+        "operationId": "auditHistory_email_campaign",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.email_campaign",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.email_campaign"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/ledger_entry/{id}": {
+      "get": {
+        "operationId": "auditHistory_ledger_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.ledger_entry",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.ledger_entry"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/payment_entry/{id}": {
+      "get": {
+        "operationId": "auditHistory_payment_entry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.payment_entry",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.payment_entry"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/audit/entity/reconciliation/{id}": {
+      "get": {
+        "operationId": "auditHistory_reconciliation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "auditHistory.reconciliation",
+        "tags": [
+          "audit-history"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "W1"
+          ],
+          "treasurer": [
+            "W1"
+          ]
+        },
+        "x-rd-deny-status": [
+          403,
+          404
+        ],
+        "x-rd-matrix-ids": [
+          "auditHistory.reconciliation"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board",
+          "treasurer"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
