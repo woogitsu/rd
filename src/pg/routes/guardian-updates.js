@@ -227,7 +227,7 @@ async function submitUpdate(request, env, json) {
     );
     await insertAuditEvent(tx, {
       actorId: null, action: 'guardian_update_request.created', entityType: 'guardian_update_request', entityId: requestId,
-      metadata: { guardianId: link.guardian_id, ...piiAuditMetadata(gate) },
+      metadata: { guardianId: link.guardian_id, linkId: link.id, ...piiAuditMetadata(gate) },
     });
     return { requestId };
   });

@@ -2,13 +2,17 @@
 // dziennik z aktorem, czasem i identyfikatorem obiektu).
 //
 // tests/pg-authz-matrix.test.js po każdym UDANYM wywołaniu trasy zapisu
-// (POST/PATCH/PUT/DELETE) porównuje identyfikatory wierszy wszystkich tabel
-// z kolumną `id` (poza audit_events) przed i po żądaniu. Każdy NOWY wiersz musi
-// mieć zdarzenie audytu z tego samego żądania, którego entity_id:
+// (POST/PATCH/PUT/DELETE) porównuje wiersze wszystkich tabel z kolumną `id`
+// (poza audit_events) przed i po żądaniu: identyfikator i skrót treści. Każdy
+// NOWY, ZMIENIONY albo USUNIĘTY wiersz musi mieć zdarzenie audytu z tego samego
+// żądania, którego entity_id:
 //   1. jest identyfikatorem tego wiersza, albo
 //   2. jest identyfikatorem obiektu nadrzędnego z AUDIT_ROW_PARENTS (wiersz
 //      podrzędny lub historia zmian — zdarzenie wskazuje obiekt, którego dotyczy),
 //      albo wpis nazywa klucz metadanych (`metadataKeys`), który niesie id wiersza,
+//   3. dla zmiany/usunięcia — wskazuje obiekt albo klucz metadanych z
+//      AUDIT_ROW_UPDATE_SOURCES (np. trigger przypisania wpłaty zmienia
+//      payment_entries, a payment.assigned niesie metadata.paymentEntryId),
 // chyba że tabela jest techniczna (AUDIT_ROW_TECHNICAL) albo para trasa+tabela
 // jest na liście AUDIT_ROW_ROUTE_EXEMPT. Każdy wpis ma uzasadnienie.
 //
@@ -130,6 +134,51 @@ export const AUDIT_ROW_TECHNICAL = new Map([
   ['data_access_log', 'sam jest dziennikiem dostępu do danych osobowych (#133) — zapis o zapisie byłby rekurencją'],
 ]);
 
+// Tylko dla ZMIANY i USUNIĘCIA wiersza (tworzenie nadal wymaga zdarzenia o samym
+// wierszu albo wpisu z AUDIT_ROW_PARENTS): zdarzenie operacji, która zmienia wiersz
+// ubocznie, wskazuje obiekt nadrzędny (`keys`) albo niesie id wiersza w metadanych.
+export const AUDIT_ROW_UPDATE_SOURCES = new Map([
+  ['payment_entries', {
+    keys: () => [],
+    metadataKeys: ['paymentEntryId'],
+    why: 'trigger przypisania/przeniesienia wpłaty ustawia household_id i status; payment.assigned/reassigned niesie metadata.paymentEntryId',
+  }],
+  ['user_mfa_factors', {
+    keys: (row) => [row.user_id],
+    metadataKeys: ['factorId'],
+    why: 'last_used_step (ochrona przed powtórką kodu) i wyłączenie czynnika; mfa.verified niesie metadata.factorId, mfa.reset wskazuje konto',
+  }],
+  ['meeting_agenda_items', {
+    keys: (row) => [row.meeting_id],
+    why: 'zmiana kolejności punktów porządku obrad; meeting.agenda.reordered wskazuje zebranie',
+  }],
+  ['privacy_notices', {
+    keys: () => [],
+    metadataKeys: ['supersededNoticeId'],
+    why: 'publikacja nowej wersji zastępuje poprzednią (status superseded); privacy_notice.published niesie metadata.supersededNoticeId',
+  }],
+  ['guardian_update_links', {
+    keys: () => [],
+    metadataKeys: ['linkId'],
+    why: 'jednorazowy link zużyty przy wysłaniu wniosku (used_at); guardian_update_request.created niesie metadata.linkId',
+  }],
+  ['email_suppression_release_requests', {
+    keys: () => [],
+    metadataKeys: ['requestId'],
+    why: 'wniosek o zdjęcie wyłączenia zużyty przy zatwierdzeniu (consumed_at); email.suppression.released niesie metadata.requestId',
+  }],
+]);
+
+// Kolumny pomijane w skrócie treści przy wykrywaniu ZMIANY wiersza (tworzenie
+// i usunięcie wykrywa identyfikator). Tylko znaczniki techniczne bez znaczenia
+// biznesowego — nie dopisuj tu kolumny, której zmiana jest decyzją osoby.
+export const AUDIT_ROW_VOLATILE_COLUMNS = new Map([
+  ['sessions', {
+    columns: ['last_seen_at'],
+    why: 'znacznik ostatniej aktywności sesji, odświeżany przy dowolnym żądaniu (auth.js, co najwyżej raz na okno)',
+  }],
+]);
+
 // Para trasa → tabele, których wiersze opisuje jedno zdarzenie zbiorcze bez kolumny łączącej.
 export const AUDIT_ROW_ROUTE_EXEMPT = new Map([
   ['import.commit', {
@@ -157,17 +206,23 @@ async function loadTables(db) {
   return rows.map((row) => row.table_name);
 }
 
-// Zbiór 'tabela|id' wszystkich wierszy wskazanych tabel (jedno zapytanie).
+// Stan wierszy: 'tabela|id' → skrót treści wiersza (jedno zapytanie). Kolumny z
+// AUDIT_ROW_VOLATILE_COLUMNS są pomijane w skrócie (znacznik aktywności sesji itp.).
 export async function rowIdSnapshot(db, tables) {
-  const { rows } = await db.query(tables.map((table) => `SELECT '${table}' AS t, id::text AS id FROM ${table}`).join(' UNION ALL '));
-  return new Set(rows.map((row) => `${row.t}|${row.id}`));
+  const ignored = (table) => AUDIT_ROW_VOLATILE_COLUMNS.get(table)?.columns ?? [];
+  const hash = (table) => {
+    const columns = ignored(table);
+    return columns.length
+      ? `md5((to_jsonb(x) - ARRAY[${columns.map((column) => `'${column}'`).join(', ')}]::text[])::text)`
+      : 'md5(to_jsonb(x)::text)';
+  };
+  const { rows } = await db.query(tables.map((table) => `SELECT '${table}' AS t, x.id::text AS id, ${hash(table)} AS h FROM ${table} x`).join(' UNION ALL '));
+  return new Map(rows.map((row) => [`${row.t}|${row.id}`, row.h]));
 }
 
-// Nowe wiersze (pełne) pogrupowane po tabeli: [{ table, row }].
-export async function newRows(db, before, after) {
+async function rowsByKeys(db, keys, kind) {
   const byTable = new Map();
-  for (const key of after) {
-    if (before.has(key)) continue;
+  for (const key of keys) {
     const [table, id] = key.split('|');
     if (!byTable.has(table)) byTable.set(table, []);
     byTable.get(table).push(id);
@@ -175,9 +230,25 @@ export async function newRows(db, before, after) {
   const out = [];
   for (const [table, ids] of byTable) {
     const { rows } = await db.query(`SELECT * FROM ${table} WHERE id::text = ANY($1::text[])`, [ids]);
-    for (const row of rows) out.push({ table, row });
+    for (const row of rows) out.push({ table, row, kind });
   }
   return out;
+}
+
+// Nowe wiersze (pełne) pogrupowane po tabeli: [{ table, row, kind: 'created' }].
+export async function newRows(db, before, after) {
+  return rowsByKeys(db, [...after.keys()].filter((key) => !before.has(key)), 'created');
+}
+
+// Wiersze zmienione (treść inna niż przed żądaniem) i usunięte:
+// [{ table, row, kind: 'updated' | 'deleted' }]. Usunięty wiersz ma tylko `id`.
+export async function changedRows(db, before, after) {
+  const updated = [...after].filter(([key, hash]) => before.has(key) && before.get(key) !== hash).map(([key]) => key);
+  const deleted = [...before.keys()].filter((key) => !after.has(key)).map((key) => {
+    const [table, id] = key.split('|');
+    return { table, row: { id }, kind: 'deleted' };
+  });
+  return [...await rowsByKeys(db, updated, 'updated'), ...deleted];
 }
 
 function metadataOf(event) {
@@ -185,20 +256,23 @@ function metadataOf(event) {
   return typeof raw === 'string' ? JSON.parse(raw) : raw;
 }
 
+const KIND_LABEL = { created: 'nowy wiersz', updated: 'zmieniony wiersz', deleted: 'usunięty wiersz' };
+
 // Czysta funkcja detektora (kontrola pozytywna w tests/audit-row-coverage.test.js).
 // rows: [{ table, row }] — nowe wiersze; events: nowe zdarzenia audytu tego żądania.
 export function rowCoverageProblems(routeId, rows, events) {
   const entities = new Set(events.map((event) => String(event.entity_id)));
   const problems = [];
-  for (const { table, row } of rows) {
+  for (const { table, row, kind } of rows) {
     if (AUDIT_ROW_TECHNICAL.has(table)) continue;
     if (AUDIT_ROW_ROUTE_EXEMPT.get(routeId)?.tables.includes(table)) continue;
     if (entities.has(String(row.id))) continue;
     const parent = AUDIT_ROW_PARENTS.get(table);
-    if (parent && parent.keys(row).some((key) => key != null && entities.has(String(key)))) continue;
-    if (parent?.metadataKeys?.some((key) => events.some((event) => String(metadataOf(event)[key] ?? '') === String(row.id)))) continue;
-    problems.push(`nowy wiersz ${table} (id ${row.id}) bez zdarzenia audytu wskazującego go`
-      + `${parent ? ' ani obiekt nadrzędny' : ''} (zdarzenia: ${events.map((event) => `${event.action}→${event.entity_type}`).join(', ') || 'brak'})`
+    const sources = [parent, kind && kind !== 'created' ? AUDIT_ROW_UPDATE_SOURCES.get(table) : null].filter(Boolean);
+    if (sources.some((source) => source.keys(row).some((key) => key != null && entities.has(String(key))))) continue;
+    if (sources.some((source) => source.metadataKeys?.some((key) => events.some((event) => String(metadataOf(event)[key] ?? '') === String(row.id))))) continue;
+    problems.push(`${KIND_LABEL[kind] ?? KIND_LABEL.created} ${table} (id ${row.id}) bez zdarzenia audytu wskazującego go`
+      + `${sources.length ? ' ani obiekt nadrzędny' : ''} (zdarzenia: ${events.map((event) => `${event.action}→${event.entity_type}`).join(', ') || 'brak'})`
       + ' — dopisz insertAuditEvent(tx, …) w trasie');
   }
   return problems;

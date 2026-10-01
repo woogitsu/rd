@@ -37,7 +37,7 @@ import {
 } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
 import {
-  AUDIT_ROW_PARENTS, AUDIT_ROW_ROUTE_EXEMPT, AUDIT_ROW_TECHNICAL, newRows, rowCoverageProblems, rowCoverageTables, rowIdSnapshot,
+  AUDIT_ROW_PARENTS, AUDIT_ROW_ROUTE_EXEMPT, AUDIT_ROW_TECHNICAL, AUDIT_ROW_UPDATE_SOURCES, AUDIT_ROW_VOLATILE_COLUMNS, changedRows, newRows, rowCoverageProblems, rowCoverageTables, rowIdSnapshot,
 } from './helpers/audit-row-coverage.js';
 import {
   addConsent, approve as approveNews, createDraft as createNewsDraft, publish as publishNews, registerPhoto,
@@ -92,7 +92,7 @@ const isSuccess = (status) => status >= 200 && status < 300;
 // skopiowane) i słusznie nie tworzą nowego wpisu. Metadane każdego zdarzenia przechodzą
 // assertNoPii. Wyjątki są jawne i uzasadnione; nie dopisuj tu trasy zmieniającej dane
 // biznesowe — wtedy dopisz insertAuditEvent(tx, …) w trasie.
-// Dodatkowo (#184 pkt 6) każdy NOWY wiersz tabeli z kolumną id musi mieć zdarzenie
+// Dodatkowo (#184 pkt 6) każdy NOWY, ZMIENIONY albo USUNIĘTY wiersz tabeli z kolumną id musi mieć zdarzenie
 // wskazujące go albo jego obiekt nadrzędny — listy w tests/helpers/audit-row-coverage.js.
 export const AUDIT_EXEMPT_ROUTES = new Map([
   ['import.preview', 'podgląd: walidacja i różnica względem bazy, nic nie zapisuje (import.committed loguje commit)'],
@@ -1104,7 +1104,8 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
   const before = tracksWrites ? await writeFingerprint(ctx.db) : null;
   const deniedBefore = tracksWrites && !isSuccess(expected) ? await accessDeniedIds(ctx.db) : null;
   const auditBefore = tracksWrites && isSuccess(expected) ? await auditIds(ctx.db) : null;
-  // #184 pkt 6: identyfikatory wierszy przed zapisem — każdy nowy wiersz musi mieć zdarzenie.
+  // #184 pkt 6: identyfikatory i skróty treści wierszy przed zapisem — każdy nowy,
+  // zmieniony i usunięty wiersz musi mieć zdarzenie.
   const rowTables = auditBefore ? await rowCoverageTables(ctx.db) : null;
   const rowsBefore = rowTables ? await rowIdSnapshot(ctx.db, rowTables) : null;
   const response = await handlePgRequest(request(built.path, {
@@ -1153,8 +1154,10 @@ async function runCase(ctx, route, actor, mfa, targetKey) {
       try { assertNoPii(row.metadata_json ?? {}); } catch (error) { problems.push(`zdarzenie ${row.action}: ${error.message}`); }
     }
     if (rows.some((row) => (row.actor_id || !needsActor) && row.entity_type && row.entity_id)) stats.complete += 1;
-    const created = await newRows(ctx.db, rowsBefore, await rowIdSnapshot(ctx.db, rowTables));
-    problems.push(...rowCoverageProblems(route.id, created, rows));
+    const rowsAfter = await rowIdSnapshot(ctx.db, rowTables);
+    const created = await newRows(ctx.db, rowsBefore, rowsAfter);
+    const changed = await changedRows(ctx.db, rowsBefore, rowsAfter);
+    problems.push(...rowCoverageProblems(route.id, [...created, ...changed], rows));
   }
   if (!isSuccess(expected) && tracksWrites) {
     const after = await writeFingerprint(ctx.db);
@@ -1575,7 +1578,30 @@ test('meta: wyjątki pokrycia wierszy audytem wskazują tabele z kolumną id i m
     assert.ok(entry.why.length >= 30, `AUDIT_ROW_ROUTE_EXEMPT: ${routeId} bez uzasadnienia`);
     for (const table of entry.tables) assert.ok(tables.has(table), `AUDIT_ROW_ROUTE_EXEMPT: ${routeId}: ${table} nie jest tabelą z kolumną id`);
   }
-  // Tabele finansowe, ról i wysyłek (AGENTS.md) nie mogą być zwolnione jako techniczne.
+  for (const [table, entry] of AUDIT_ROW_UPDATE_SOURCES) {
+    assert.ok(tables.has(table), `AUDIT_ROW_UPDATE_SOURCES: ${table} nie jest tabelą z kolumną id`);
+    assert.equal(typeof entry.keys, 'function', `AUDIT_ROW_UPDATE_SOURCES: ${table} bez funkcji kluczy`);
+    assert.ok(entry.why.length >= 30, `AUDIT_ROW_UPDATE_SOURCES: ${table} bez uzasadnienia`);
+    for (const key of entry.metadataKeys ?? []) assert.match(key, /^[a-z][A-Za-z]*Id$/, `AUDIT_ROW_UPDATE_SOURCES: ${table}: klucz metadanych ${key}`);
+    assert.ok(!AUDIT_ROW_TECHNICAL.has(table), `${table}: źródło zmiany dla tabeli technicznej`);
+  }
+  for (const [table, entry] of AUDIT_ROW_VOLATILE_COLUMNS) {
+    assert.ok(tables.has(table), `AUDIT_ROW_VOLATILE_COLUMNS: ${table} nie jest tabelą z kolumną id`);
+    assert.ok(entry.why.length >= 30, `AUDIT_ROW_VOLATILE_COLUMNS: ${table} bez uzasadnienia`);
+    const { rows } = await ctx.db.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1", [table],
+    );
+    const columns = new Set(rows.map((row) => row.column_name));
+    for (const column of entry.columns) {
+      assert.ok(columns.has(column), `AUDIT_ROW_VOLATILE_COLUMNS: ${table}.${column} nie istnieje`);
+      assert.notEqual(column, 'id', `AUDIT_ROW_VOLATILE_COLUMNS: ${table}: id nie może być pominięte`);
+    }
+  }
+  // Tabele finansowe, ról i wysyłek (AGENTS.md) nie mogą być zwolnione jako techniczne
+  // ani mieć pomijanych kolumn przy wykrywaniu zmiany.
+  for (const table of AUDIT_ROW_VOLATILE_COLUMNS.keys()) {
+    assert.doesNotMatch(table, /^(payment|ledger|bank_|role_grants|invitations|users|email_campaigns|email_outbox$)/, `${table}: tabela biznesowa z pomijanymi kolumnami`);
+  }
   for (const table of AUDIT_ROW_TECHNICAL.keys()) {
     assert.doesNotMatch(table, /^(payment|ledger|bank_|role_grants|invitations|users|email_campaigns|email_outbox$)/, `${table}: tabela biznesowa na liście technicznej`);
   }

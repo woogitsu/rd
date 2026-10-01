@@ -1974,7 +1974,7 @@ async function release(request, env, hashValue, json) {
         actorId, action: 'email.suppression.released', entityType: 'email_suppression_release', entityId: releaseId,
         metadata: {
           hashValue, releaseReason: pending.release_reason, suppressionReason: pending.suppression_reason,
-          requestedBy: pending.requested_by, schoolYearId: data.schoolYearId,
+          requestId: pending.id, requestedBy: pending.requested_by, schoolYearId: data.schoolYearId,
         },
       });
       return json({ releaseId }, 201);

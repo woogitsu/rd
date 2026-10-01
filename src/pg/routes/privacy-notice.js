@@ -132,7 +132,7 @@ async function publishNotice(env, actorId, id, json) {
       return json({ notice: noticeView(current[0]) }, 200, { 'Idempotency-Replayed': 'true' });
     }
     if (notice.status !== 'approved') throw new RequestError('privacy_notice_not_approved', 409);
-    await tx.query("UPDATE privacy_notices SET status = 'superseded' WHERE status = 'published'");
+    const superseded = await tx.query("UPDATE privacy_notices SET status = 'superseded' WHERE status = 'published' RETURNING id");
     const { rows: updated } = await tx.query(
       `UPDATE privacy_notices SET status = 'published', published_by = $2, published_at = now()
         WHERE id = $1 RETURNING *`,
@@ -140,7 +140,8 @@ async function publishNotice(env, actorId, id, json) {
     );
     await insertAuditEvent(tx, {
       actorId, action: 'privacy_notice.published', entityType: 'privacy_notice', entityId: id,
-      metadata: { version: notice.version },
+      // #184: id zastąpionej wersji (jeśli była) — zmiana jej statusu ma ślad w tym zdarzeniu.
+      metadata: { version: notice.version, supersededNoticeId: superseded.rows[0]?.id ?? null },
     });
     return json({ notice: noticeView(updated[0]) });
   });
