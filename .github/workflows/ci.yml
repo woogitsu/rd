@@ -182,6 +182,21 @@ jobs:
         run: |
           node scripts/check-migrations-order.js --base origin/${{ github.event.pull_request.base.ref }}
 
+  # #160: sprawdzanie typów JSDoc (`tsc --noEmit`) dla plików wskazanych w
+  # jsconfig.json. Osobny, lekki job; lista plików rośnie stopniowo.
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+
   # Pierwsze testy przeglądarkowe (Playwright) kluczowych ścieżek: logowanie
   # admina z MFA (TOTP liczony w teście) i wejście do admin/, granica ról
   # przedstawiciela w families/, zapis wpłaty przez skarbnika w panel/, oraz
@@ -220,7 +235,7 @@ jobs:
   # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem). `e2e`
   # jest CELOWO poza tą listą (patrz komentarz przy tym jobie).
   ci-ok:
-    needs: [test, test-pg-real, audit, build, smoke, migrations-order]
+    needs: [test, test-pg-real, audit, build, smoke, migrations-order, typecheck]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -233,12 +248,14 @@ jobs:
           echo "build: ${{ needs.build.result }}"
           echo "smoke: ${{ needs.smoke.result }}"
           echo "migrations-order: ${{ needs.migrations-order.result }}"
+          echo "typecheck: ${{ needs.typecheck.result }}"
           if [ "${{ needs.test.result }}" != "success" ] ||
              [ "${{ needs.test-pg-real.result }}" != "success" ] ||
              [ "${{ needs.audit.result }}" != "success" ] ||
              [ "${{ needs.build.result }}" != "success" ] ||
              [ "${{ needs.smoke.result }}" != "success" ] ||
-             [ "${{ needs.migrations-order.result }}" != "success" ]; then
+             [ "${{ needs.migrations-order.result }}" != "success" ] ||
+             [ "${{ needs.typecheck.result }}" != "success" ]; then
             echo "Co najmniej jeden wymagany job nie zakończył się sukcesem." >&2
             exit 1
           fi

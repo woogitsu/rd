@@ -129,7 +129,7 @@ export function gateFreeText(fields, { confirm = false, knownNames = [], fail = 
   for (const [key, value] of fields) {
     if (!GATED_FIELDS.includes(key)) throw new Error(`pii_gate_unknown_field:${key}`);
     if (value === null || value === undefined || value === '') continue;
-    const parts = classify(detectPossiblePersonalData(value, { knownNames }).categories);
+    const parts = classify(detectPossiblePersonalData(/** @type {string} */ (value), { knownNames }).categories);
     parts.forbidden.forEach((category) => forbidden.add(category));
     parts.confirmable.forEach((category) => confirmable.add(category));
   }

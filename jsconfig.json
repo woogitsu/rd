@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/pg/input.js",
+    "src/pg/scope.js",
+    "src/pg/pii-gate.js",
+    "src/pg/audit.js"
+  ]
+}

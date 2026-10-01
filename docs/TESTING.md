@@ -153,6 +153,14 @@ plik z odwróconą kolejnością testów i zestawów na każdym poziomie
 (`tests/helpers/reverse-order.js`). `tests/pg-families.test.js` przechodzi w
 obu kolejnościach.
 
+## Sprawdzanie typów JSDoc (#160)
+
+`npm run typecheck` (`tsc -p jsconfig.json --noEmit`) sprawdza typy w plikach
+wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js`,
+`pii-gate.js`, `audit.js`; `strict` wyłączone, `checkJs` włączone). Job `typecheck`
+w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
+`include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
+
 ## Testy na prawdziwym PostgreSQL (#208)
 
 PGlite ma jedno połączenie i wykonuje transakcje po kolei, więc **nie nadaje się do
