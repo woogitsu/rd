@@ -19,6 +19,8 @@ import {
   filterUsers,
   grantRequestRow,
   grantRequestsPath,
+  canLoadMoreRequests,
+  mergeRequestPages,
   indexClasses,
   invitationLink,
   invitationPayload,
@@ -60,6 +62,7 @@ mountShell();
 
 const state = {
   me: null, meEmail: "", grantRequests: [], users: [], grants: [], invitations: [], auditEvents: [], auditDomain: "",
+  grantRequestsCursor: null, grantRequestsCursorStatus: null, grantRequestsBusy: false,
   usersCursor: null, grantsCursor: null, invitationsCursor: null, auditCursor: null,
   years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);
@@ -438,9 +441,9 @@ function renderGrantRequests() {
   byId("grant-requests-summary").textContent = status === "pending"
     ? `Oczekujące wnioski: ${pending}.`
     : `${state.grantRequests.length} wniosków w widoku.`;
-  // #159: serwer pokazuje najnowsze 200 wniosków i jawnie sygnalizuje obcięcie.
-  if (state.grantRequestsTruncated) {
-    byId("grant-requests-summary").textContent += " Lista jest obcięta do najnowszych wniosków; starsze nie są pokazane.";
+  // #159: serwer zwraca stronę i `nextCursor`; „Pokaż więcej” dociąga starsze wnioski.
+  if (state.grantRequestsCursor) {
+    byId("grant-requests-summary").textContent += " Lista jest niepełna — użyj „Pokaż więcej”.";
   }
   if (!state.grantRequests.length) return emptyRow(tbody, 7, status === "pending" ? "Brak oczekujących wniosków." : "Brak wniosków dla wybranego statusu.");
   const context = requestRowContext();
@@ -543,18 +546,46 @@ rejectForm.addEventListener("submit", async (event) => {
   }
 });
 
-async function loadGrantRequests() {
-  const result = await api(grantRequestsPath(byId("grant-request-filters").elements.status.value));
-  state.grantRequests = result.requests ?? [];
-  state.grantRequestsTruncated = result.truncated === true;
-  renderGrantRequests();
+async function loadGrantRequests({ append = false } = {}) {
+  const status = byId("grant-request-filters").elements.status.value;
+  if (append && !canLoadMoreRequests({
+    cursor: state.grantRequestsCursor, status, cursorStatus: state.grantRequestsCursorStatus, busy: state.grantRequestsBusy,
+  })) return;
+  const more = byId("grant-requests-more");
+  const cursor = append ? state.grantRequestsCursor : null;
+  state.grantRequestsBusy = true;
+  more.disabled = true;
+  try {
+    const result = await api(grantRequestsPath(status, cursor));
+    // Filtr zmieniony w trakcie pobierania: wynik tej odpowiedzi jest nieaktualny.
+    if (byId("grant-request-filters").elements.status.value !== status) return;
+    const page = result.requests ?? [];
+    state.grantRequests = append ? mergeRequestPages(state.grantRequests, page) : page;
+    state.grantRequestsCursor = result.nextCursor ?? null;
+    state.grantRequestsCursorStatus = status;
+    more.hidden = !state.grantRequestsCursor;
+    renderGrantRequests();
+  } finally {
+    state.grantRequestsBusy = false;
+    more.disabled = false;
+  }
 }
 
 byId("grant-request-filters").addEventListener("submit", (event) => {
   event.preventDefault();
+  resetGrantRequestsPaging();
   loadGrantRequests().catch((error) => showMessage(error.message, true));
 });
-byId("reload-grant-requests").addEventListener("click", () => loadGrantRequests().catch((error) => showMessage(error.message, true)));
+byId("grant-request-filters").elements.status.addEventListener("change", resetGrantRequestsPaging);
+byId("reload-grant-requests").addEventListener("click", () => { resetGrantRequestsPaging(); loadGrantRequests().catch((error) => showMessage(error.message, true)); });
+byId("grant-requests-more").addEventListener("click", () => loadGrantRequests({ append: true }).catch((error) => showMessage(error.message, true)));
+
+// Zmiana filtra statusu kasuje kursor i przycisk; stary kursor nie pasuje do nowego filtra.
+function resetGrantRequestsPaging() {
+  state.grantRequestsCursor = null;
+  state.grantRequestsCursorStatus = null;
+  byId("grant-requests-more").hidden = true;
+}
 
 // --- Przydziały ---------------------------------------------------------------
 
