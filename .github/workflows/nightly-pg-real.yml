@@ -1,0 +1,45 @@
+name: Nightly real PostgreSQL
+# #111: nocny przebieg PEŁNEGO zestawu tests/*.test.js na prawdziwym PostgreSQL
+# (`--all`, RD_TEST_PG_BACKEND=real) oraz kontrola mutacyjna blokad. Osobny
+# workflow: nie jest wymaganym checkiem i nie wchodzi w `ci-ok` (ci.yml).
+# Bez sekretów i bez wysyłek; dane wyłącznie syntetyczne.
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-pg-real-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  nightly-pg-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        # Ten sam digest co w ci.yml (postgres:16, multi-arch index).
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_PASSWORD: rd_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RD_TEST_PG_URL: postgres://postgres:rd_ci_only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm run test:pg-real -- --all
+      - run: npm run test:pg-mutations

@@ -49,3 +49,26 @@ test('docs/API_ERRORS.md nie ma martwych wpisów (kod, którego źródło już n
   const stale = [...catalogCodes()].filter((code) => !sourceCodes.has(code));
   assert.deepEqual(stale, [], 'wpisy katalogu bez odpowiadającego kodu w źródle');
 });
+
+test('tabela „Polityka 403 i 404 per moduł” zgadza się z x-rd-deny-status w docs/openapi.json', () => {
+  const doc = readFileSync(join(ROOT, 'docs/API_ERRORS.md'), 'utf8');
+  const section = doc.split('## Polityka 403 i 404 per moduł')[1]?.split(/^## /m)[0] ?? '';
+  const documented = new Map();
+  for (const match of section.matchAll(/^\| ([a-z][a-z-]*) \| ([^|]+) \|$/gm)) {
+    documented.set(match[1], match[2].trim() === '—' ? '' : match[2].trim());
+  }
+  assert.ok(documented.size > 0, 'brak tabeli polityki 403/404');
+  const spec = JSON.parse(readFileSync(join(ROOT, 'docs/openapi.json'), 'utf8'));
+  const actual = new Map();
+  for (const item of Object.values(spec.paths)) {
+    for (const op of Object.values(item)) {
+      const statuses = op['x-rd-deny-status'];
+      if (!Array.isArray(statuses)) continue;
+      const set = actual.get(op.tags[0]) ?? new Set();
+      for (const status of statuses) set.add(status);
+      actual.set(op.tags[0], set);
+    }
+  }
+  const expected = new Map([...actual].map(([module, set]) => [module, [...set].sort((a, b) => a - b).join(', ')]));
+  assert.deepEqual(Object.fromEntries([...documented].sort()), Object.fromEntries([...expected].sort()));
+});
