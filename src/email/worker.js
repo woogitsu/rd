@@ -53,9 +53,10 @@ import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, wit
 import { contentHash, preferencesToken, renderMessage, usesPaymentInstructions, usesStructuredReference } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { campaignPaymentInstructions } from '../pg/routes/payment-instructions.js';
+import { campaignPrivacyNotice } from '../pg/routes/privacy-notice.js';
 import { brusselsDay } from '../pg/today.js';
 
-const QUOTA_LOCK_ID = 732481707;
+export const QUOTA_LOCK_ID = 732481707;
 export const LEASE_MINUTES = 15;
 // Zdarzenia dostawcy oznaczające, że adres nie przyjął wiadomości (#210):
 // wiersz kończy jako „bounced”, nie „sent”. Wspólne dla webhooka i odzyskiwania.
@@ -135,6 +136,60 @@ export async function remainingQuota(executor, now, config) {
   return Math.max(0, config.dailyLimit - config.dailyReserved - Number(rows[0].used));
 }
 
+// 'YYYY-MM-DD' + n dni (arytmetyka na dacie kalendarzowej, nie na godzinach —
+// zmiana czasu w strefie konta nie wpływa na wynik; #84).
+export function addDays(day, n) {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Zużycie jednej doby: 'utc' po kolumnie `day`, 'account' po `recorded_at`
+// przeliczonym do strefy konta. Same liczby (kampania / inne / razem).
+async function dayUsage(executor, kind, day, timezone) {
+  const { rows } = kind === 'utc'
+    ? await executor.query(
+      'SELECT source, COALESCE(SUM(message_count), 0)::int AS n FROM email_send_ledger WHERE day = $1 GROUP BY source',
+      [day])
+    : await executor.query(
+      `SELECT source, COALESCE(SUM(message_count), 0)::int AS n FROM email_send_ledger
+        WHERE (recorded_at AT TIME ZONE $2) >= $1::date AND (recorded_at AT TIME ZONE $2) < $1::date + 1
+        GROUP BY source`,
+      [day, timezone]);
+  const by = Object.fromEntries(rows.map((row) => [row.source, Number(row.n)]));
+  const campaign = by.campaign ?? 0;
+  const other = by.other ?? 0;
+  return { day, campaign, other, total: campaign + other };
+}
+
+// Stan dziennego limitu do podglądu (GET /api/email/quota, #84): dziś i jutro
+// w obu dobach (UTC i strefa konta), rezerwa, wiadomości w locie i pula, którą
+// zobaczy najbliższy przebieg (remainingQuota). Tylko odczyt, same liczby.
+export async function quotaOverview(executor, now, config) {
+  const utcToday = utcDay(now);
+  const accountToday = accountDay(now, config.quotaTimezone);
+  const windows = {
+    utc: {
+      today: await dayUsage(executor, 'utc', utcToday),
+      tomorrow: await dayUsage(executor, 'utc', addDays(utcToday, 1)),
+    },
+    account: {
+      timezone: config.quotaTimezone,
+      today: await dayUsage(executor, 'account', accountToday, config.quotaTimezone),
+      tomorrow: await dayUsage(executor, 'account', addDays(accountToday, 1), config.quotaTimezone),
+    },
+  };
+  const { rows } = await executor.query(IN_FLIGHT);
+  return {
+    dailyLimit: config.dailyLimit,
+    dailyReserved: config.dailyReserved,
+    inFlight: Number(rows[0].count),
+    remaining: await remainingQuota(executor, now, config),
+    windows,
+    generatedAt: now.toISOString(),
+  };
+}
+
 // Wpis w dzienniku limitu dla próby, która mogła wyjść (idempotentnie: jeden
 // wpis na wiersz i próbę; wiersze przejęte przed tą zmianą mają go już).
 async function recordLedger(tx, { day, campaignId, outboxId, attempt }) {
@@ -156,6 +211,13 @@ export function unsubscribeUrlFor(config, { campaignId, category, emailHash }) {
 }
 
 async function recheckRow(tx, campaign, row, config) {
+  // #100 (art. 18 RODO): ograniczenie nałożone po zatwierdzeniu kampanii wstrzymuje wysyłkę
+  // do ograniczonego gospodarstwa albo opiekuna; wiersz jest pomijany, nie usuwany.
+  const restricted = await tx.query(
+    'SELECT 1 FROM processing_restricted_subjects WHERE household_id = $1 OR guardian_id = $2 LIMIT 1',
+    [row.household_id, row.guardian_id],
+  );
+  if (restricted.rows[0]) return { state: 'skipped', error: 'processing_restricted' };
   if (campaign.audience === 'no_payment_record') {
     const paid = await tx.query(
       `SELECT 1 FROM household_payment_totals
@@ -185,17 +247,23 @@ async function recheckRow(tx, campaign, row, config) {
   // wypada już w student_guardians_current_on.
   const consent = await tx.query(
     `SELECT EXISTS (SELECT 1 FROM enrollments_current en
-                     WHERE en.student_id = sg.student_id AND en.school_year_id = $5) AS enrolled
+                     WHERE en.student_id = sg.student_id AND en.school_year_id = $5) AS enrolled,
+            -- #113: kampania zebrania klasowego — to samo dziecko, przez które opiekun jest adresatem
+            -- (jak w migawce), musi nadal być zapisane do klasy zebrania.
+            ($6::text IS NULL OR EXISTS (SELECT 1 FROM enrollments_current en
+                     WHERE en.student_id = sg.student_id AND en.school_year_id = $5 AND en.class_id = $6)) AS in_class
        FROM guardians g
        JOIN student_guardians_current_on($4::date) sg ON sg.guardian_id = g.id
        JOIN student_primary_household_on($4::date) p ON p.student_id = sg.student_id
       WHERE g.id = $1 AND p.household_id = $2
         AND g.contact_allowed AND sg.contact_allowed
         AND lower(btrim(g.email)) = $3`,
-    [row.guardian_id, row.household_id, row.email, row.memberDay, campaign.school_year_id],
+    [row.guardian_id, row.household_id, row.email, row.memberDay, campaign.school_year_id,
+      campaign.audience === 'class_households' ? campaign.class_id : null],
   );
   if (!consent.rows.length) return { state: 'suppressed', error: 'consent_or_address_changed' };
   if (!consent.rows.some((r) => r.enrolled)) return { state: 'suppressed', error: 'student_withdrawn' };
+  if (!consent.rows.some((r) => r.enrolled && r.in_class)) return { state: 'suppressed', error: 'student_left_class' };
   const refusal = recipientRefusal(config, row.email);
   if (refusal) return { state: 'failed', error: refusal };
   // #83: treść z {komunikat} — aktywna referencja rodziny w roku kampanii w chwili
@@ -338,9 +406,9 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
     let batchLeft = config.batchSize;
     const claimed = [];
     const { rows: campaigns } = await tx.query(
-      `SELECT c.id, c.school_year_id, c.audience, c.category, c.subject, c.body_text, c.content_hash,
+      `SELECT c.id, c.school_year_id, c.audience, c.class_id, c.category, c.subject, c.body_text, c.content_hash,
               c.approved_content_hash, c.approved_recipients_hash, c.recipients_hash, c.daily_cap,
-              c.status, c.approved_at, c.approved_payment_instructions_id,
+              c.status, c.approved_at, c.approved_payment_instructions_id, c.privacy_notice_id,
               y.label AS school_year_label,
               (SELECT COUNT(*)::int FROM email_send_ledger l WHERE l.day = $1 AND l.campaign_id = c.id)
                 + (${IN_FLIGHT} AND o.campaign_id = c.id) AS sent_today
@@ -375,6 +443,14 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
           continue;
         }
         paymentInstructions = payment.instructions;
+      }
+      // #145 (D-06): wyłącznie wersja informacji zapamiętana przy zatwierdzeniu
+      // (privacy_notice_id, 0179). Kampania zatwierdzona przed 0179 (NULL) jest
+      // pomijana jak przy korekcie rachunku — wiersze zostają 'queued'.
+      const privacyNotice = await campaignPrivacyNotice(tx, campaign, config.publicBaseUrl);
+      if (!privacyNotice) {
+        run.stoppedReason = 'privacy_notice_missing';
+        continue;
       }
       let capLeft = campaign.daily_cap - campaign.sent_today;
       if (capLeft <= 0) continue;
@@ -412,7 +488,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         const message = {
           ...renderMessage(campaign, {
             schoolYearLabel: campaign.school_year_label, householdId: row.household_id,
-            structuredReference: row.structured_reference ?? null, paymentInstructions, unsubscribeUrl,
+            structuredReference: row.structured_reference ?? null, paymentInstructions, unsubscribeUrl, privacyNotice,
           }),
           unsubscribeUrl,
         };
@@ -462,6 +538,10 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
           AND NOT EXISTS (
             SELECT 1 FROM email_campaign_recipients r JOIN email_active_suppressions s ON s.email_hash = r.email_hash
              WHERE r.id = o.recipient_id)
+          AND NOT EXISTS (
+            SELECT 1 FROM email_campaign_recipients r
+              JOIN processing_restricted_subjects x ON x.household_id = o.household_id OR x.guardian_id = r.guardian_id
+             WHERE r.id = o.recipient_id)
           AND EXISTS (
             SELECT 1
               FROM email_campaign_recipients r
@@ -473,7 +553,8 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
                AND lower(btrim(g.email)) = r.email
                AND EXISTS (SELECT 1 FROM enrollments_current en
                             WHERE en.student_id = sg.student_id
-                              AND en.school_year_id = (SELECT c.school_year_id FROM email_campaigns c WHERE c.id = o.campaign_id)))
+                              AND en.school_year_id = (SELECT c.school_year_id FROM email_campaigns c WHERE c.id = o.campaign_id)
+                              AND (SELECT c.class_id IS NULL OR en.class_id = c.class_id FROM email_campaigns c WHERE c.id = o.campaign_id)))
         RETURNING o.id`,
       [item.id, runToken, sendAt.toISOString(), item.memberDay],
     );

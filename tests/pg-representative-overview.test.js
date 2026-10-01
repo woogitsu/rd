@@ -4,7 +4,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { emailHash } from '../src/email/content.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 
 const Y = 'y-2026';
 const Y_OLD = 'y-2025';
@@ -18,6 +18,7 @@ async function call(env, path, { cookie } = {}) {
 describe('pulpit przedstawiciela (#118)', () => {
   test('granice ról: brak przydziału representative → 403; brak sesji → 401', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     await seedSchoolYear(db, Y);
     const env = { db };
     const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
@@ -32,6 +33,7 @@ describe('pulpit przedstawiciela (#118)', () => {
 
   test('przedstawiciel z przydziałem zeszłego roku nie widzi klas bieżącego roku (bez 403)', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     await seedSchoolYear(db, Y);
     await seedClass(db, { id: 'c-old', schoolYearId: Y_OLD, name: '1A (stary rok)' });
     const env = { db };
@@ -43,6 +45,7 @@ describe('pulpit przedstawiciela (#118)', () => {
 
   test('przedstawiciel dwóch klas widzi obie; rodzeństwo liczone w obu bez ujawnienia drugiego dziecka; kontakt i wydarzenia', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
     await seedClass(db, { id: 'c-1b', schoolYearId: Y, name: '1B' });
     const env = { db };
@@ -103,6 +106,7 @@ describe('pulpit przedstawiciela (#118)', () => {
 
   test('uczeń, który odszedł (enrollments_current, #86/#285), nie jest liczony', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
     const env = { db };
     const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y }] });
@@ -135,6 +139,7 @@ describe('pulpit przedstawiciela (#118)', () => {
 
   test('kartki: dwoje opiekunów (jeden ze zgodą) → nie „do kartki”; blokada adresu (bounce) → „do kartki”', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
     const env = { db };
     const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y }] });
@@ -166,6 +171,7 @@ describe('pulpit przedstawiciela (#118)', () => {
 
   test('kartki, zebrania, dokumenty: data wydruku, najbliższe zebranie klasy, aktywne dokumenty; bez cudzych klas', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
     await seedClass(db, { id: 'c-2b', schoolYearId: Y, name: '2B' });
     const env = { db };
@@ -210,6 +216,7 @@ describe('pulpit przedstawiciela (#118)', () => {
 
   test('liczby pulpitu zgadzają się z listą klasy, kartkami i eksportem listy (te same dane)', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
     await seedClass(db, { id: 'c-1b', schoolYearId: Y, name: '1B' });
     const env = { db };
@@ -247,6 +254,7 @@ describe('pulpit przedstawiciela (#118)', () => {
 
   test('nieprawidłowy schoolYearId — 400', async () => {
     const db = await createTestDb();
+    await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
     const env = { db };
     const rep = await seedUserSession(db, { userId: 'u-rep', roles: [{ role: 'representative', classId: 'c-x', schoolYearId: Y }] });
     assert.equal((await call(env, '/api/representative/overview', { cookie: rep })).status, 400);

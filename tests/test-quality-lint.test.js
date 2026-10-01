@@ -63,6 +63,10 @@ export const TRIGGER_BYPASS_ALLOWED = Object.freeze({
     'pg-reconciliation-refund-match.test.js', 'pg-school-year-dates.test.js', 'pg-year-close-finance-freeze.test.js',
   ].map((name) => [name, CLOSED_YEAR_SHORTCUT])),
 });
+// Limity (#214): lista jest sufitem, który może tylko maleć. Nowy plik albo
+// kolejne użycie obejścia ponad limit oblewa meta-test; przy usunięciu obejścia
+// obniż limit do stanu faktycznego (meta-test wymaga równości, nie nierówności).
+export const TRIGGER_BYPASS_LIMITS = Object.freeze({ files: 35, lines: 50 });
 const TRIGGER_BYPASS = /DISABLE\s+TRIGGER|session_replication_role\s*=\s*replica/i;
 
 // Negatywna asercja na KRÓTKIM podciągu cyfr (`!meta.includes('470')`) jest
@@ -194,6 +198,31 @@ test('lint testów: każdy wpis TRIGGER_BYPASS_ALLOWED ma uzasadnienie i odpowia
   assert.deepEqual(triggerBypassProblems(fake, (name) => fakeText[name]), [
     'a.test.js: wpis bez obejścia triggera — usuń go z listy', 'b.test.js: brak pliku', 'c.test.js: za krótkie uzasadnienie',
   ]);
+});
+
+export function triggerBypassBudgetProblems(counts, limits) {
+  const files = counts.length;
+  const lines = counts.reduce((sum, count) => sum + count, 0);
+  const problems = [];
+  if (files !== limits.files) problems.push(`plików z obejściem triggera: ${files}, limit ${limits.files} — ${files > limits.files ? 'nie dodawaj obejść, użyj wstrzykiwanego zegara lub procedury produkcyjnej' : 'obniż limit'}`);
+  if (lines !== limits.lines) problems.push(`linii z obejściem triggera: ${lines}, limit ${limits.lines} — ${lines > limits.lines ? 'nie dodawaj obejść' : 'obniż limit'}`);
+  return problems;
+}
+
+test('lint testów: liczba obejść triggerów jest równa limitowi (lista może tylko maleć)', async () => {
+  const names = (await readdir(TESTS_DIR)).filter((name) => name.endsWith('.test.js') && name !== 'test-quality-lint.test.js');
+  const counts = [];
+  for (const name of names) {
+    const text = await readFile(new URL(name, TESTS_DIR), 'utf8');
+    const count = text.split('\n').filter((line) => !/^\s*\/\//.test(line) && TRIGGER_BYPASS.test(line)).length;
+    if (count > 0) counts.push(count);
+  }
+  assertCaptured(counts, { min: 1, message: 'licznik obejść nic nie znalazł — regex lub katalog są błędne' });
+  assert.deepEqual(triggerBypassBudgetProblems(counts, TRIGGER_BYPASS_LIMITS), []);
+  // Kontrola pozytywna: przekroczenie i niewykorzystany limit są wykrywane.
+  assert.equal(triggerBypassBudgetProblems([1, 2, 3], { files: 2, lines: 6 }).length, 1);
+  assert.equal(triggerBypassBudgetProblems([1, 2], { files: 2, lines: 5 }).length, 1);
+  assert.deepEqual(triggerBypassBudgetProblems([1, 2], { files: 2, lines: 3 }), []);
 });
 
 // Asercje „metadane nie zawierają telefonu” szukają całego numeru, w każdym zapisie.

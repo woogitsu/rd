@@ -16,8 +16,11 @@ import {
   userOptionLabel,
   grantPayload,
   grantRequestDialog,
+  filterUsers,
   grantRequestRow,
   grantRequestsPath,
+  canLoadMoreRequests,
+  mergeRequestPages,
   indexClasses,
   invitationLink,
   invitationPayload,
@@ -28,9 +31,10 @@ import {
   roleNeedsPendingDecisionWarning,
   schoolYearPayload,
   scopeLabel,
+  usersSummary,
 } from "./core.js";
 import {
-  batchRowError, batchSummary, canApplyBatch, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
+  batchRowError, batchSummary, canApplyBatch, coverageActivation, coverageState, coverageSummary, invitationsCount, newBatchKey, printCardModel, schoolYearsCount, tokenListText,
 } from "./onboarding.js";
 import {
   attentionStudents, canApplyPromotion, MAP_FINAL, MAP_SKIP, missingRepresentativeNote, newPromotionKey, promotionBody,
@@ -42,6 +46,10 @@ import {
   listSummary as dataRequestsSummary, newRequestKey, nextStatuses, omittedNote, statusBody as dataRequestStatusBody,
   statusConfirmation, subjectOf,
 } from "./data-requests.js";
+import {
+  HISTORY_PATH, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows, historySummary,
+  planRows, previewBody, previewSummary, resultMessage, retainedNote,
+} from "./anonymization.js";
 import { api as apiRequest } from "../shared/api.js";
 import { buildEffectsHtml, confirmAction, promptAction } from "../shared/confirm-dialog.js";
 import { mountShell } from "../shared/shell.js";
@@ -54,6 +62,7 @@ mountShell();
 
 const state = {
   me: null, meEmail: "", grantRequests: [], users: [], grants: [], invitations: [], auditEvents: [], auditDomain: "",
+  grantRequestsCursor: null, grantRequestsCursorStatus: null, grantRequestsBusy: false,
   usersCursor: null, grantsCursor: null, invitationsCursor: null, auditCursor: null,
   years: [], classes: new Map(), yearMap: new Map() };
 const byId = (id) => document.getElementById(id);
@@ -217,10 +226,13 @@ function fillDictionaries() {
 
 function renderUsers() {
   const tbody = byId("users-body");
-  const more = state.usersCursor ? " Lista jest niepełna — użyj „Pokaż więcej”." : "";
-  byId("users-summary").textContent = `${state.users.length} kont. Konta tworzy wyłącznie przyjęcie zaproszenia.${more}`;
+  const filters = Object.fromEntries(new FormData(byId("user-filters")));
+  const users = filterUsers(state.users, filters);
+  const filtered = Boolean(String(filters.q ?? "").trim() || filters.state);
+  byId("users-summary").textContent = usersSummary(users.length, state.users.length, Boolean(state.usersCursor), filtered);
   if (!state.users.length) return emptyRow(tbody, 7, "Brak kont.");
-  tbody.replaceChildren(...state.users.map((user) => {
+  if (!users.length) return emptyRow(tbody, 7, "Brak kont pasujących do filtra.");
+  tbody.replaceChildren(...users.map((user) => {
     const tr = document.createElement("tr");
     const self = user.id === state.me;
     // Skrót konta (przegląd demo 5); pełny identyfikator w podpowiedzi komórki.
@@ -429,9 +441,9 @@ function renderGrantRequests() {
   byId("grant-requests-summary").textContent = status === "pending"
     ? `Oczekujące wnioski: ${pending}.`
     : `${state.grantRequests.length} wniosków w widoku.`;
-  // #159: serwer pokazuje najnowsze 200 wniosków i jawnie sygnalizuje obcięcie.
-  if (state.grantRequestsTruncated) {
-    byId("grant-requests-summary").textContent += " Lista jest obcięta do najnowszych wniosków; starsze nie są pokazane.";
+  // #159: serwer zwraca stronę i `nextCursor`; „Pokaż więcej” dociąga starsze wnioski.
+  if (state.grantRequestsCursor) {
+    byId("grant-requests-summary").textContent += " Lista jest niepełna — użyj „Pokaż więcej”.";
   }
   if (!state.grantRequests.length) return emptyRow(tbody, 7, status === "pending" ? "Brak oczekujących wniosków." : "Brak wniosków dla wybranego statusu.");
   const context = requestRowContext();
@@ -534,18 +546,46 @@ rejectForm.addEventListener("submit", async (event) => {
   }
 });
 
-async function loadGrantRequests() {
-  const result = await api(grantRequestsPath(byId("grant-request-filters").elements.status.value));
-  state.grantRequests = result.requests ?? [];
-  state.grantRequestsTruncated = result.truncated === true;
-  renderGrantRequests();
+async function loadGrantRequests({ append = false } = {}) {
+  const status = byId("grant-request-filters").elements.status.value;
+  if (append && !canLoadMoreRequests({
+    cursor: state.grantRequestsCursor, status, cursorStatus: state.grantRequestsCursorStatus, busy: state.grantRequestsBusy,
+  })) return;
+  const more = byId("grant-requests-more");
+  const cursor = append ? state.grantRequestsCursor : null;
+  state.grantRequestsBusy = true;
+  more.disabled = true;
+  try {
+    const result = await api(grantRequestsPath(status, cursor));
+    // Filtr zmieniony w trakcie pobierania: wynik tej odpowiedzi jest nieaktualny.
+    if (byId("grant-request-filters").elements.status.value !== status) return;
+    const page = result.requests ?? [];
+    state.grantRequests = append ? mergeRequestPages(state.grantRequests, page) : page;
+    state.grantRequestsCursor = result.nextCursor ?? null;
+    state.grantRequestsCursorStatus = status;
+    more.hidden = !state.grantRequestsCursor;
+    renderGrantRequests();
+  } finally {
+    state.grantRequestsBusy = false;
+    more.disabled = false;
+  }
 }
 
 byId("grant-request-filters").addEventListener("submit", (event) => {
   event.preventDefault();
+  resetGrantRequestsPaging();
   loadGrantRequests().catch((error) => showMessage(error.message, true));
 });
-byId("reload-grant-requests").addEventListener("click", () => loadGrantRequests().catch((error) => showMessage(error.message, true)));
+byId("grant-request-filters").elements.status.addEventListener("change", resetGrantRequestsPaging);
+byId("reload-grant-requests").addEventListener("click", () => { resetGrantRequestsPaging(); loadGrantRequests().catch((error) => showMessage(error.message, true)); });
+byId("grant-requests-more").addEventListener("click", () => loadGrantRequests({ append: true }).catch((error) => showMessage(error.message, true)));
+
+// Zmiana filtra statusu kasuje kursor i przycisk; stary kursor nie pasuje do nowego filtra.
+function resetGrantRequestsPaging() {
+  state.grantRequestsCursor = null;
+  state.grantRequestsCursorStatus = null;
+  byId("grant-requests-more").hidden = true;
+}
 
 // --- Przydziały ---------------------------------------------------------------
 
@@ -600,6 +640,8 @@ function wirePendingRoleWarning(formId, warningId) {
 wirePendingRoleWarning("grant-form", "grant-pending-warning");
 wirePendingRoleWarning("invitation-form", "invitation-pending-warning");
 
+byId("user-filters").addEventListener("input", renderUsers);
+byId("user-filters").addEventListener("submit", (event) => event.preventDefault());
 byId("grant-filters").addEventListener("submit", (event) => {
   event.preventDefault();
   loadGrants().catch((error) => showMessage(error.message, true));
@@ -760,16 +802,17 @@ async function loadCoverage() {
   const tbody = byId("coverage-body");
   if (!schoolYearId) {
     byId("coverage-summary").textContent = "Brak lat szkolnych.";
-    return emptyRow(tbody, 6, "Brak danych.");
+    return emptyRow(tbody, 7, "Brak danych.");
   }
   const result = await api(`/api/admin/class-coverage?schoolYearId=${encodeURIComponent(schoolYearId)}`);
   byId("coverage-summary").textContent = `${formatSchoolYear(yearLabel(schoolYearId))}: ${coverageSummary(result.classes)}`;
-  if (!result.classes.length) return emptyRow(tbody, 6, "Rok nie ma klas.");
+  if (!result.classes.length) return emptyRow(tbody, 7, "Rok nie ma klas.");
   tbody.replaceChildren(...result.classes.map((row) => {
     const tr = document.createElement("tr");
     const { key, label } = coverageState(row);
     tr.append(cell(row.name), statusCell(key, label));
-    tr.append(cell(String(row.activeRepresentativeCount), "num"), cell(String(row.pendingInvitationCount), "num"));
+    tr.append(cell(String(row.activeRepresentativeCount), "num"), cell(coverageActivation(row, result.representativeMfaRequired === true)));
+    tr.append(cell(String(row.pendingInvitationCount), "num"));
     tr.append(cell(row.nextInvitationExpiresAt ? formatDateTime(row.nextInvitationExpiresAt) : "—"));
     tr.append(cell(formatDateOrTimestamp(row.lastRepresentativeLoginOn, "Europe/Brussels") ?? "—"));
     return tr;
@@ -1442,6 +1485,143 @@ for (const [id, key] of [["dr-filter-status", "status"], ["dr-filter-kind", "kin
   });
 }
 
+// --- Anonimizacja (#91; POST /api/admin/anonymizations, wyłącznie admin z MFA) ---
+// Podgląd (dryRun) pokazuje tylko liczniki. Wykonanie zatwierdza dokładnie ten plan
+// (confirm = id gospodarstwa, expectedPlanSha256 z podglądu); API nie używa Idempotency-Key,
+// bo powtórzenie jest idempotentne po stronie serwera (`replayed`). Historia pochodzi z
+// GET /api/admin/anonymizations (kursor, tylko identyfikatory i liczniki). Nic nie jest zapisywane w przeglądarce.
+
+const anon = { preview: null, request: null, busy: false, runs: [], cursor: null };
+
+function clearAnonPreview() {
+  anon.preview = null;
+  anon.request = null;
+  byId("anon-plan").hidden = true;
+  byId("anon-plan-body").replaceChildren();
+}
+
+function setAnonBusy(busy) {
+  anon.busy = busy;
+  byId("anon-preview").disabled = busy;
+  byId("anon-execute").disabled = busy || !canExecute(anon.preview);
+}
+
+function renderAnonPlan() {
+  const preview = anon.preview;
+  byId("anon-plan").hidden = !preview;
+  if (!preview) return;
+  byId("anon-plan-meta").textContent = `${previewSummary(preview)} Gospodarstwo ${preview.householdId}. Powód: ${REASON_LABELS[preview.reasonCode] ?? preview.reasonCode}.`;
+  const rows = planRows(preview.counts);
+  const tbody = byId("anon-plan-body");
+  if (!rows.length) emptyRow(tbody, 2, "Brak pozycji do zmiany.");
+  else tbody.replaceChildren(...rows.map((row) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(row.label), cell(String(row.count), "num"));
+    return tr;
+  }));
+  byId("anon-retained").textContent = retainedNote(preview.retained);
+  const execute = byId("anon-execute");
+  execute.disabled = anon.busy || !canExecute(preview);
+  execute.title = executeBlocker(preview);
+}
+
+function renderAnonHistory() {
+  const rows = historyRows(anon.runs);
+  byId("anon-history-summary").textContent = historySummary(rows.length, Boolean(anon.cursor));
+  const tbody = byId("anon-history-body");
+  if (!rows.length) return emptyRow(tbody, 7, "Brak przebiegów.");
+  tbody.replaceChildren(...rows.map((row) => {
+    const tr = document.createElement("tr");
+    const run = cell(row.id ? shortId(row.id) : "—");
+    if (row.id) run.title = row.id;
+    const household = cell(row.householdId ? shortId(row.householdId) : "—");
+    if (row.householdId) household.title = row.householdId;
+    const digest = cell(row.planSha256 ? `${row.planSha256.slice(0, 12)}…` : "—");
+    if (row.planSha256) digest.title = row.planSha256;
+    const actor = cell(accountName(row.actorId, state.users));
+    if (row.actorId) actor.title = row.actorId;
+    tr.append(cell(formatDateTime(row.occurredAt)), run, household,
+      cell(REASON_LABELS[row.reasonCode] ?? row.reasonCode), cell(row.total === null ? "—" : String(row.total), "num"), digest, actor);
+    return tr;
+  }));
+}
+
+async function loadAnonHistory({ append = false } = {}) {
+  const result = await api(withCursor(HISTORY_PATH, append ? anon.cursor : null));
+  const runs = Array.isArray(result.runs) ? result.runs : [];
+  anon.runs = append ? [...anon.runs, ...runs] : runs;
+  anon.cursor = result.nextCursor ?? null;
+  toggleMore("anon-more", anon.cursor);
+  renderAnonHistory();
+}
+
+function anonHistoryError(error) {
+  byId("anon-history-summary").textContent = error.message;
+  byId("anon-history-body").replaceChildren();
+}
+
+byId("anon-reason").replaceChildren(...Object.entries(REASON_LABELS).map(([value, label]) => new Option(label, value)));
+function syncAnonRequestField() {
+  const needed = byId("anon-reason").value === "data_subject_request";
+  byId("anon-request").disabled = !needed;
+  if (!needed) byId("anon-request").value = "";
+}
+syncAnonRequestField();
+byId("anon-form").addEventListener("input", () => { clearAnonPreview(); byId("anon-error").textContent = ""; });
+byId("anon-reason").addEventListener("change", syncAnonRequestField);
+
+byId("anon-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (anon.busy) return;
+  const errorBox = byId("anon-error");
+  errorBox.textContent = "";
+  let body;
+  try {
+    body = previewBody(Object.fromEntries(new FormData(event.currentTarget)));
+  } catch (error) {
+    errorBox.textContent = error.message;
+    return;
+  }
+  clearAnonPreview();
+  setAnonBusy(true);
+  try {
+    const result = await withStepUp(() => api("/api/admin/anonymizations", { method: "POST", body }));
+    anon.preview = result;
+    anon.request = body;
+    byId("anon-summary").textContent = resultMessage(result);
+    renderAnonPlan();
+    await loadAnonHistory().catch(anonHistoryError);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    setAnonBusy(false);
+  }
+});
+
+byId("anon-execute").addEventListener("click", async () => {
+  if (anon.busy || !canExecute(anon.preview)) return;
+  const preview = anon.preview;
+  const confirmed = await promptAction(executeConfirmation(preview));
+  if (confirmed === null || anon.busy) return;
+  const errorBox = byId("anon-error");
+  errorBox.textContent = "";
+  setAnonBusy(true); // podwójne kliknięcie: jeden przebieg naraz (serwer też serializuje i zwróci `replayed`)
+  try {
+    const result = await withStepUp(() => api("/api/admin/anonymizations", { method: "POST", body: executeBody(preview, anon.request ?? {}) }));
+    clearAnonPreview(); // skrót planu jest zużyty; kolejny przebieg wymaga nowego podglądu
+    byId("anon-summary").textContent = resultMessage(result);
+    showMessage(resultMessage(result));
+    await Promise.all([loadAnonHistory().catch(anonHistoryError), loadAudit()]);
+  } catch (error) {
+    errorBox.textContent = error.message;
+  } finally {
+    setAnonBusy(false);
+  }
+});
+
+byId("anon-more").addEventListener("click", () => loadAnonHistory({ append: true }).catch(anonHistoryError));
+byId("reload-anon").addEventListener("click", () => loadAnonHistory().catch(anonHistoryError));
+
 // --- Start ----------------------------------------------------------------------
 
 async function start() {
@@ -1455,6 +1635,7 @@ async function start() {
     byId("batch-form").elements.schoolYearId.value = defaultYearId();
     await Promise.all([loadGrantRequests(), loadGrants(), loadInvitations(), loadAudit(), loadCoverage()]);
     await loadDataRequests().catch((error) => { byId("dr-message").textContent = error.message; byId("dr-summary").textContent = ""; });
+    await loadAnonHistory().catch(anonHistoryError);
   } catch (error) {
     showMessage(error.message, true);
   }

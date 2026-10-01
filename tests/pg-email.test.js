@@ -10,7 +10,7 @@ import {
   accountDay, campaignDailyCap, recordOtherSends, remainingQuota, runEmailBatch, ResultNotRecordedError,
 } from '../src/email/worker.js';
 import { proposeResolutions } from '../src/email/reconcile.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 // Pułapka na sieć (#214) jest teraz instalowana globalnie przez
 // tests/helpers/network-guard.js (importowany przez helpers/pg.js), więc
@@ -37,6 +37,7 @@ function fakeTransport({ fail } = {}) {
 
 async function setup(extraEnv = {}) {
   const db = await createTestDb();
+  await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const treasurer = await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
   const board = await seedUserSession(db, { userId: 'u-bd', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });
@@ -303,7 +304,7 @@ test('no send before approval; author and snapshot builder cannot self-approve; 
     assert.equal(again.status, 200, 'double click on approve is idempotent');
 
     // Baza też pilnuje zasady czterech oczu.
-    await assert.rejects(t.db.query("UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL WHERE id = $1", [campaign.id]).then(() =>
+    await assert.rejects(t.db.query("UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL, privacy_notice_id = NULL WHERE id = $1", [campaign.id]).then(() =>
       t.db.query("UPDATE email_campaigns SET status = 'approved', approved_by = created_by, approved_at = now(), approved_content_hash = content_hash, approved_recipients_hash = recipients_hash WHERE id = $1", [campaign.id])), /four_eyes/);
   } finally { await t.close(); }
 });

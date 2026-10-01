@@ -1732,3 +1732,36 @@ test('a line payment is refused for representatives, auditors, missing MFA and a
     await db.close();
   }
 });
+
+test('correcting a line payment: blocked while the match is active, after revocation the corrected net no longer fits the line (#115)', async () => {
+  const { db, cookies, call } = await setup();
+  try {
+    await seedEnrolledHousehold(db, 'h-1', [YEAR]);
+    const { id, lineIds } = await draftWithLines(call, cookies, [2500]);
+    const created = await (await linePaymentCall(call, cookies.treasurer, id, lineIds[0], { householdId: 'h-1' })).json();
+    const correct = (amountCents) => call(`/api/payments/${created.payment.id}/corrections`, {
+      method: 'POST', cookie: cookies.treasurer, headers: { 'Idempotency-Key': key('corr') },
+      body: { amountCents, reason: 'Korekta syntetyczna wpłaty z pozycji' },
+    });
+    // Korekta nie zaciera powiązania: dopóki jest aktywne, serwer odmawia.
+    const blocked = await correct(1000);
+    assert.equal(blocked.status, 409);
+    assert.equal((await blocked.json()).error, 'active_bank_match');
+
+    const revoked = await call(`/api/reconciliations/${id}/matches/${created.match.id}/revocation`, {
+      method: 'POST', cookie: cookies.board, body: { reason: 'Przed korektą kwoty' },
+    });
+    assert.equal(revoked.status, 200);
+    assert.equal((await correct(1000)).status, 201);
+    // Wpłata i korekta to osobne zapisy; oryginał nie został zmieniony.
+    const stored = await db.query('SELECT amount_cents FROM payment_entries WHERE id = $1', [created.payment.id]);
+    assert.equal(Number(stored.rows[0].amount_cents), 2500);
+    // Pozycja 25 EUR nie zgadza się już z kwotą netto 15 EUR.
+    const rematch = await matchCall(call, cookies.treasurer, id, { statementLineId: lineIds[0], paymentEntryId: created.payment.id });
+    assert.equal(rematch.status, 409);
+    assert.equal((await db.query(
+      'SELECT count(*)::int AS n FROM bank_reconciliation_matches WHERE reconciliation_id = $1 AND revoked_at IS NULL', [id])).rows[0].n, 0);
+  } finally {
+    await db.close();
+  }
+});

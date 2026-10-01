@@ -29,9 +29,9 @@ import { actorContext, authorizedClassIds, isAuthorizedForOwnClass, isAuthorized
 import { declaredType, detectType, readLimited, tryAcquireUploadSlot, validateStructure } from '../documents.js';
 import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
-import { gateFreeText, piiAuditMetadata } from './pii-gate.js';
+import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { createJsonReader, isUniqueError } from './input.js';
-import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf } from './list-cursor.js';
+import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from './list-cursor.js';
 
 export const NEWS_POLICY = Object.freeze({
   draftSchoolWide: Object.freeze(['admin', 'board']),
@@ -469,6 +469,15 @@ export async function createDraft(db, actor, input) {
   const id = crypto.randomUUID();
   try {
     return await db.transaction(async (tx) => {
+      // #152: rewizje wpisu są niezmienne (news_post_revisions) — tytuł i treść
+      // sprawdzamy po stronie serwera przed zapisem.
+      const gate = gateFreeText([
+        ['news_post_revisions.title', content.title],
+        ['news_post_revisions.body', content.body],
+      ], {
+        confirm: input.confirmPersonalData === true, fail: piiFail,
+        knownNames: await loadKnownNames(tx, scope.school_year_id),
+      });
       const { rows } = await tx.query(
         `INSERT INTO news_posts (id, school_year_id, class_id, title, body, photo_ids,
            created_by, updated_by, idempotency_key)
@@ -477,7 +486,7 @@ export async function createDraft(db, actor, input) {
           actor.userId, idempotencyKey],
       );
       await audit(tx, actor.userId, 'news_post.created', 'news_post', id,
-        { schoolYearId: scope.school_year_id, revision: 1, status: 'draft', photoCount: content.photoIds.length });
+        { schoolYearId: scope.school_year_id, revision: 1, status: 'draft', photoCount: content.photoIds.length, ...piiAuditMetadata(gate) });
       return { post: internalPost(rows[0]), replayed: false };
     });
   } catch (error) {
@@ -508,13 +517,21 @@ export async function updateDraft(db, actor, input) {
       throw new NewsError('revision_conflict', 409);
     }
     if (sameContent(row, content)) return { post: internalPost(row), replayed: true };
+    // #152: sprawdzamy tylko pola zmienione w tej rewizji (bez ponownego pytania o niezmieniony tekst).
+    const gate = gateFreeText([
+      ['news_post_revisions.title', content.title === row.title ? null : content.title],
+      ['news_post_revisions.body', content.body === row.body ? null : content.body],
+    ], {
+      confirm: input.confirmPersonalData === true, fail: piiFail,
+      knownNames: await loadKnownNames(tx, row.school_year_id),
+    });
     const { rows } = await tx.query(
       `UPDATE news_posts SET title = $2, body = $3, photo_ids = $4::text[], updated_by = $5
         WHERE id = $1 RETURNING ${POST_COLUMNS}`,
       [row.id, content.title, content.body, content.photoIds, actor.userId],
     );
     await audit(tx, actor.userId, 'news_post.revised', 'news_post', row.id,
-      { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft', photoCount: content.photoIds.length });
+      { schoolYearId: row.school_year_id, revision: rows[0].revision_no, status: 'draft', photoCount: content.photoIds.length, ...piiAuditMetadata(gate) });
     return { post: internalPost(rows[0]), replayed: false };
   });
 }
@@ -819,6 +836,9 @@ export async function verifyPhoto(db, actor, input) {
     if (row.rights_status === 'verified') return { photo: internalPhoto(row), replayed: true };
     if (row.rights_status === 'revoked') throw new NewsError('photo_revoked', 409);
     if (row.uploaded_by === actor.userId) throw new NewsError('four_eyes_required', 409);
+    // #124 (WCAG 1.1.1): zdjęcie sprzed 0071 (ograniczenie NOT VALID) może nie mieć
+    // opisu ani deklaracji decorative — nie weryfikujemy go; poprawka = nowy rekord zdjęcia.
+    if (!row.alt_text && !row.decorative) throw new NewsError('alt_text_required', 422);
     const { rows } = await tx.query(
       `UPDATE news_photos SET rights_status = 'verified', rights_verified_by = $2, rights_verified_at = now()
         WHERE id = $1 RETURNING ${PHOTO_COLUMNS}`,
@@ -1071,13 +1091,21 @@ export async function listPhotos(db, actor, input = {}) {
   if (!canSeePhotos(actor)) throw new NewsError('forbidden', 403);
   const status = input.status ?? null;
   if (status !== null && !['pending', 'verified', 'revoked'].includes(status)) throw new NewsError('invalid_status');
+  // #159: kursor keyset (uploaded_at DESC, id), związany ze statusem; domyślnie 200 jak dawny stały limit.
+  const fail = (code) => { throw new NewsError(code); };
+  const limit = parseListLimit(input.limit ?? null, { defaultLimit: 200, maxLimit: 200 }, fail);
+  const scope = JSON.stringify(['news-photos', status]);
+  const cursor = decodeListCursor(input.cursor ?? null, { kind: 'timestamp', scope }, fail);
+  const values = [status];
+  const after = cursor ? ` AND ${afterTimestampDescSql('uploaded_at', 'id', cursor, values)}` : '';
   const { rows } = await db.query(
-    `SELECT ${PHOTO_COLUMNS} FROM news_photos WHERE ($1::text IS NULL OR rights_status = $1)
-      ORDER BY uploaded_at DESC, id LIMIT 201`,
-    [status],
+    `SELECT ${PHOTO_COLUMNS}, ${cursorTimestampSql('uploaded_at')} AS cursor_ts FROM news_photos
+      WHERE ($1::text IS NULL OR rights_status = $1)${after}
+      ORDER BY uploaded_at DESC, id LIMIT ${limit + 1}`,
+    values,
   );
-  // #159: 201 wierszy = jawny sygnał obcięcia rejestru (pokazujemy 200 najnowszych).
-  return { photos: rows.slice(0, 200).map((r) => internalPhoto(r)), truncated: rows.length > 200 };
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return { photos: page.items.map((r) => internalPhoto(r)), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit };
 }
 
 // ---------- HTTP ----------
@@ -1213,13 +1241,13 @@ export async function handle(request, env, url, json) {
       const data = await readJson(request);
       if (route === 'create') {
         const result = await createDraft(env.db, actor, {
-          ...pick(data, ['schoolYearId', 'classId', 'title', 'body', 'photoIds']), idempotencyKey: idempotencyHeader(request),
+          ...pick(data, ['schoolYearId', 'classId', 'title', 'body', 'photoIds', 'confirmPersonalData']), idempotencyKey: idempotencyHeader(request),
         });
         return json({ post: result.post }, result.replayed ? 200 : 201, { ...noStore, 'Idempotency-Replayed': String(result.replayed) });
       }
       if (route === 'update') {
         const result = await updateDraft(env.db, actor, {
-          ...pick(data, ['revision', 'title', 'body', 'photoIds']), postId: decodeId(item[1], 'invalid_post_id'),
+          ...pick(data, ['revision', 'title', 'body', 'photoIds', 'confirmPersonalData']), postId: decodeId(item[1], 'invalid_post_id'),
         });
         return json({ post: result.post, replayed: result.replayed }, 200, noStore);
       }
@@ -1238,7 +1266,9 @@ export async function handle(request, env, url, json) {
           : action && request.method === 'POST' ? 'action' : null;
     if (!route) return json({ error: 'not_found' }, 404);
     const actor = await loadActor(request, env);
-    if (route === 'list') return json(await listPhotos(env.db, actor, { status: url.searchParams.get('status') }), 200, noStore);
+    if (route === 'list') return json(await listPhotos(env.db, actor, {
+      status: url.searchParams.get('status'), limit: url.searchParams.get('limit'), cursor: url.searchParams.get('cursor'),
+    }), 200, noStore);
     if (route === 'get') return json(await getPhoto(env.db, actor, { photoId: decodeId(item[1], 'invalid_photo_id') }), 200, noStore);
     if (route === 'action' && action[2] === 'file') {
       // Bajty surowe, nie JSON — czytane osobno, PRZED jakąkolwiek próbą

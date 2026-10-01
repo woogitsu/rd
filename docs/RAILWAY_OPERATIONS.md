@@ -820,7 +820,12 @@ Gotowe narzędzia (kod w repozytorium, testy na atrapie magazynu):
   `_SECRET_ACCESS_KEY`, opcjonalnie `_URL_STYLE`; poświadczenia celu tylko do
   zapisu, bez `DeleteObject`, jeśli dostawca na to pozwala). Nigdy nie usuwa w
   celu. Liczy SHA-256 źródła i kopii względem `documents.sha256` / `news_photo_files.sha256`; niezgodny
-  skrót lub brak obiektu w źródle daje kod wyjścia 1. Odmawia pracy w
+  skrót lub brak obiektu w źródle daje kod wyjścia 1. Z opcją `--verify-target`
+  (zalecane raz w tygodniu; bez nowych zmiennych środowiskowych) pobiera też
+  już istniejące kopie i sprawdza ich SHA-256; uszkodzona lub niezgodna kopia
+  (`targetHashMismatches`) jest tylko zgłaszana — nie jest nadpisywana ani
+  usuwana — i daje kod wyjścia 1. Bez opcji istniejący obiekt jest uznawany po
+  samej obecności klucza. Odmawia pracy w
   `APP_ENV=production` (lub nieznanym) bez `--allow-production`. Raport (liczby,
   bez nazw plików; sumy oraz rozbicie `bySet` na dokumenty i zdjęcia, w tym
   obiekty osierocone w źródle) trafia na stdout i do `backup_runs`
@@ -868,9 +873,8 @@ Procedura po decyzji (nie wykonana):
 6. Ręczny `rclone sync`/`aws s3 sync` zostaje wyłącznie wariantem awaryjnym; nie
    stosować `rclone copy` (nie `sync`) i nigdy opcji usuwania w celu.
 
-Zakres obecnej kopii to prefiks `docs/` (dokumenty z `documents`). Zdjęcia
-aktualności (`photos/`, `news_photos`) **nie są jeszcze objęte** ani kopią, ani
-weryfikacją — osobny follow-up po decyzji o publikacji zdjęć.
+Zakres kopii i weryfikacji: prefiksy `docs/` (dokumenty) i `photos/` (pliki zdjęć
+galerii). Kopia nie zastępuje sprawdzenia praw i zgód na publikację zdjęć.
 
 | Data | Kto | Liczba obiektów źródło/kopia | Zgodność z `documents` | Wynik / uwagi |
 |---|---|---|---|---|
@@ -1088,7 +1092,14 @@ bez potrzeby dostępu do Railway:
     gałęzi testowej z celowo podatną wersją pakietu, że job `audit` oblewa
     (bez scalania); (5) po #42 usunąć `wrangler`;
   - akcje GitHub w `ci.yml` przypięte do pełnego SHA (komentarz z numerem
-    wersji obok); Dependabot aktualizuje SHA automatycznie.
+    wersji obok); Dependabot aktualizuje SHA automatycznie. Test
+    `tests/ci-supply-chain.test.js` obejmuje każdy plik w
+    `.github/workflows/` (nie tylko `ci.yml`): wymaga 40-znakowego SHA i
+    komentarza `# vX.Y.Z`, jednego SHA na akcję w całym `ci.yml` oraz
+    tygodniowego (npm, deweloperskie grupowane) i miesięcznego
+    (github-actions) harmonogramu Dependabota bez automatycznego scalania.
+    Akcje lokalne (`./...`) są pomijane. Nowego SHA nie wpisuje się „z
+    pamięci”: bierze się go z commita tagu w repozytorium akcji.
   - po zamknięciu starej ścieżki Worker/D1 (#42): usunięcie `wrangler` z
     `devDependencies` zmniejszy powierzchnię audytu.
 

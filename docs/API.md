@@ -23,7 +23,11 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/email/suppressions?schoolYearId=` (#543) | `created_at` malejąco, `email_hash` | 500 / 500 | rok szkolny |
 | `GET /api/meetings?schoolYearId=` | `scheduled_at` malejąco, `id` | 500 / 500 | rok szkolny |
 | `GET /api/admin/guardian-update-requests` | `created_at`, `id` rosnąco | 200 / 200 | `status` |
+| `GET /api/admin/account-requests` | `created_at` malejąco, `id` | 200 / 200 | `status` |
+| `GET /api/admin/grant-requests` | `created_at` malejąco, `id` | 200 / 200 | `status` |
 | `GET /api/admin/data-requests` (#543) | `received_on`, `created_at`, `id` rosnąco | 500 / 500 | `status`, `kind` |
+| `GET /api/meetings/public-notices?schoolYearId=` (publiczna) | `scheduled_at`, `id` rosnąco | 200 / 200 | rok szkolny |
+| `GET /api/news-photos` | `uploaded_at` malejąco, `id` | 200 / 200 | `status` |
 
 Uprawnienia tras nie zmieniły się: kursor niczego nie odblokowuje, a każde
 żądanie przechodzi to samo sprawdzenie sesji, roli, MFA i zakresu po stronie
@@ -71,6 +75,15 @@ Stronicowanie jest keyset, nie `OFFSET`:
 `GET /api/admin/audit` przy każdym odczycie zapisuje zdarzenie `audit.viewed`
 (bez parametrów zapytania) — dotyczy to także kolejnych stron.
 
+`GET /api/audit/entity/{entityType}/{entityId}` (#181; `payment_entry`,
+`ledger_entry`, `reconciliation`, `email_campaign`) to historia jednego obiektu
+dla zarządu i skarbnika z przydziałem ogólnoszkolnym na rok obiektu (admin ma
+`/api/admin/audit/entity/...`). Obiekt nieistniejący albo z roku bez przydziału
+daje 404 `not_found`; Komisja Rewizyjna, dyrekcja i przedstawiciel klasy — 403
+(założenie zachowawcze do D-08/D-09). Zwraca tylko zdarzenia domeny obiektu
+(`finance` albo `email`), w kolejności czasu, w tym samym kształcie co trasa
+admina, i sama zapisuje `audit.viewed`.
+
 Każde zdarzenie w odpowiedzi (`GET /api/admin/audit` i `.../entity/...`) ma
 pola `actorKind` (`user`, `system`, `anonymous`) i `source` (#181). Dla
 zdarzeń bez aktora (`actorId: null`) `source` wskazuje pochodzenie: `email_worker`,
@@ -115,10 +128,6 @@ niepełna; panel wtedy pokazuje komunikat o obcięciu:
 | Trasa | Pokazane | Pole |
 | --- | --- | --- |
 | `GET /api/meetings/shared-minutes` | 200 najnowszych | `truncated` |
-| `GET /api/meetings/public-notices` | 200 najbliższych | `truncated` |
-| `GET /api/news-photos` | 200 najnowszych | `truncated` |
-| `GET /api/admin/grant-requests` | 200 najnowszych | `truncated` |
-| `GET /api/admin/account-requests` | 200 najnowszych | `truncated` |
 
 Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCursor`.
 

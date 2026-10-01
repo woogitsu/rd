@@ -55,9 +55,15 @@ async function allSourceKeys(sourceStorage, prefix) {
 // kolumny `sha256` i raportuje osierocone/brakujące obiekty. Bez usuwania po
 // żadnej stronie. Pola najwyższego poziomu to sumy; `bySet` rozbija je na
 // dokumenty i zdjęcia. `startAfterKey` dotyczy tylko `docs/` (wznowienie).
-export async function runStorageBackup({ db, sourceStorage, targetStorage, startAfterKey = null }) {
+// `verifyTarget: true` dodatkowo pobiera już istniejące kopie i porównuje ich
+// SHA-256 z kolumną `sha256` (pełna kontrola integralności kopii, np. raz w
+// tygodniu); niezgodna kopia jest tylko zgłaszana jako `targetHashMismatches`
+// (nie jest nadpisywana ani usuwana). Bez tej opcji istniejący obiekt liczy się
+// jako `alreadyVerified` po samej obecności klucza (obiekty `docs/` i `photos/`
+// są niezmienne: klucz zawiera identyfikator).
+export async function runStorageBackup({ db, sourceStorage, targetStorage, startAfterKey = null, verifyTarget = false }) {
   const empty = () => ({
-    copied: 0, alreadyVerified: 0, missingInSource: 0, hashMismatches: 0, orphanedInSource: 0,
+    copied: 0, alreadyVerified: 0, missingInSource: 0, hashMismatches: 0, orphanedInSource: 0, targetHashMismatches: 0,
   });
   const bySet = {};
   let cursor = startAfterKey;
@@ -76,7 +82,19 @@ export async function runStorageBackup({ db, sourceStorage, targetStorage, start
       for (const row of page) {
         seenKeys.add(row.object_key);
         setCursor = row.object_key;
-        if (await targetStorage.headObject(row.object_key)) { report.alreadyVerified += 1; continue; }
+        if (await targetStorage.headObject(row.object_key)) {
+          if (verifyTarget) {
+            let existing = null;
+            try {
+              existing = await targetStorage.getObject(row.object_key);
+            } catch (error) {
+              if (error?.code !== 'storage_object_not_found') throw error;
+            }
+            if (!existing || sha256Hex(existing.body) !== row.sha256) { report.targetHashMismatches += 1; continue; }
+          }
+          report.alreadyVerified += 1;
+          continue;
+        }
 
         let source;
         try {

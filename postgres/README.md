@@ -1402,6 +1402,69 @@ zmieniany. `body` to wolny tekst za bramką danych osobowych; w `audit_events`
 trafiają wyłącznie identyfikatory. Tabela jest w eksporcie rocznym.
 Wycofanie: DROP TABLE i DROP FUNCTION (na bazie z zapisami tylko po kopii).
 
+`0177_email_quota_other_sends.sql` (#84, część: ręczna ewidencja wiadomości
+spoza kolejki) luzuje CHECK `email_send_ledger.message_count` do −10000..10000
+bez zera (wiersz kampanii nadal ma dokładnie 1) i dodaje kolumny opcjonalne
+`actor_id`, `reason_code` (`manual_brevo_panel`, `invitation`, `audit_committee`,
+`other`, `correction`), `idempotency_key` (UNIQUE) i `corrects_id` (FK do
+wpisu korygowanego) oraz CHECK `email_ledger_other_manual`: wpis ręczny ma
+aktora, kod i klucz, a korekta to wyłącznie liczba ujemna z kodem `correction`
+i wskazaniem korygowanego wpisu. Dziennik nadal jest tylko do dopisywania
+(trigger z 0007) — pomyłkę poprawia nowy wpis ujemny, nic nie jest edytowane.
+Skutki dla danych: istniejące wiersze (kampanii i „other” z `recordOtherSends`)
+pozostają ważne bez zmian, nowe kolumny są dla nich NULL; pula nadal liczy
+SUM(message_count), więc korekta zmniejsza zużycie doby. Brak adresów i treści.
+Wycofanie: usunięcie wpisów ujemnych, potem DROP kolumn i przywrócenie CHECK 1..10000.
+
+`0178_processing_restrictions.sql` (#100, RODO art. 18) dodaje tabelę
+`processing_restrictions` (tylko dopisywanie: nałożenie `restrict` i zdjęcie
+`lift` to osobne wiersze z aktorem, czasem serwera i odwołaniem do żądania z
+`data_subject_requests`), widok `processing_restricted_subjects` (podmioty, których
+ostatni wiersz to `restrict`) oraz rozszerza CHECK
+`email_campaign_exclusions_reason_check` o powód `processing_restricted`.
+Skutki dla danych: brak wstecznego wypełnienia (po migracji nikt nie jest
+ograniczony); żadnych treści żądań ani danych kontaktowych; istniejące
+wykluczenia kampanii bez zmian; wiersz nie jest usuwany ani zmieniany
+(trigger, TRUNCATE blokuje `deny_truncate()`), `created_at` stempluje baza.
+Wycofanie: `DROP VIEW processing_restricted_subjects`, `DROP TABLE
+processing_restrictions`, `DROP FUNCTION processing_restrictions_guard()` oraz
+przywrócenie CHECK z 0158 (tylko bez wierszy `processing_restricted`); znika
+ślad ograniczeń, dane rodzin zostają.
+
+`0179_email_campaign_privacy_notice.sql` (issue #145, D-06) dodaje
+`email_campaigns.privacy_notice_id` (FK do `privacy_notices`, nullable, bez
+DEFAULT) oraz trigger `email_campaigns_privacy_notice_guard`: kolumnę ustawia
+wyłącznie przejście `draft → approved` (wyłącznie wersja o statusie
+`published`), czyści wyłącznie `approved → draft`, w innych stanach jest
+niezmienna; CHECK — szkic nie nosi wersji. Skutki dla danych: istniejące
+kampanie dostają NULL, nic nie jest uzupełniane wstecznie. Kampania zatwierdzona
+przed migracją (`approved`/`sending`/`paused`) nie ma zapisanej wersji —
+`queue`/`resume` odmawiają `409 privacy_notice_missing`, a worker ją pomija
+(wiersze zostają `queued`); trzeba ją zatwierdzić ponownie albo anulować i
+utworzyć nową. Kampanie `done`/`cancelled` bez zmian. ADD COLUMN bez DEFAULT nie
+przepisuje tabeli. Wycofanie: `DROP TRIGGER`, `DROP FUNCTION`, `DROP COLUMN`.
+Opis: [`docs/PRIVACY_NOTICE.md`](../docs/PRIVACY_NOTICE.md).
+
+`0180_net_views_lateral.sql` (#159, test planów zapytań) przepisuje widoki
+`ledger_entry_net` i `payment_entry_net` z podzapytania `GROUP BY` na
+`LEFT JOIN LATERAL`, żeby filtr po roku lub gospodarstwie (także w
+`household_payment_totals`, `ledger_balance_at`, `ledger_non_bank_net_at`)
+korzystał z indeksów tabel korekt i zwrotów zamiast pełnego skanu. Skutki dla
+danych: wyłącznie `CREATE OR REPLACE VIEW` — kolumny, ich kolejność i typy bez
+zmian (`p.*` zastąpione jawną listą), tabele i dane nietknięte. Wycofanie:
+przywrócenie definicji widoków z 0040 i 0038.
+
+`0181_data_subject_requests_idempotency.sql` (#100, idempotencja rejestracji
+żądania osoby) dodaje opcjonalną kolumnę `data_subject_requests.idempotency_key`
+(CHECK formatu jak w pozostałych trasach) i unikalny indeks częściowy
+`WHERE idempotency_key IS NOT NULL`. `POST /api/admin/data-requests` z tym samym
+`Idempotency-Key` i ładunkiem zwraca zapisany wiersz (200,
+`Idempotency-Replayed: true`); inny ładunek → 409 `idempotency_conflict`.
+Skutki dla danych: istniejące wiersze dostają NULL i nie są zmieniane; indeks
+częściowy ich nie obejmuje. Klucz to losowy token klienta, bez danych osobowych.
+Wycofanie: `DROP INDEX data_subject_requests_idempotency_key_key`, `ALTER TABLE
+data_subject_requests DROP COLUMN idempotency_key`.
+
 `0182_identity_changes.sql` (#100, art. 16 RODO) dodaje tabelę
 `identity_changes`: historię sprostowań imienia i nazwiska ucznia lub opiekuna
 (`subject_type`, poprzednie i nowe imię/nazwisko, powód 3–500 znaków, `source`

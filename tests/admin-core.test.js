@@ -12,7 +12,7 @@ import { ENTITY_TYPE_LABELS, REASON_LABELS, accountName, entityTypeLabel, reason
 import { shortId } from '../shared/short-id.js';
 import { AUDIT_ACTIONS } from '../src/pg/routes/admin.js';
 import {
-  GRANT_REQUEST_STATUS_LABELS, grantRequestDialog, grantRequestRow, grantRequestsPath, rejectRequestPayload, requestAge,
+  GRANT_REQUEST_STATUS_LABELS, grantRequestDialog, grantRequestRow, grantRequestsPath, canLoadMoreRequests, mergeRequestPages, rejectRequestPayload, requestAge,
 } from '../admin/core.js';
 
 const NOW = new Date('2026-09-27T10:00:00Z');
@@ -392,4 +392,38 @@ test('#146/0159: ciało odrzucenia — pusty powód albo same spacje = brak pola
   assert.deepEqual(rejectRequestPayload('   '), {});
   assert.deepEqual(rejectRequestPayload(undefined), {});
   assert.deepEqual(rejectRequestPayload('  Brak uchwały  '), { reason: 'Brak uchwały' });
+});
+
+test('#128: filterUsers szuka po e-mailu i nazwie bez diakrytyków oraz filtruje po stanie konta', async () => {
+  const { filterUsers, usersSummary } = await import('../admin/core.js');
+  const users = [
+    { id: 'u1', email: 'skarbnik@example.test', displayName: 'Łukasz Żółć', disabledAt: null },
+    { id: 'u2', email: 'jan@example.test', displayName: 'Jan Kowalski', disabledAt: '2026-09-01T00:00:00Z' },
+  ];
+  assert.deepEqual(filterUsers(users, { q: 'lukasz zolc' }).map((u) => u.id), ['u1']);
+  assert.deepEqual(filterUsers(users, { q: 'KOWAL' }).map((u) => u.id), ['u2']);
+  assert.deepEqual(filterUsers(users, { state: 'disabled' }).map((u) => u.id), ['u2']);
+  assert.deepEqual(filterUsers(users, { state: 'active', q: 'jan' }), []);
+  assert.equal(filterUsers(users, {}).length, 2);
+  assert.match(usersSummary(1, 2, true, true), /^1 z 2 wczytanych kont\..*tylko na wczytanych/);
+  assert.match(usersSummary(2, 2, false, false), /^2 kont\./);
+});
+
+test('#159: grantRequestsPath dokłada kursor (zakodowany) i nie przyjmuje wstrzykniętych parametrów', () => {
+  assert.equal(grantRequestsPath('pending', 'abc'), '/api/admin/grant-requests?status=pending&cursor=abc');
+  assert.equal(grantRequestsPath('all', 'a&b=c'), '/api/admin/grant-requests?status=all&cursor=a%26b%3Dc');
+  assert.equal(grantRequestsPath('approved', null), '/api/admin/grant-requests?status=approved');
+});
+
+test('#159: canLoadMoreRequests blokuje podwójne kliknięcie, brak kursora i zmianę filtra', () => {
+  const base = { cursor: 'c1', status: 'pending', cursorStatus: 'pending', busy: false };
+  assert.equal(canLoadMoreRequests(base), true);
+  assert.equal(canLoadMoreRequests({ ...base, busy: true }), false);
+  assert.equal(canLoadMoreRequests({ ...base, cursor: null }), false);
+  assert.equal(canLoadMoreRequests({ ...base, status: 'all' }), false);
+});
+
+test('#159: mergeRequestPages dopisuje stronę bez duplikatów i zachowuje kolejność', () => {
+  const merged = mergeRequestPages([{ id: 'a' }, { id: 'b' }], [{ id: 'b' }, { id: 'c' }]);
+  assert.deepEqual(merged.map((item) => item.id), ['a', 'b', 'c']);
 });

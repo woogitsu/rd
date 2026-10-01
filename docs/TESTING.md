@@ -30,6 +30,7 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 | wplaty | payments, payment-references, payment-instructions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (wpłata nie ma adresu; powód korekty z adresem: #152) | ✓ |
 | ksiega | ledger, ledger-cash, ledger-budget, ledger-cost-centers, financial-reports | ✓ | n/d (księga nie zna rodzin) | n/d (księga nie zna rodzin) | ~ (powiązana wpłata księgowana raz, bez wpłat częściowych rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | kontrola KR | audit-reviews | ✓ | n/d (moduł nie zna opiekunów) | n/d (moduł nie zna rodzin) | n/d (brak kwot) | ✓ | ✓ | ✓ | ✓ |
+| historia | audit-history | ✓ | ✓ | n/d (odczyt historii jednego obiektu, nie listy rodzin) | n/d (odczyt dziennika, bez kwot w odpowiedzi) | ✓ | n/d (trasa tylko do odczytu) | n/d (brak adresów w odpowiedzi) | ✓ |
 | uzgodnienia | reconciliation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | zamkniecie | year-close | ✓ | n/d (bilans księgi, nie rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | n/d (bilans księgi, nie wpłaty rodzin) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | email | email | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -94,6 +95,9 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | kontrola KR | Ponowienie | tests/pg-audit-reviews.test.js | podwójne kliknięcie odpowiedzi i zamknięcia: jeden zapis każdego rodzaju |
 | kontrola KR | Błędny e-mail | tests/pg-audit-reviews.test.js | bramka danych osobowych: e-mail odrzucony, telefon wymaga potwierdzenia; audyt bez treści |
 | kontrola KR | Korekty | tests/pg-audit-reviews.test.js | wątek: pytanie KR → odpowiedź skarbnika → zamknięcie; wniosek końcowy; lista i raport KR |
+| historia | 2 opiekunów | tests/pg-audit-history-board.test.js | historia wpłaty nieprzypisanej: przypisanie do gospodarstwa dopisuje zdarzenie bez opiekunów |
+| historia | Podw. kliknięcie | tests/pg-audit-history-board.test.js | podwójne kliknięcie (ten sam klucz) zostawia w historii jedno zdarzenie utworzenia |
+| historia | Korekty | tests/pg-audit-history-board.test.js | skarbnik widzi historię wpłaty: utworzenie, korekty po kolei |
 | uzgodnienia | 2 opiekunów | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Rodzeństwo | tests/pg-reconciliation.test.js | two guardians of one child and one sibling transfer |
 | uzgodnienia | Wpł. częściowe | tests/pg-reconciliation.test.js | a correction after matching blocks confirmation with a list of inconsistent matches |
@@ -144,7 +148,10 @@ Każda reguła ma kontrolę pozytywną (kod, który reguła musi wykryć):
 - Obejście triggerów (`ALTER TABLE … DISABLE TRIGGER`, `SET
   session_replication_role = replica`) jest dozwolone tylko w plikach z
   `TRIGGER_BYPASS_ALLOWED`, każdy z uzasadnieniem. Do cofania czasu służy
-  wstrzykiwany zegar (`now`), nie wyłączony strażnik. Wpis `pg-bootstrap-admin`
+  wstrzykiwany zegar (`now`), nie wyłączony strażnik.
+  Lista ma sufit `TRIGGER_BYPASS_LIMITS` (liczba plików i linii z obejściem,
+  dziś 35 i 50): meta-test wymaga równości, więc nowe obejście oblewa test, a
+  usunięcie jednego wymaga obniżenia limitu — lista może tylko maleć (#214). Wpis `pg-bootstrap-admin`
   czeka na taki zegar w kodzie aplikacji; `pg-guardian-updates` używa już
   `env.now` przy wygasaniu linków opiekunów (#140).
 - Negatywna asercja na krótkim podciągu cyfr (`!meta.includes('470')`) jest
@@ -270,6 +277,17 @@ testy z barierą: drugie ponowienie i „Zaproś” czekają na blokadę doradcz
 jeden ważny token. Kontrola pozytywna: bez blokady adresu drugie ponowienie czeka
 dopiero na wiersz (warunkowy `UPDATE`) — mutant `invitation-reissue`.
 
+`tests/pg-real-payment-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
+kolejnych ścieżek finansowych — dwa zwroty wpłaty 70 + 70 € przy 100 €, korekta i zwrot
+tej samej wpłaty, dwa ponowne przypisania do tego samego gospodarstwa, dwie części wpłaty
+70 + 70 €, cofnięcie części kontra nowa część na całą kwotę, dwa cofnięcia tej samej
+części i dwa storna tego samego przeniesienia kasa ↔ rachunek. Każdy test sprawdza w
+`pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z kodu trasy. Mutanty:
+`payments-refund`, `payments-reassign`, `payments-allocation`,
+`payments-allocation-reversal`, `ledger-transfer-reversal`. Test nie ujawnił błędu
+współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria,
+zastąpienie wpisu), `ledger-budget.js`, bilans otwarcia i `ledger-cost-centers.js`.
+
 ### Kontrola mutacyjna (`npm run test:pg-mutations`)
 
 `scripts/check-lock-mutations.js` usuwa po kolei każdą blokadę z listy `MUTANTS`
@@ -278,7 +296,7 @@ tymczasowym i uruchamia wskazany plik testów na prawdziwym PostgreSQL; mutant m
 czerwony test. Najpierw przebieg bez mutacji (musi być zielony). Kod repozytorium nie
 jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`.
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
-Obecnie lista obejmuje: korektę i przypisanie wpłaty, korektę wpisu księgi i ujęcie
+Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisanie, części wpłaty i ich cofnięcie, storno przeniesienia kasa ↔ rachunek, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
 `rd:role_grants`, blokadę adresu zaproszenia („Zaproś” i „Wyślij ponownie”), `rd_import_commit`, `rd_year_close`
 oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeeting`, `changeStatus` (dokumenty)
@@ -286,7 +304,7 @@ i `updateGuardianContact`.
 Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
 zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
 porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
-(zwroty, przeksięgowania, części wpłat, autoryzacje) oraz blokady w triggerach migracji.
+(autoryzacje, zastąpienie wpisu) oraz blokady w triggerach migracji.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
 (reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z

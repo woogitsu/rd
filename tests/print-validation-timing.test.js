@@ -23,7 +23,7 @@ test('renderPreview() ogłasza błędy configError tylko, gdy formularz konfigur
 test('stan startowy configTouched jest false — pierwszy render (na końcu pliku) nie pokazuje błędu', () => {
   assert.match(
     mainJs,
-    /const state = \{\s*\n\s*households: \[\],\s*\n\s*selected: new Set\(\),\s*\n\s*paymentInstructions: null,\s*\n\s*configTouched: false,\s*\n\s*\};/,
+    /const state = \{\s*\n\s*households: \[\],\s*\n\s*selected: new Set\(\),\s*\n\s*paymentInstructions: null,\s*\n(?:\s*\/\/[^\n]*\n)?\s*privacyNotice: null,\s*\n\s*configTouched: false,\s*\n\s*\};/,
   );
   // renderPreview() wywoływane jest raz przy starcie modułu, zanim jakikolwiek
   // event listener mógł ustawić configTouched na true.

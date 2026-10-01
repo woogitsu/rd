@@ -97,9 +97,11 @@ wpisów).
 | `data_request_kind_not_erasable` | Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_exportable` | Eksport danych przysługuje tylko przy żądaniu dostępu albo przenoszenia danych. | Nie — popraw dane żądania. |
 | `data_request_kind_not_rectification` | Sprostowanie można powiązać tylko z żądaniem sprostowania danych. | Nie — popraw dane żądania. |
+| `data_request_kind_not_restrictable` | Ograniczenie przetwarzania wymaga żądania rodzaju ograniczenie albo sprzeciw. | Nie — popraw dane żądania. |
 | `data_request_not_found` | Nie znaleziono żądania. | Nie — popraw dane żądania. |
 | `data_request_status_cannot_go_back` | Nie można cofnąć stanu żądania. | Zależy od kontekstu (patrz moduł trasy). |
 | `data_request_subject_mismatch` | Wskazany opiekun lub uczeń nie należy do gospodarstwa z żądania. Popraw wpis w rejestrze. | Nie — popraw dane żądania. |
+| `data_request_subject_not_restrictable` | Żądanie nie wskazuje gospodarstwa ani opiekuna, więc nie można nałożyć ograniczenia. Popraw wpis w rejestrze. | Nie — popraw dane żądania. |
 | `date_outside_school_year` | Data wpisu jest poza rokiem szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `difference_requires_note` | Różnica wymaga wpisania wyjaśnienia. | Zależy od kontekstu (patrz moduł trasy). |
 | `document_active_content` | Plik odrzucony: zawiera potencjalnie aktywną treść (skrypt, załącznik, szyfrowanie) niedozwoloną w dokumentach Rady. | Zależy od kontekstu (patrz moduł trasy). |
@@ -250,6 +252,9 @@ wpisów).
 | `invalid_plan_sha256` | Podaj skrót planu (planSha256) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
 | `invalid_provider_pause_id` | Niepoprawny identyfikator wstrzymania wysyłki. | Nie — popraw dane żądania. |
+| `invalid_quota_count` | Niepoprawna liczba wiadomości: od 1 do 10000; korekta jest liczbą ujemną. | Nie — popraw dane żądania. |
+| `invalid_quota_day` | Niepoprawna doba limitu: wpis dotyczy dzisiejszej doby (UTC lub strefy konta), korekta — doby korygowanego wpisu. | Nie — popraw dane żądania. |
+| `invalid_quota_reason` | Niepoprawny kod powodu wpisu. | Nie — popraw dane żądania. |
 | `invalid_quorum_rule` | Niepoprawna reguła quorum. | Nie — popraw dane żądania. |
 | `invalid_reason` | Podaj powód (3–500 znaków). | Nie — popraw dane żądania. |
 | `invalid_reason_code` | Podaj powód przebiegu: retention_policy albo data_subject_request. | Nie — popraw dane żądania. |
@@ -393,12 +398,14 @@ wpisów).
 | `preview_campaign_limit` | Wyczerpano limit wiadomości testowych dla tej kampanii. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
 | `preview_stale` | Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
-| `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import. | Zależy od kontekstu (patrz moduł trasy). |
+| `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie. | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_approved` | Najpierw zatwierdź tę wersję (inna osoba niż autor). | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_draft` | Tę wersję już zatwierdzono albo opublikowano. | Zależy od kontekstu (patrz moduł trasy). |
 | `privacy_notice_not_found` | Nie znaleziono tej wersji informacji. | Nie — popraw dane żądania. |
 | `production_requires_flag` | Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
 | `production_restore_requires_allow_production` | Odtworzenie na produkcji wymaga osobnego potwierdzenia. | Zależy od kontekstu (patrz moduł trasy). |
+| `quota_correction_exceeds` | Korekty nie mogą łącznie przekroczyć liczby z korygowanego wpisu. | Nie — popraw dane żądania. |
+| `quota_correction_target_not_found` | Nie znaleziono wpisu do skorygowania. | Nie — popraw dane żądania. |
 | `provider_pause_not_found` | Nie znaleziono tego wstrzymania wysyłki. Odśwież widok. | Nie — popraw dane żądania. |
 | `public_copy_requires_license` | Publiczna kopia wymaga zapisanej licencji lub zgody. | Zależy od kontekstu (patrz moduł trasy). |
 | `quorum_rule_source_required` | Podaj źródło reguły quorum (np. regulamin). | Nie — popraw dane żądania. |

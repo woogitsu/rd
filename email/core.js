@@ -34,6 +34,7 @@ export const EXCLUSION_REASON_LABELS = Object.freeze({
   suppressed: 'adres wykluczony (odbicie lub rezygnacja)',
   duplicate_address: 'adres już użyty w innej rodzinie tej kampanii',
   no_payment_reference: 'brak aktywnej komunikacji strukturalnej w roku (treść zawiera {komunikat})',
+  processing_restricted: 'ograniczenie przetwarzania danych (art. 18 RODO)',
 });
 
 export function isValidId(value) {
@@ -181,6 +182,8 @@ export const WARNING_LABELS = Object.freeze({
   template_requires_board_decision_d16: 'Szablon czeka na decyzję zarządu o treści (D-16) — nie jest „zatwierdzonym” wzorem.',
   // #92: dodawane przez podgląd (nie contentWarnings) — blokuje zatwierdzenie.
   payment_instructions_missing: 'Treść zawiera {rachunek} lub {odbiorca}, a rok nie ma zatwierdzonych danych do wpłaty — kampanii nie da się zatwierdzić.',
+  // #145 (D-06): dodawane przez podgląd — blokuje zatwierdzenie.
+  privacy_notice_missing: 'Brak opublikowanej informacji o przetwarzaniu danych — kampanii nie da się zatwierdzić, a do wiadomości nie dopisze się odnośnika do informacji. Publikuje ją zarząd (z udziałem drugiej osoby zatwierdzającej).',
   payment_instructions_changed: 'Dane do wpłaty zmieniono po zatwierdzeniu kampanii — podgląd pokazuje rachunek z zatwierdzonej wersji, ale kampania nie zostanie wysłana bez nowej migawki i ponownego zatwierdzenia.',
 });
 

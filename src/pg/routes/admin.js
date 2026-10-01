@@ -60,10 +60,23 @@
 //        zapisuje `access_log.viewed` (bez parametrów). Wyłącznie admin + MFA
 //        (wariant zachowawczy do D-04/D-07/D-08/D-09; zarząd, skarbnik, KR,
 //        dyrekcja i przedstawiciele: 403).
+//   GET  /api/admin/access-review?schoolYearId=  (wymagane)
+//        przegląd dostępu po kadencji (#133): przydziały roli w roku (aktywne,
+//        wygasłe, cofnięte), ostatni odczyt danych rodzin, odczyty w zakresie
+//        roku i bez ważnego przydziału oraz PROPOZYCJA (`revoke` dla aktywnego
+//        przydziału roku, który się skończył; `review`; `keep`). Tylko odczyt —
+//        nic nie jest odbierane automatycznie; odebranie wykonuje admin jawnie
+//        przez POST /api/admin/grants/{id}/revoke. Bez imion i e-maili. Sam
+//        zapisuje `access_review.viewed`. Wyłącznie admin + MFA.
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
+//        opcjonalny nagłówek Idempotency-Key: ponowienie → 200 + Idempotency-Replayed: true,
+//        inny ładunek z tym samym kluczem → 409 idempotency_conflict (migracja 0181)
 //   POST /api/admin/data-requests/{id}/status     { status, decisionNoteRef? }
 //   POST /api/admin/data-requests/{id}/export?format=json|csv
+//   POST /api/admin/data-requests/{id}/restrict           ograniczenie przetwarzania gospodarstwa/opiekuna (art. 18, #100)
+//   POST /api/admin/data-requests/{id}/lift-restriction   zdjęcie ograniczenia (nowy zapis, historia zostaje)
+//   GET  /api/admin/data-requests/{id}/restrictions       historia ograniczeń podmiotu żądania
 //        eksport danych jednej rodziny (src/pg/family-export.js, docs/DATA_REQUESTS.md):
 //        tylko żądanie `access`/`portability` w stanie identity_verified/in_progress;
 //        krok w górę MFA; wpis data_access_log (strict, na każde gospodarstwo zakresu)
@@ -80,6 +93,10 @@
 //                                                 wyłącznie liczności per kategoria i rok/rok szkolny
 //                                                 + zarejestrowane polityki (`retention_policies`, bez PII).
 //                                                 Nie usuwa ani nie anonimizuje żadnych danych — sam odczyt.
+//   GET  /api/admin/anonymizations?limit=&cursor=  lista przebiegów anonimizacji (#91, `anonymization_runs`), od najnowszego:
+//                                                 id, gospodarstwo, powód, żądanie osoby, id polityk, skrót planu, liczniki
+//                                                 i suma, aktor, czas; kursor keyset (executed_at, id). Tylko identyfikatory
+//                                                 i liczniki (to samo, co tabela) — bez imion, e-maili i tekstów.
 //   POST /api/admin/anonymizations              { householdId, reasonCode, dataRequestId?, dryRun?, expectedPlanSha256?, confirm? }
 //                                                 anonimizacja gospodarstwa z zachowaniem księgi i sum wpłat (#91);
 //                                                 krok w górę MFA (#150). `dryRun` (domyślnie true) zwraca plan i
@@ -101,6 +118,7 @@
 // przydziałów admina są serializowane blokadą doradczą, aby dwie równoległe
 // operacje nie odebrały sobie nawzajem ostatniego dostępu administratora.
 
+import { ProcessingRestrictionError, changeProcessingRestriction, listProcessingRestrictions } from '../processing-restrictions.js';
 import {
   allowPendingRoles, CLASS_SCOPE_ROLES, insertInvitation, isoTimestamp, normalizeEmail, reissueInvitation, revokeInvitation,
   revokeUserSessions,
@@ -116,26 +134,28 @@ import {
   adminResetMfa, issuePasswordReset, LoginError, PASSWORD_RESET_MAX_TTL_SECONDS, revokePasswordResetTokens,
 } from '../login.js';
 import {
-  approveGrantRequest, grantApprovalMode, GrantRequestError, insertGrantRequest, isProtectedRole, listGrantRequests,
+  approveGrantRequest, grantApprovalMode, GrantRequestError, insertGrantRequest, isProtectedRole, listGrantRequests, GRANT_REQUEST_LIST_MAX, grantRequestListScope,
   recordFourEyesWaiver, rejectGrantRequest,
 } from '../grant-requests.js';
 import {
-  approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, rejectRecoveryRequest, requiresRecoveryApproval,
+  approveRecoveryRequest, createRecoveryRequest, listRecoveryRequests, RECOVERY_LIST_MAX, recoveryListScope, rejectRecoveryRequest, requiresRecoveryApproval,
 } from '../account-recovery.js';
 import { computeOpsStatus } from '../ops-status.js';
 import { promotionAllowedMethods, PromotionError, routePromotions } from '../promotions.js';
+import { mfaRequiredRoles } from '../mfa-policy.js';
 import { invitationBatchAllowedMethods, routeInvitationBatches } from '../invitation-batch.js';
 import {
   afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit,
 } from '../list-cursor.js';
 import { DATA_ACCESS_KINDS, recordDataAccess } from '../data-access.js';
+import { accessReview } from '../access-review.js';
 import {
   buildFamilyExport, buildFamilyExportCsv, EXPORTABLE_REQUEST_KINDS, EXPORTABLE_REQUEST_STATUSES,
   FAMILY_EXPORT_FORMAT_VERSION, FamilyExportError,
 } from '../family-export.js';
 import { csvResponse } from '../csv.js';
 import { ANONYMIZATION_REASON_CODES, AnonymizationError, anonymizeHousehold } from '../anonymization.js';
-import { createJsonReader } from '../input.js';
+import { createJsonReader, IDEMPOTENCY_KEY_PATTERN } from '../input.js';
 
 export const name = 'admin';
 
@@ -403,7 +423,9 @@ async function mfaResetRoute(env, actorId, userId, request, json) {
 async function recoveryRequestsList(env, url, json) {
   const status = url.searchParams.get('status') || 'pending';
   try {
-    return json(await listRecoveryRequests(env, { status }));
+    const limit = listLimit(url, { defaultLimit: RECOVERY_LIST_MAX, maxLimit: RECOVERY_LIST_MAX });
+    const cursor = listCursor(url, 'timestamp', recoveryListScope(status));
+    return json(await listRecoveryRequests(env, { status, limit, cursor }));
   } catch (error) {
     if (error instanceof LoginError) throw new RequestError(error.code, error.status);
     throw error;
@@ -874,7 +896,10 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
 
 async function grantRequestsList(env, url, json) {
   try {
-    return json(await listGrantRequests(env, { status: url.searchParams.get('status') || 'pending' }));
+    const status = url.searchParams.get('status') || 'pending';
+    const limit = listLimit(url, { defaultLimit: GRANT_REQUEST_LIST_MAX, maxLimit: GRANT_REQUEST_LIST_MAX });
+    const cursor = listCursor(url, 'timestamp', grantRequestListScope(status));
+    return json(await listGrantRequests(env, { status, limit, cursor }));
   } catch (error) {
     if (error instanceof GrantRequestError) throw new RequestError(error.code, error.status);
     throw error;
@@ -986,16 +1011,32 @@ async function classCoverage(env, url, json) {
             (SELECT to_char(max(s.created_at), 'YYYY-MM-DD') FROM sessions s
                JOIN role_grants g2 ON g2.user_id = s.user_id
               WHERE g2.class_id = c.id AND g2.role = 'representative'
-                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on
+                AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on,
+            (SELECT count(DISTINCT g3.user_id) FROM role_grants g3
+               WHERE g3.class_id = c.id AND g3.role = 'representative'
+                 AND g3.revoked_at IS NULL AND (g3.expires_at IS NULL OR g3.expires_at > now())
+                 AND NOT EXISTS (SELECT 1 FROM sessions s3 WHERE s3.user_id = g3.user_id)) AS never_logged_in_count,
+            (SELECT count(DISTINCT g4.user_id) FROM role_grants g4
+               WHERE g4.class_id = c.id AND g4.role = 'representative'
+                 AND g4.revoked_at IS NULL AND (g4.expires_at IS NULL OR g4.expires_at > now())
+                 AND EXISTS (SELECT 1 FROM user_mfa_factors f4
+                              WHERE f4.user_id = g4.user_id AND f4.confirmed_at IS NOT NULL AND f4.disabled_at IS NULL)) AS mfa_enrolled_count
        FROM classes c WHERE c.school_year_id = $1
        ORDER BY c.name, c.id`,
     [schoolYearId],
   );
   return json({
     schoolYearId,
+    // Stan aktywacji (#108): czy rola przedstawiciela wymaga MFA wg polityki serwera
+    // (MFA_REQUIRED_ROLES) oraz — per klasa — ilu aktywnych przedstawicieli nigdy się
+    // nie zalogowało (brak sesji; stare sesje mogły zostać usunięte retencją) i ilu ma
+    // potwierdzone MFA. Wyłącznie liczby, bez identyfikatorów osób i e-maili.
+    representativeMfaRequired: mfaRequiredRoles(env).includes('representative'),
     classes: rows.map((row) => ({
       id: row.id,
       name: row.name,
+      neverLoggedInRepresentativeCount: toSafeInteger(row.never_logged_in_count),
+      mfaEnrolledRepresentativeCount: toSafeInteger(row.mfa_enrolled_count),
       activeRepresentativeCount: toSafeInteger(row.active_count),
       pendingInvitationCount: toSafeInteger(row.pending_count),
       nextInvitationExpiresAt: isoTimestamp(row.next_expires_at),
@@ -1071,7 +1112,7 @@ export async function requireAuditDomains(env, request, context, domains) {
   throw new RequestError('forbidden', 403);
 }
 
-function auditEventForView(row, { withEntity = true } = {}) {
+export function auditEventForView(row, { withEntity = true } = {}) {
   const { metadata, redactedFields } = auditMetadataForView(row.metadata_json ?? {});
   const event = {
     id: row.id, actorId: row.actor_id ?? null, action: row.action, domain: auditActionDomain(row.action),
@@ -1246,6 +1287,17 @@ async function listAccessLog(env, url, json, actorId) {
   });
 }
 
+async function getAccessReview(env, url, json, actorId) {
+  const schoolYearId = optionalId(url.searchParams.get('schoolYearId'), 'invalid_school_year_id');
+  if (!schoolYearId) throw new RequestError('invalid_school_year_id');
+  const review = await accessReview(env.db, schoolYearId);
+  if (!review) throw new RequestError('school_year_not_found', 404);
+  await insertAuditEvent(env.db, {
+    actorId, action: 'access_review.viewed', entityType: 'data_access_log', entityId: schoolYearId, metadata: { schoolYearId },
+  });
+  return json(review);
+}
+
 // --- Rejestr żądań osób (RODO, #100) ---------------------------------------
 
 const DATA_REQUEST_KINDS = new Set(['access', 'rectification', 'erasure', 'restriction', 'objection', 'portability']);
@@ -1297,6 +1349,35 @@ async function listDataRequests(env, url, json) {
   return json({ requests: rows.map(dataRequestFromRow), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit });
 }
 
+function anonymizationRunFromRow(row) {
+  const counts = row.counts && typeof row.counts === 'object' ? row.counts : {};
+  return {
+    id: row.id, householdId: row.household_id, reasonCode: row.reason_code,
+    dataSubjectRequestId: row.data_subject_request_id, retentionPolicyIds: row.retention_policy_ids,
+    planSha256: row.plan_sha256, counts,
+    totalChanged: Object.values(counts).reduce((sum, value) => sum + (Number.isInteger(value) ? value : 0), 0),
+    executedBy: row.executed_by, executedAt: isoTimestamp(row.executed_at),
+  };
+}
+
+// #91: dziennik przebiegów anonimizacji, od najnowszego (keyset executed_at DESC, id).
+async function listAnonymizations(env, url, json) {
+  const limit = listLimit(url);
+  const scope = 'anonymizations';
+  const cursor = listCursor(url, 'timestamp', scope);
+  const values = [];
+  const where = cursor ? `WHERE ${afterTimestampDescSql('executed_at', 'id', cursor, values)}` : '';
+  const { rows } = await env.db.query(
+    `SELECT id, household_id, reason_code, data_subject_request_id, retention_policy_ids, plan_sha256, counts,
+            executed_by, executed_at, ${cursorTimestampSql('executed_at')} AS cursor_ts
+       FROM anonymization_runs ${where}
+      ORDER BY executed_at DESC, id LIMIT ${limit + 1}`,
+    values,
+  );
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  return json({ runs: page.items.map(anonymizationRunFromRow), nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit });
+}
+
 async function createDataRequest(env, actorId, request, json) {
   const data = await readJson(request);
   if (!DATA_REQUEST_KINDS.has(data.kind)) throw new RequestError('invalid_kind');
@@ -1308,7 +1389,32 @@ async function createDataRequest(env, actorId, request, json) {
   const dueOn = data.dueOn === undefined || data.dueOn === null || data.dueOn === '' ? null : data.dueOn;
   if (dueOn !== null && !validDate(dueOn)) throw new RequestError('invalid_due_on');
 
-  const result = await env.db.transaction(async (tx) => {
+  // Opcjonalny klucz: pozostałe trasy tworzące w tym module (konta, role, anonimizacje)
+  // nie wymagają go, a istniejący klienci rejestru nie wysyłają nagłówka. Zły format → 400.
+  const rawKey = request.headers.get('Idempotency-Key')?.trim();
+  if (rawKey !== undefined && !IDEMPOTENCY_KEY_PATTERN.test(rawKey)) throw new RequestError('invalid_idempotency_key');
+  const idempotencyKey = rawKey ?? null;
+
+  const { replayed, ...result } = await env.db.transaction(async (tx) => {
+    if (idempotencyKey) {
+      // Serializacja równoległych żądań z tym samym kluczem (podwójne kliknięcie).
+      await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`rd:data-request-create:${idempotencyKey}`]);
+      const { rows: prior } = await tx.query(
+        `SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE idempotency_key = $1`, [idempotencyKey],
+      );
+      if (prior.length) {
+        const row = prior[0];
+        // Daty porównuje baza (bez zależności od mapowania DATE → JS i strefy czasowej).
+        const { rows: dates } = await tx.query(
+          'SELECT (received_on = $2::date AND due_on IS NOT DISTINCT FROM $3::date) AS same FROM data_subject_requests WHERE id = $1',
+          [row.id, data.receivedOn, dueOn],
+        );
+        const same = row.kind === data.kind && row.household_id === householdId && row.guardian_id === guardianId
+          && row.student_id === studentId && dates[0].same === true;
+        if (!same) throw new Abort('idempotency_conflict', 409);
+        return { replayed: true, request: dataRequestFromRow(row) };
+      }
+    }
     if (householdId) {
       const { rows } = await tx.query('SELECT 1 FROM households WHERE id = $1', [householdId]);
       if (!rows.length) throw new Abort('household_not_found', 404);
@@ -1323,18 +1429,19 @@ async function createDataRequest(env, actorId, request, json) {
     }
     const id = crypto.randomUUID();
     await tx.query(
-      `INSERT INTO data_subject_requests (id, kind, household_id, guardian_id, student_id, received_on, due_on, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [id, data.kind, householdId, guardianId, studentId, data.receivedOn, dueOn, actorId],
+      `INSERT INTO data_subject_requests (id, kind, household_id, guardian_id, student_id, received_on, due_on, created_by, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [id, data.kind, householdId, guardianId, studentId, data.receivedOn, dueOn, actorId, idempotencyKey],
     );
     await insertAuditEvent(tx, {
       actorId, action: 'data_subject_request.created', entityType: 'data_subject_request', entityId: id,
       metadata: { kind: data.kind },
     });
     const { rows } = await tx.query(`SELECT ${DATA_REQUEST_COLUMNS} FROM data_subject_requests WHERE id = $1`, [id]);
-    return dataRequestFromRow(rows[0]);
+    return { replayed: false, request: dataRequestFromRow(rows[0]) };
   });
-  return json({ request: result }, 201);
+  return json({ request: result.request }, replayed ? 200 : 201,
+    idempotencyKey ? { 'Idempotency-Replayed': replayed ? 'true' : 'false' } : {});
 }
 
 async function setDataRequestStatus(env, actorId, requestId, request, json) {
@@ -1370,6 +1477,27 @@ async function setDataRequestStatus(env, actorId, requestId, request, json) {
     return { request: dataRequestFromRow(updated[0]), changed: true };
   });
   return json(result);
+}
+
+// Ograniczenie przetwarzania (art. 18 RODO, #100): nałożenie/zdjęcie jako nowy zapis.
+// Powtórzenie tego samego przejścia (podwójne kliknięcie) zwraca 200 z changed: false.
+async function changeRestriction(env, actorId, requestId, action, json) {
+  try {
+    const result = await env.db.transaction((tx) => changeProcessingRestriction(tx, actorId, requestId, action));
+    return json({ restricted: result.restricted, changed: result.changed, subjectType: result.subjectType });
+  } catch (error) {
+    if (error instanceof ProcessingRestrictionError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
+}
+
+async function dataRequestRestrictions(env, requestId, json) {
+  try {
+    return json(await listProcessingRestrictions(env.db, requestId));
+  } catch (error) {
+    if (error instanceof ProcessingRestrictionError) throw new RequestError(error.code, error.status);
+    throw error;
+  }
 }
 
 // Eksport danych jednej rodziny dla żądania osoby (#100 pkt 2–3). Paczka nie
@@ -1562,14 +1690,14 @@ async function anonymizationRoute(env, actorId, request, json) {
 // spoza /api/admin z ich autoryzacją. Etykieta roli aktora w chwili zdarzenia
 // (z issue) nie jest tu liczona — wymagałaby złączenia z historią przydziałów
 // ról po czasie; odłożone jako osobne rozszerzenie.
-const ENTITY_TABLES = {
+export const ENTITY_TABLES = {
   payment_entry: 'payment_entries',
   ledger_entry: 'ledger_entries',
   reconciliation: 'bank_reconciliations',
   email_campaign: 'email_campaigns',
 };
 // Domena, której odczyt jest wymagany do historii obiektu danego typu.
-const ENTITY_DOMAIN = {
+export const ENTITY_DOMAIN = {
   payment_entry: 'finance', ledger_entry: 'finance', reconciliation: 'finance', email_campaign: 'email',
 };
 // Zdarzenia uzgodnienia zapisują entity_type 'bank_reconciliation' (routes/
@@ -1587,19 +1715,26 @@ const RELATED_METADATA_KEY = {
   email_campaign: 'campaignId',
 };
 
-async function entityAudit(request, env, entityType, entityId, json, actorId, context) {
-  const table = ENTITY_TABLES[entityType];
-  if (!table) throw new RequestError('invalid_entity_type');
-  await requireAuditDomains(env, request, context, [ENTITY_DOMAIN[entityType]]);
-  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
-  if (!exists.length) throw new RequestError('not_found', 404);
-  const { rows } = await env.db.query(
+// Surowe zdarzenia obiektu (samego i powiązane przez metadane), od najstarszego.
+// Wspólne dla trasy admina i GET /api/audit/entity/... (routes/audit-history.js).
+export async function readEntityAuditRows(db, entityType, entityId) {
+  const { rows } = await db.query(
     `SELECT id, actor_id, action, occurred_at, metadata_json
        FROM audit_events
       WHERE (entity_type = ANY($1::text[]) AND entity_id = $2) OR metadata_json ->> $3 = $2
       ORDER BY occurred_at, id`,
     [[entityType, ENTITY_AUDIT_TYPE[entityType] ?? entityType], entityId, RELATED_METADATA_KEY[entityType]],
   );
+  return rows;
+}
+
+async function entityAudit(request, env, entityType, entityId, json, actorId, context) {
+  const table = ENTITY_TABLES[entityType];
+  if (!table) throw new RequestError('invalid_entity_type');
+  await requireAuditDomains(env, request, context, [ENTITY_DOMAIN[entityType]]);
+  const { rows: exists } = await env.db.query(`SELECT 1 FROM ${table} WHERE id = $1`, [entityId]);
+  if (!exists.length) throw new RequestError('not_found', 404);
+  const rows = await readEntityAuditRows(env.db, entityType, entityId);
   // Historia obiektu obejmuje zdarzenia różnych domen (np. `audit.viewed` z
   // domeny privacy) — pokazujemy tylko te, których domenę aktor może czytać.
   const visible = rows.filter((row) => canReadAuditDomain(context, auditActionDomain(row.action)));
@@ -1656,13 +1791,15 @@ function allowedMethodsFor(section, pathLength, action, path) {
   if (section === 'class-coverage' && pathLength === 1) return ['GET'];
   if (section === 'audit' && pathLength === 1) return ['GET'];
   if (section === 'access-log' && pathLength === 1) return ['GET'];
+  if (section === 'access-review' && pathLength === 1) return ['GET'];
   if (section === 'data-requests') {
     if (pathLength === 1) return ['GET', 'POST'];
-    if (pathLength === 3 && (action === 'status' || action === 'export')) return ['POST'];
+    if (pathLength === 3 && ['status', 'export', 'restrict', 'lift-restriction'].includes(action)) return ['POST'];
+    if (pathLength === 3 && action === 'restrictions') return ['GET'];
     return null;
   }
   if (section === 'retention' && pathLength === 2) return ['GET'];
-  if (section === 'anonymizations' && pathLength === 1) return ['POST'];
+  if (section === 'anonymizations' && pathLength === 1) return ['GET', 'POST'];
   if (section === 'ops-status' && pathLength === 1) return ['GET'];
   return null;
 }
@@ -1759,6 +1896,7 @@ async function route(request, env, url, json, actorId, context) {
   if (section === 'class-coverage' && path.length === 1 && method === 'GET') return classCoverage(env, url, json);
   if (section === 'audit' && path.length === 1 && method === 'GET') return listAudit(request, env, url, json, actorId, context);
   if (section === 'access-log' && path.length === 1 && method === 'GET') return listAccessLog(env, url, json, actorId);
+  if (section === 'access-review' && path.length === 1 && method === 'GET') return getAccessReview(env, url, json, actorId);
   if (section === 'data-requests') {
     if (path.length === 1 && method === 'GET') return listDataRequests(env, url, json);
     if (path.length === 1 && method === 'POST') return createDataRequest(env, actorId, request, json);
@@ -1770,10 +1908,21 @@ async function route(request, env, url, json, actorId, context) {
       requireFreshMfa(context);
       return exportDataRequest(env, actorId, decodeId(rawId), url);
     }
+    if (path.length === 3 && action === 'restrict' && method === 'POST') {
+      return changeRestriction(env, actorId, decodeId(rawId), 'restrict', json);
+    }
+    if (path.length === 3 && action === 'lift-restriction' && method === 'POST') {
+      return changeRestriction(env, actorId, decodeId(rawId), 'lift', json);
+    }
+    if (path.length === 3 && action === 'restrictions' && method === 'GET') {
+      return dataRequestRestrictions(env, decodeId(rawId), json);
+    }
   }
   if (section === 'retention' && rawId === 'preview' && path.length === 2 && method === 'GET') {
     return retentionPreview(env, json);
   }
+  // #91: lista przebiegów — identyfikatory i liczniki; ta sama rola co POST (admin + MFA), bez kroku w górę (nic nie zmienia).
+  if (section === 'anonymizations' && path.length === 1 && method === 'GET') return listAnonymizations(env, url, json);
   // #91: anonimizacja zmienia dane osobowe nieodwracalnie — krok w górę MFA (#150), także dla podglądu.
   if (section === 'anonymizations' && path.length === 1 && method === 'POST') {
     requireFreshMfa(context);
@@ -1783,7 +1932,7 @@ async function route(request, env, url, json, actorId, context) {
   return undefined;
 }
 
-const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'data-requests', 'retention', 'anonymizations', 'ops-status']);
+const KNOWN_SECTIONS = new Set(['users', 'account-requests', 'grant-requests', 'grants', 'invitations', 'invitation-batches', 'school-years', 'promotions', 'class-coverage', 'audit', 'access-log', 'access-review', 'data-requests', 'retention', 'anonymizations', 'ops-status']);
 
 export async function handle(request, env, url, json) {
   if (!url.pathname.startsWith(PREFIX)) return null;

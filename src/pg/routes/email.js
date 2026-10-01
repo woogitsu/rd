@@ -22,6 +22,9 @@
 //   GET  /api/email/provider-pause?schoolYearId=…    aktywna pauza po odmowie konta przez dostawcę (#209)
 //   POST /api/email/provider-pause/lift              potwierdzenie naprawy konfiguracji: zarząd + świeże MFA (#209), idempotentne
 //   GET  /api/email/worker-status?schoolYearId=…     ostatni przebieg zadania i alarm „brak przebiegów” (#130; liczby i kody)
+//   GET  /api/email/quota?schoolYearId=…             stan dziennego limitu Brevo: doba UTC i strefa konta, dziś i jutro (#84; liczby)
+//   GET  /api/email/quota/other-sends                lista wpisów ręcznych i korekt (#84, kursor, filtr doby; bez adresów i treści)
+//   POST /api/email/quota/other-sends                ręczna ewidencja wiadomości spoza kolejki lub jej korekta (#84, Idempotency-Key, tylko dopisywanie)
 //   POST /api/email/webhooks/brevo                   webhook Brevo, wspólny sekret (bez Origin)
 //   GET  /api/email/preferences?t=…                  publiczna: podgląd wypisania (bez skutku, #110)
 //   POST /api/email/preferences?t=…                  publiczna: wypisanie jednym kliknięciem (bez Origin, #110)
@@ -52,8 +55,12 @@ import {
   SAMPLE_STRUCTURED_REFERENCE, usesPaymentInstructions, usesStructuredReference,
 } from '../../email/content.js';
 import { campaignPaymentInstructions, loadCurrentPaymentInstructions } from './payment-instructions.js';
+import { campaignPrivacyNotice, loadPublishedNotice } from './privacy-notice.js';
 import { estimateSchedule } from '../../email/schedule.js';
-import { BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, unsubscribeUrlFor, utcDay } from '../../email/worker.js';
+import {
+  accountDay, BOUNCE_EVENTS as BOUNCE_EVENT_NAMES, campaignDailyCap, planDays, QUOTA_LOCK_ID, quotaOverview, unsubscribeUrlFor, utcDay,
+} from '../../email/worker.js';
+import { loadProcessingRestrictions } from '../processing-restrictions.js';
 import { createJsonReader, readBodyText } from '../input.js';
 import { csvCell, csvResponse, safeFileSegment, toCsv } from '../csv.js';
 
@@ -151,7 +158,7 @@ const CAMPAIGN_COLUMNS = `c.id, c.school_year_id, c.title, c.audience, c.categor
   c.queued_at, c.completed_at, c.cancelled_at, c.idempotency_key, c.send_not_before,
   c.paused_by, c.paused_at, c.resumed_by, c.resumed_at, c.revision_no,
   c.meeting_id, c.meeting_notice_id, c.class_id, c.kind, c.source_campaign_id,
-  c.approved_payment_instructions_id`;
+  c.approved_payment_instructions_id, c.privacy_notice_id`;
 
 async function loadCampaign(executor, id, { lock = false } = {}) {
   const { rows } = await executor.query(
@@ -203,6 +210,8 @@ function campaignView(row) {
     sourceCampaignId: row.source_campaign_id ?? null,
     // #92: wersja danych do wpłaty zatwierdzona razem z kampanią (bez IBAN).
     approvedPaymentInstructionsId: row.approved_payment_instructions_id ?? null,
+    // #145 (D-06): wersja informacji o przetwarzaniu danych zapamiętana przy zatwierdzeniu.
+    privacyNoticeId: row.privacy_notice_id ?? null,
   };
 }
 
@@ -386,7 +395,7 @@ async function updateCampaign(request, env, id, json) {
         `UPDATE email_campaigns SET title = $2, audience = $3, category = $4, subject = $5, body_text = $6, content_hash = $7,
                 updated_by = $8, updated_at = now(), status = 'draft', send_not_before = $9,
                 approved_by = NULL, approved_at = NULL, approved_content_hash = NULL, approved_recipients_hash = NULL,
-                approved_payment_instructions_id = NULL
+                approved_payment_instructions_id = NULL, privacy_notice_id = NULL
           WHERE id = $1
           RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
         [id, input.title, input.audience, input.category, input.subject, input.bodyText, hash, actorId, sendNotBefore],
@@ -488,11 +497,21 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
     );
     for (const row of prefRows) if (row.action === 'opt_out') optedOut.add(row.email_hash);
   }
+  // #100 (art. 18 RODO): ograniczone gospodarstwo wypada w całości, ograniczony
+  // opiekun przestaje być adresatem (inny opiekun rodziny może nim zostać).
+  const restricted = await loadProcessingRestrictions(executor);
   const recipients = [];
   const exclusions = [];
   const used = new Set();
   const ids = [...households.keys()].sort();
   for (const householdId of ids) {
+    const guardianRows = households.get(householdId);
+    if (restricted.households.has(householdId)
+        || (guardianRows.length && guardianRows.every((row) => restricted.guardians.has(row.guardian_id)))) {
+      exclusions.push({ householdId, reason: 'processing_restricted' });
+      continue;
+    }
+    households.set(householdId, guardianRows.filter((row) => !restricted.guardians.has(row.guardian_id)));
     if (followup?.covered.has(householdId)) { exclusions.push({ householdId, reason: 'followup_already_covered' }); continue; }
     if (paid.has(householdId)) { exclusions.push({ householdId, reason: 'payment_recorded' }); continue; }
     if (withReference && !withReference.has(householdId)) { exclusions.push({ householdId, reason: 'no_payment_reference' }); continue; }
@@ -562,6 +581,9 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
   const { rows } = await executor.query(
     `WITH d AS (SELECT COALESCE($3::date, rd_today()) AS on_date)
      SELECT CASE
+              WHEN EXISTS (SELECT 1 FROM processing_restricted_subjects x
+                            WHERE x.household_id = r.household_id OR x.guardian_id = r.guardian_id)
+                THEN 'processing_restricted'
               WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
                                  JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
                                 WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
@@ -571,6 +593,11 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
                                  JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
                                 WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id)
                 THEN 'student_withdrawn'
+              WHEN $4::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
+                                 JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
+                                 JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
+                                WHERE sg.guardian_id = r.guardian_id AND p.household_id = r.household_id AND en.class_id = $4)
+                THEN 'student_left_class'
               WHEN NOT EXISTS (SELECT 1 FROM student_guardians_current_on((SELECT on_date FROM d)) sg
                                  JOIN student_primary_household_on((SELECT on_date FROM d)) p ON p.student_id = sg.student_id
                                  JOIN enrollments_current en ON en.student_id = sg.student_id AND en.school_year_id = $2
@@ -581,7 +608,7 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
             END AS reason
        FROM email_campaign_recipients r
       WHERE r.campaign_id = $1`,
-    [campaign.id, campaign.school_year_id, on],
+    [campaign.id, campaign.school_year_id, on, campaign.audience === 'class_households' ? campaign.class_id : null],
   );
   const counts = {};
   for (const row of rows) if (row.reason) counts[row.reason] = (counts[row.reason] ?? 0) + 1;
@@ -598,7 +625,7 @@ async function buildSnapshot(request, env, id, json) {
       const wasApproved = campaign.status === 'approved';
       await tx.query(
         `UPDATE email_campaigns SET status = 'draft', approved_by = NULL, approved_at = NULL,
-                approved_content_hash = NULL, approved_recipients_hash = NULL, approved_payment_instructions_id = NULL,
+                approved_content_hash = NULL, approved_recipients_hash = NULL, approved_payment_instructions_id = NULL, privacy_notice_id = NULL,
                 recipients_hash = NULL, recipients_count = NULL, snapshot_built_by = NULL, snapshot_built_at = NULL
           WHERE id = $1`,
         [id],
@@ -692,9 +719,10 @@ async function preview(request, env, id, json) {
   const paymentWarnings = !usesPaymentInstructions(campaign) ? []
     : payment.changed ? ['payment_instructions_changed']
       : !paymentInstructions ? ['payment_instructions_missing'] : [];
+  const privacyNotice = await campaignPrivacyNotice(env.db, campaign, config.publicBaseUrl);
   const sample = renderMessage(campaign, {
     schoolYearLabel: campaign.school_year_label, householdId: sampleHousehold, structuredReference: sampleReference,
-    paymentInstructions, unsubscribeUrl: sampleUnsubscribeUrl,
+    paymentInstructions, unsubscribeUrl: sampleUnsubscribeUrl, privacyNotice,
     missingPaymentText: PREVIEW_MISSING_PAYMENT_TEXT,
   });
   const count = recipients.length;
@@ -722,7 +750,10 @@ async function preview(request, env, id, json) {
       },
       ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
-    warnings: [...contentWarnings({ bodyText: campaign.body_text }), ...paymentWarnings],
+    warnings: [...contentWarnings({ bodyText: campaign.body_text }), ...paymentWarnings,
+      ...(privacyNotice ? [] : ['privacy_notice_missing'])],
+    // #145: wersja informacji w stopce podglądu (bez treści informacji).
+    privacyNotice: privacyNotice ? { id: privacyNotice.id, version: privacyNotice.version } : null,
     // #92: wersja danych do wpłaty użyta w podglądzie (bez IBAN — ten jest w sample.text).
     paymentInstructions: paymentInstructions
       ? { id: paymentInstructions.id, approvedAt: paymentInstructions.approvedAt }
@@ -788,6 +819,13 @@ async function assertPaymentInstructionsCurrent(executor, campaign) {
   if (changed) throw new RequestError('payment_instructions_changed', 409);
 }
 
+// #145 (D-06): kampania wychodzi tylko z wersją informacji o przetwarzaniu
+// danych zapamiętaną przy zatwierdzeniu (privacy_notice_id, 0179). Zatwierdzona
+// przed 0179 (NULL) wymaga ponownego zatwierdzenia.
+function assertPrivacyNoticeRecorded(campaign) {
+  if (!campaign.privacy_notice_id) throw new RequestError('privacy_notice_missing', 409);
+}
+
 async function approve(request, env, id, json) {
   const data = await readJson(request);
   if (!HASH_PATTERN.test(data.contentHash ?? '') || !HASH_PATTERN.test(data.recipientsHash ?? '')) {
@@ -837,6 +875,10 @@ async function approve(request, env, id, json) {
         if (!paymentInstructions) throw new RequestError('payment_instructions_missing', 409);
         if (paymentInstructions.id !== seenPaymentInstructionsId) throw new RequestError('payment_instructions_changed', 409);
       }
+      // #145 (D-06): zatwierdzenie wymaga opublikowanej informacji o przetwarzaniu
+      // danych; jej wersja trafia do kampanii (privacy_notice_id, 0179) i do stopki.
+      const privacyNotice = await loadPublishedNotice(tx);
+      if (!privacyNotice) throw new RequestError('privacy_notice_missing', 409);
       // D-16 (domyślnie wyłączone, wariant zachowawczy): jeśli flaga jest
       // włączona, zatwierdzenie wymaga co najmniej jednej wysyłki testowej
       // dla dokładnie bieżącej treści (#104). Liczy się tylko test przyjęty
@@ -852,10 +894,10 @@ async function approve(request, env, id, json) {
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'approved', approved_by = $2, approved_at = now(),
                 approved_content_hash = content_hash, approved_recipients_hash = recipients_hash,
-                approved_payment_instructions_id = $5
+                approved_payment_instructions_id = $5, privacy_notice_id = $6
           WHERE id = $1 AND content_hash = $3 AND recipients_hash = $4
           RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
-        [id, actorId, data.contentHash, data.recipientsHash, paymentInstructions?.id ?? null],
+        [id, actorId, data.contentHash, data.recipientsHash, paymentInstructions?.id ?? null, privacyNotice.id],
       );
       if (!rows[0]) throw new RequestError('approval_stale', 409);
       await insertAuditEvent(tx, {
@@ -864,6 +906,7 @@ async function approve(request, env, id, json) {
           schoolYearId: campaign.school_year_id,
           contentHash: data.contentHash, recipientsHash: data.recipientsHash, recipients: recipients.length,
           ...(paymentInstructions ? { paymentInstructionsId: paymentInstructions.id } : {}),
+          privacyNoticeId: privacyNotice.id, privacyNoticeVersion: privacyNotice.version,
         },
       });
       return json({ campaign: campaignView(rows[0]) });
@@ -887,6 +930,7 @@ async function queue(request, env, id, json) {
         throw new RequestError('approval_required', 409);
       }
       await assertPaymentInstructionsCurrent(tx, campaign);
+      assertPrivacyNoticeRecorded(campaign);
       const dailyCap = campaignDailyCap(recipients.length, config);
       const { rows: inserted } = await tx.query(
         `INSERT INTO email_outbox (id, campaign_id, household_id, recipient_id, idempotency_key)
@@ -955,6 +999,7 @@ async function resume(request, env, id, json) {
       // ponownego zatwierdzenia. Wyjątek (#92): korekta rachunku po zatwierdzeniu
       // kampanii z {rachunek}/{odbiorca} — wznowienie odmawia, worker i tak by ją pominął.
       await assertPaymentInstructionsCurrent(tx, campaign);
+      assertPrivacyNoticeRecorded(campaign);
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'sending', resumed_by = $2, resumed_at = now()
           WHERE id = $1 RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
@@ -1084,9 +1129,11 @@ async function testSend(request, env, id, json) {
     if (!payment.instructions) throw new RequestError('payment_instructions_missing', 409);
     paymentInstructions = payment.instructions;
   }
+  const privacyNotice = await campaignPrivacyNotice(env.db, campaign, config.publicBaseUrl);
+  if (!privacyNotice) throw new RequestError('privacy_notice_missing', 409);
   const rendered = renderMessage(campaign, {
     schoolYearLabel: campaign.school_year_label, householdId: 'PRZYKLAD', structuredReference: SAMPLE_STRUCTURED_REFERENCE,
-    paymentInstructions, unsubscribeUrl,
+    paymentInstructions, unsubscribeUrl, privacyNotice,
   });
   const transport = transportFor(env, config);
   let providerMessageId = null;
@@ -1299,6 +1346,171 @@ async function workerStatus(request, env, url, json) {
   // Czy serwer zna okno wysyłki (EMAIL_SEND_WINDOW_ENABLED) — bez godzin; te są w podglądzie kampanii.
   status.sendWindowEnabled = emailConfig(env).sendWindow.enabled;
   return json({ workerStatus: status }, 200, { 'Cache-Control': 'no-store' });
+}
+
+// --- Dzienny limit Brevo: stan i ewidencja wiadomości spoza kolejki (#84) -----
+// Role (założenie do D-08/D-17, jak worker-status): board/treasurer z MFA,
+// przydział szkolny (bez klasy) w podanym roku. Admin techniczny, przedstawiciel
+// i role klasowe: 403. Dziennik jest tylko do dopisywania — pomyłkę poprawia
+// nowy wpis ujemny (reasonCode 'correction' + correctsId), nic nie jest edytowane.
+const QUOTA_REASON_CODES = Object.freeze(['manual_brevo_panel', 'invitation', 'audit_committee', 'other', 'correction']);
+const QUOTA_MAX_COUNT = 10_000;
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function quotaNow(env) {
+  return typeof env?.now === 'function' ? env.now() : new Date();
+}
+
+async function quotaShow(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, schoolYearId);
+  const quota = await quotaOverview(env.db, quotaNow(env), emailConfig(env));
+  const { rows } = await env.db.query(
+    `SELECT COUNT(DISTINCT c.id)::int AS campaigns, COUNT(o.id)::int AS queued
+       FROM email_campaigns c
+       LEFT JOIN email_outbox o ON o.campaign_id = c.id AND o.state = 'queued'
+      WHERE c.school_year_id = $1 AND c.status IN ('sending', 'paused')`,
+    [schoolYearId],
+  );
+  quota.queuedCampaigns = { campaigns: rows[0].campaigns, queuedMessages: rows[0].queued };
+  return json({ quota }, 200, { 'Cache-Control': 'no-store' });
+}
+
+const LEDGER_COLUMNS = `id, to_char(day, 'YYYY-MM-DD') AS day, message_count, reason_code, corrects_id, actor_id, recorded_at`;
+
+function ledgerView(row) {
+  return {
+    id: row.id, day: row.day, count: row.message_count, reasonCode: row.reason_code,
+    correctsId: row.corrects_id ?? null, recordedBy: row.actor_id, recordedAt: iso(row.recorded_at),
+  };
+}
+
+// Lista wpisów ręcznych i korekt (#84): do wyboru wpisu do korekty w panelu.
+// Wyłącznie liczby, kody i identyfikatory; wpisy sprzed migracji 0177 (bez
+// aktora) nie są ręczne, więc ich tu nie ma. `corrected` = wpis dodatni ma już
+// choć jedną korektę; `correctedCount` = suma korekt, `correctableCount` = ile
+// jeszcze można skorygować (0 dla korekt).
+async function listOtherSends(request, env, url, json) {
+  const schoolYearId = url.searchParams.get('schoolYearId');
+  if (!validId(schoolYearId)) throw new RequestError('invalid_request');
+  const day = url.searchParams.get('day');
+  if (day !== null && (!DAY_PATTERN.test(day) || new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day)) {
+    throw new RequestError('invalid_quota_day');
+  }
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, schoolYearId);
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 50, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['quota-other-sends', day]);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'timestamp', scope }, fail);
+  const values = [];
+  const where = ["l.source = 'other'", 'l.actor_id IS NOT NULL'];
+  if (day !== null) { values.push(day); where.push(`l.day = $${values.length}`); }
+  if (cursor) where.push(afterTimestampDescSql('l.recorded_at', 'l.id', cursor, values));
+  const { rows } = await env.db.query(
+    `SELECT l.id, to_char(l.day, 'YYYY-MM-DD') AS day, l.message_count, l.reason_code, l.corrects_id, l.actor_id,
+            l.recorded_at, ${cursorTimestampSql('l.recorded_at')} AS cursor_ts,
+            COALESCE((SELECT SUM(-c.message_count) FROM email_send_ledger c WHERE c.corrects_id = l.id), 0)::int AS corrected_count
+       FROM email_send_ledger l WHERE ${where.join(' AND ')}
+      ORDER BY l.recorded_at DESC, l.id LIMIT ${limit + 1}`,
+    values,
+  );
+  const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), scope);
+  const entries = page.items.map((row) => ({
+    ...ledgerView(row),
+    corrected: row.corrected_count > 0,
+    correctedCount: row.corrected_count,
+    correctableCount: row.message_count > 0 ? row.message_count - row.corrected_count : 0,
+  }));
+  return json(
+    { entries, nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit },
+    200, { 'Cache-Control': 'no-store' },
+  );
+}
+
+async function recordOtherSend(request, env, json) {
+  const key = request.headers.get('Idempotency-Key')?.trim();
+  if (!key || !IDEMPOTENCY_PATTERN.test(key)) throw new RequestError('invalid_idempotency_key');
+  const data = await readJson(request);
+  if (!validId(data.schoolYearId)) throw new RequestError('invalid_request');
+  if (!QUOTA_REASON_CODES.includes(data.reasonCode)) throw new RequestError('invalid_quota_reason');
+  const correction = data.reasonCode === 'correction';
+  const count = data.count;
+  if (!Number.isInteger(count) || count === 0 || Math.abs(count) > QUOTA_MAX_COUNT || (count < 0) !== correction) {
+    throw new RequestError('invalid_quota_count');
+  }
+  if (typeof data.day !== 'string' || !DAY_PATTERN.test(data.day) || Number.isNaN(Date.parse(`${data.day}T00:00:00Z`))
+      || new Date(`${data.day}T00:00:00Z`).toISOString().slice(0, 10) !== data.day) {
+    throw new RequestError('invalid_quota_day');
+  }
+  if (correction ? !validId(data.correctsId) : data.correctsId != null) throw new RequestError('invalid_request');
+  const context = await requireContext(request, env, EDITOR_ROLES);
+  requireYear(context, EDITOR_ROLES, data.schoolYearId);
+  const actorId = context.session.user.id;
+  const now = quotaNow(env);
+  const config = emailConfig(env);
+  // Nowy wpis dotyczy bieżącej doby (UTC albo strefy konta); wstecz — tylko korekta.
+  if (!correction && data.day !== utcDay(now) && data.day !== accountDay(now, config.quotaTimezone)) {
+    throw new RequestError('invalid_quota_day');
+  }
+
+  const sameRequest = (row) => row.actor_id === actorId && row.day === data.day && row.message_count === count
+    && row.reason_code === data.reasonCode && (row.corrects_id ?? null) === (correction ? data.correctsId : null);
+  const replay = async (executor) => {
+    const { rows } = await executor.query(`SELECT ${LEDGER_COLUMNS} FROM email_send_ledger WHERE idempotency_key = $1`, [key]);
+    if (!rows[0]) return null;
+    if (!sameRequest(rows[0])) throw new RequestError('idempotency_conflict', 409);
+    return json({ entry: ledgerView(rows[0]) }, 200, { 'Idempotency-Replayed': 'true' });
+  };
+
+  try {
+    return await env.db.transaction(async (tx) => {
+      // Ta sama blokada co przejmowanie kolejki przez zadanie: wpis i pula nie ścigają się.
+      await tx.query('SELECT pg_advisory_xact_lock($1)', [QUOTA_LOCK_ID]);
+      const existing = await replay(tx);
+      if (existing) return existing;
+      let recordedAt = null;
+      if (correction) {
+        const { rows: target } = await tx.query(
+          `SELECT id, to_char(day, 'YYYY-MM-DD') AS day, message_count, recorded_at FROM email_send_ledger
+            WHERE id = $1 AND source = 'other' AND message_count > 0`,
+          [data.correctsId],
+        );
+        if (!target[0]) throw new RequestError('quota_correction_target_not_found', 404);
+        if (target[0].day !== data.day) throw new RequestError('invalid_quota_day');
+        const { rows: done } = await tx.query(
+          'SELECT COALESCE(SUM(-message_count), 0)::int AS n FROM email_send_ledger WHERE corrects_id = $1', [data.correctsId],
+        );
+        if (done[0].n + Math.abs(count) > target[0].message_count) throw new RequestError('quota_correction_exceeds', 409);
+        // Korekta należy do tej samej doby konta co wpis korygowany.
+        recordedAt = target[0].recorded_at;
+      }
+      const id = crypto.randomUUID();
+      const { rows } = await tx.query(
+        `INSERT INTO email_send_ledger (id, day, source, message_count, actor_id, reason_code, idempotency_key, corrects_id, recorded_at)
+         VALUES ($1, $2, 'other', $3, $4, $5, $6, $7, COALESCE($8, now()))
+         RETURNING ${LEDGER_COLUMNS}`,
+        [id, data.day, count, actorId, data.reasonCode, key, correction ? data.correctsId : null, recordedAt],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: correction ? 'email.quota.other_corrected' : 'email.quota.other_recorded',
+        entityType: 'email_send_ledger', entityId: id,
+        metadata: {
+          schoolYearId: data.schoolYearId, day: data.day, count, reasonCode: data.reasonCode,
+          correctsId: correction ? data.correctsId : null,
+        },
+      });
+      return json({ entry: ledgerView(rows[0]) }, 201, { 'Idempotency-Replayed': 'false' });
+    });
+  } catch (error) {
+    if (error?.code === '23505') {
+      const existing = await replay(env.db);
+      if (existing) return existing;
+    }
+    return mapDatabaseError(error);
+  }
 }
 
 const REPORT_CATEGORIES = Object.freeze(['queued', 'sending', 'sent', 'delivered', 'bounced', 'delivery_unknown', 'failed', 'suppressed', 'skipped', 'cancelled']);
@@ -2105,6 +2317,15 @@ export async function handle(request, env, url, json) {
     if (url.pathname === '/api/email/worker-status') {
       if (method === 'GET') return await workerStatus(request, env, url, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    }
+    if (url.pathname === '/api/email/quota') {
+      if (method === 'GET') return await quotaShow(request, env, url, json);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET' });
+    }
+    if (url.pathname === '/api/email/quota/other-sends') {
+      if (method === 'GET') return await listOtherSends(request, env, url, json);
+      if (method === 'POST') return await recordOtherSend(request, env, json);
+      return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
     if (url.pathname === '/api/email/provider-pause/lift') {
       if (method === 'POST') return await providerPauseLift(request, env, json);

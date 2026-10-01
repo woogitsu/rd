@@ -428,3 +428,46 @@ test('public events list carries only public tasks as { id, title, stillNeeded }
     assert.deepEqual(afterCancel[0].volunteerTasks, []);
   } finally { await db.close(); }
 });
+
+// ---------- granice ról przy wycofaniu, odwołaniu zadania i kandydatach ----------
+
+test('representative of another class and a treasurer cannot withdraw, cancel, create or list candidates for a class event task', async () => {
+  const db = await tasksDb();
+  try {
+    const eventA = await draftClassEvent(db, board, 'c1a');
+    const task = await createTask(db, board, { eventId: eventA.id, title: 'Dyżur', slotsNeeded: 2, idempotencyKey: key() });
+    const signup = await createSignup(db, repA, { eventId: eventA.id, taskId: task.task.id, guardianId: 'g1', idempotencyKey: key() });
+    const treasurer = { userId: 'board2', grants: [{ role: 'treasurer', classId: null, schoolYearId: null }], mfaVerified: true };
+
+    for (const actor of [repB, treasurer]) {
+      const denied = (error) => ['event_not_found', 'forbidden'].includes(error.code) && [403, 404].includes(error.status);
+      await assert.rejects(withdrawSignup(db, actor, { eventId: eventA.id, taskId: task.task.id, signupId: signup.signup.id }), denied);
+      await assert.rejects(cancelTask(db, actor, { eventId: eventA.id, taskId: task.task.id, reason: 'Odwołanie syntetyczne' }), denied);
+      await assert.rejects(createTask(db, actor, { eventId: eventA.id, title: 'Obce zadanie', slotsNeeded: 1, idempotencyKey: key() }), denied);
+      await assert.rejects(listTaskCandidates(db, actor, { eventId: eventA.id }), denied);
+    }
+    const { tasks } = await listTasks(db, board, { eventId: eventA.id });
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].confirmedCount, 1, 'the signup was not withdrawn by the other class');
+  } finally { await db.close(); }
+});
+
+test('withdrawal cannot reach a signup of another event through a mismatched event id in the path', async () => {
+  const db = await tasksDb();
+  try {
+    const eventA = await draftClassEvent(db, board, 'c1a');
+    const eventB = await draftClassEvent(db, board, 'c1b');
+    const taskA = await createTask(db, board, { eventId: eventA.id, title: 'Dyżur A', slotsNeeded: 1, idempotencyKey: key() });
+    const signupA = await createSignup(db, repA, { eventId: eventA.id, taskId: taskA.task.id, guardianId: 'g1', idempotencyKey: key() });
+
+    // repB legitimately owns event B but supplies task and signup ids of event A.
+    await assert.rejects(
+      withdrawSignup(db, repB, { eventId: eventB.id, taskId: taskA.task.id, signupId: signupA.signup.id }),
+      (error) => error.code === 'event_task_signup_not_found' && error.status === 404,
+    );
+    const { rows } = await db.query('SELECT status FROM event_task_signups WHERE id = $1', [signupA.signup.id]);
+    assert.equal(rows[0].status, 'confirmed');
+    const { rows: audits } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'event.task_signup_withdrawn'");
+    assert.equal(audits[0].n, 0);
+  } finally { await db.close(); }
+});

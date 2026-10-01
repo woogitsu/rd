@@ -70,6 +70,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   class: "Klasa",
   data_access_log: "Dziennik dostępu do danych",
   data_subject_request: "Wniosek osoby, której dane dotyczą",
+  processing_restriction: "Ograniczenie przetwarzania danych",
   document: "Dokument",
   email_campaign: "Kampania e-mail",
   email_outbox: "Wiadomość w kolejce",
@@ -77,6 +78,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   email_suppression_release: "Zwolnienie adresu z listy wstrzymanych",
   email_suppression_release_request: "Prośba o zwolnienie adresu",
   email_provider_pause: "Wstrzymanie wysyłki u dostawcy e-mail",
+  email_send_ledger: "Dziennik dziennego limitu e-mail",
   email_webhook_event: "Zdarzenie dostawcy e-mail",
   audit_review_note: "Uwaga Komisji Rewizyjnej",
   enrollment: "Zapis do klasy",
@@ -139,11 +141,14 @@ export const REASON_LABELS = Object.freeze({
   idle: "bezczynność",
   invalid_password: "błędne hasło",
   invitation: "zaproszenie",
+  reads_without_valid_grant: "odczyty bez ważnego przydziału",
+  school_year_ended: "rok szkolny się zakończył",
   login_succeeded: "udane logowanie",
   logout: "wylogowanie",
   malformed: "błędny adres",
   mfa_reset: "reset weryfikacji dwuetapowej",
   no_consent: "brak zgody",
+  processing_restricted: "ograniczenie przetwarzania (art. 18 RODO)",
   no_payment_reference: "brak aktywnej komunikacji strukturalnej rodziny",
   no_other_admin: "brak innego administratora do zatwierdzenia",
   no_password: "konto bez hasła",
@@ -331,6 +336,24 @@ export function userOptionLabel(user) {
   return `${user?.email ?? "—"} (${shortId(user?.id)})`;
 }
 
+// #128: filtr kont po stronie klienta na już wczytanej liście (e-mail i nazwa bez
+// rozróżniania wielkości liter i polskich znaków diakrytycznych, stan konta).
+const foldText = (value) => String(value ?? "").normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase();
+
+export function filterUsers(users = [], { q = "", state = "" } = {}) {
+  const needle = foldText(q).trim();
+  return users.filter((user) => {
+    if (state === "active" && user.disabledAt) return false;
+    if (state === "disabled" && !user.disabledAt) return false;
+    return !needle || foldText(user.email).includes(needle) || foldText(user.displayName).includes(needle);
+  });
+}
+
+export function usersSummary(shown, loaded, hasMore, filtered) {
+  const head = filtered ? `${shown} z ${loaded} wczytanych kont` : `${loaded} kont`;
+  return `${head}. Konta tworzy wyłącznie przyjęcie zaproszenia.${hasMore ? " Lista jest niepełna — użyj „Pokaż więcej”; filtr działa tylko na wczytanych kontach." : ""}`;
+}
+
 // Podpowiedź w UI (serwer i tak odmawia): czy wycofanie tego przydziału
 // odebrałoby zalogowanemu administratorowi ostatni aktywny dostęp admina.
 export function isOwnLastAdminGrant(grants, actorId, grantId) {
@@ -505,9 +528,22 @@ export const GRANT_REQUEST_KIND_LABELS = Object.freeze({
   invitation: "Zaproszenie z rolą",
 });
 
-export function grantRequestsPath(status = "pending") {
+export function grantRequestsPath(status = "pending", cursor = null) {
   const value = status === "all" || Object.hasOwn(GRANT_REQUEST_STATUS_LABELS, status) ? status : "pending";
-  return `/api/admin/grant-requests?${new URLSearchParams({ status: value })}`;
+  const params = new URLSearchParams({ status: value });
+  if (cursor) params.set("cursor", String(cursor)); // kursor jest nieprzezroczysty i związany ze statusem (#159)
+  return `/api/admin/grant-requests?${params}`;
+}
+
+// #159: kolejna strona wniosków tylko dla tego samego filtra, który wydał kursor,
+// i tylko gdy żadne pobranie nie trwa (blokada podwójnego kliknięcia).
+export function canLoadMoreRequests({ cursor, status, cursorStatus, busy }) {
+  return Boolean(cursor) && !busy && status === cursorStatus;
+}
+
+export function mergeRequestPages(current, page) {
+  const seen = new Set(current.map((item) => item.id));
+  return [...current, ...page.filter((item) => !seen.has(item.id))];
 }
 
 // Wiek wniosku słownie (od utworzenia do `now`); zaokrąglenie w dół.
