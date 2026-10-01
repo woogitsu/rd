@@ -35,7 +35,7 @@
 
       <section class="card" aria-labelledby="users-title">
         <div class="section-heading">
-          <div><h2 id="users-title">Konta</h2><p id="users-summary">Wczytywanie…</p></div>
+          <div><h2 id="users-title">Konta</h2><p id="users-summary" role="status" aria-live="polite">Wczytywanie…</p></div>
         </div>
         <div class="token-box" id="reset-token-box" hidden>
           <p class="token-warning"><strong>Link i kod są widoczne tylko teraz.</strong> Przekaż je osobie osobnym, zaufanym kanałem. Po zamknięciu tej ramki nie da się ich odzyskać — w razie utraty wydaj nowy kod.</p>
@@ -54,6 +54,16 @@
           <p class="hint" id="reset-token-meta"></p>
           <p><button type="button" id="hide-reset-token">Zamknij</button></p>
         </div>
+        <form id="user-filters" class="filters" role="search" aria-label="Filtr kont">
+          <label>Szukaj (e-mail lub nazwa) <input type="search" name="q" autocomplete="off" maxlength="100" /></label>
+          <label>Stan
+            <select name="state">
+              <option value="">Wszystkie</option>
+              <option value="active">Aktywne</option>
+              <option value="disabled">Wyłączone</option>
+            </select>
+          </label>
+        </form>
         <div class="table-wrap">
           <table>
             <caption class="sr-only">Konta</caption>
