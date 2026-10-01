@@ -819,6 +819,9 @@ export async function verifyPhoto(db, actor, input) {
     if (row.rights_status === 'verified') return { photo: internalPhoto(row), replayed: true };
     if (row.rights_status === 'revoked') throw new NewsError('photo_revoked', 409);
     if (row.uploaded_by === actor.userId) throw new NewsError('four_eyes_required', 409);
+    // #124 (WCAG 1.1.1): zdjęcie sprzed 0071 (ograniczenie NOT VALID) może nie mieć
+    // opisu ani deklaracji decorative — nie weryfikujemy go; poprawka = nowy rekord zdjęcia.
+    if (!row.alt_text && !row.decorative) throw new NewsError('alt_text_required', 422);
     const { rows } = await tx.query(
       `UPDATE news_photos SET rights_status = 'verified', rights_verified_by = $2, rights_verified_at = now()
         WHERE id = $1 RETURNING ${PHOTO_COLUMNS}`,
