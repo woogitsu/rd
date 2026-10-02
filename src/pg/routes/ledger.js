@@ -440,10 +440,13 @@ async function recordAuditRead(executor, context, schoolYearId, resource, rowCou
   });
 }
 
-// Wiersz księgi w widoku audit: wpis powiązany z wpłatą nie ujawnia opisu, źródła ani id wpłaty.
+// Wiersz księgi w widoku audit: wpis powiązany z wpłatą nie ujawnia opisu, źródła, referencji uchwały (wolny
+// tekst skarbnika) ani id wpłaty.
 function redactForAudit(row) {
   if (!row.payment_entry_id) return row;
-  return { ...row, payment_entry_id: null, payment_linked: true, description: REDACTED_PAYMENT_DESCRIPTION, source: null };
+  return {
+    ...row, payment_entry_id: null, payment_linked: true, description: REDACTED_PAYMENT_DESCRIPTION, source: null, resolution_reference: null,
+  };
 }
 
 // #184: wywoływana WEWNĄTRZ transakcji zapisu (po odczycie wiersza), więc

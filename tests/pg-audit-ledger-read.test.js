@@ -15,7 +15,7 @@ import { assertEvery } from './helpers/assertions.js';
 const Y1 = 'y-1';
 const Y2 = 'y-2';
 const PDF = new TextEncoder().encode('%PDF-1.4\n% syntetyczny dowod MRK-DOWOD\n1 0 obj <<>> endobj\n%%EOF\n');
-const FAMILY_MARKERS = ['MRK-RODZINA-OPIS', 'MRK-RODZINA-ZRODLO', 'pay-1', 'hh-1'];
+const FAMILY_MARKERS = ['MRK-RODZINA-OPIS', 'MRK-RODZINA-ZRODLO', 'MRK-RODZINA-UCHWALA', 'pay-1', 'hh-1'];
 let seq = 0;
 
 async function withEnv(flag, fn) {
@@ -96,7 +96,7 @@ async function seedFixtures(db, env, sessions) {
   });
   const paymentEntryId = await post({
     schoolYearId: Y1, direction: 'income', amountCents: 5000, categoryId: 'cat-in-1', description: 'Składka MRK-RODZINA-OPIS',
-    occurredOn: '2026-09-21', method: 'bank', paymentEntryId: 'pay-1', source: 'MRK-RODZINA-ZRODLO',
+    occurredOn: '2026-09-21', method: 'bank', paymentEntryId: 'pay-1', source: 'MRK-RODZINA-ZRODLO', resolutionReference: 'MRK-RODZINA-UCHWALA',
   });
   const documents = {
     faktura: await uploadDocument(env, sessions.treasurer, { category: 'faktura' }),
@@ -133,6 +133,7 @@ test('flaga włączona: audit czyta księgę roku (lista, kategorie, podsumowani
   assert.equal(paid.categoryId, 'cat-in-1');
   assert.equal(paid.description, REDACTED_PAYMENT_DESCRIPTION);
   assert.equal(paid.source, null);
+  assert.equal(paid.resolutionReference, null, 'referencja uchwały (wolny tekst) wpisu powiązanego z wpłatą jest ukryta');
   assert.equal(paid.paymentEntryId, null);
   assert.equal(paid.paymentLinked, true);
   assert.equal(expense.paymentLinked, undefined);
