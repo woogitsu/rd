@@ -153,15 +153,15 @@ test('admin (Konta i role): wyłącznie admin', () => {
   assert.deepEqual([...panelById.admin.roles], ['admin']);
 });
 
-test('meetings (Zebrania): admin/board/audit widzą pełne zebrania (MANAGE_ROLES/READ_ROLES), representative — wyłącznie udostępnione protokoły', () => {
-  // src/pg/meetings.js: MANAGE_ROLES=[admin,board], READ_ROLES=[admin,board,audit].
+test('meetings (Zebrania): admin/board/audit/principal widzą zebrania (MANAGE_ROLES/READ_ROLES), representative — wyłącznie udostępnione protokoły', () => {
+  // src/pg/meetings.js: MANAGE_ROLES=[admin,board], READ_ROLES=[admin,board,audit,principal] (dyrekcja tylko odczyt).
   // listSharedMinutes degraduje przedstawiciela do jego własnych klas zamiast
   // odrzucać żądanie (patrz komentarz przy funkcji) — to jedyny wpis PANELS, gdzie
   // suma ról z pojedynczej stałej serwera nie wystarcza, dlatego role są wpisane
   // ręcznie tu i w shared/shell.js, a nie wyciągane regexem z jednej stałej.
   assert.deepEqual(rolesConst('src/pg/meetings.js', 'MANAGE_ROLES'), ['admin', 'board']);
-  assert.deepEqual(rolesConst('src/pg/meetings.js', 'READ_ROLES'), ['admin', 'board', 'audit']);
-  assert.deepEqual([...panelById.meetings.roles].sort(), ['admin', 'audit', 'board', 'representative']);
+  assert.deepEqual(rolesConst('src/pg/meetings.js', 'READ_ROLES'), ['admin', 'board', 'audit', 'principal']);
+  assert.deepEqual([...panelById.meetings.roles].sort(), ['admin', 'audit', 'board', 'principal', 'representative']);
 });
 
 test('audit (Komisja Rewizyjna): tylko rola audit, a ta rola jest w REPORT_ROLES trasy raportu', () => {

@@ -65,7 +65,7 @@ test("meetingsViewMode: role zarządzające/audytu → 'full', sam przedstawicie
   assert.equal(meetingsViewMode([{ role: "representative", classId: "1A" }]), "shared");
   // Rodzeństwo w dwóch klasach — nadal tryb 'shared' (lista i tak filtruje po obu klasach po stronie API).
   assert.equal(meetingsViewMode([{ role: "representative", classId: "1A" }, { role: "representative", classId: "2B" }]), "shared");
-  assert.equal(meetingsViewMode([{ role: "principal" }]), "none");
+  assert.equal(meetingsViewMode([{ role: "principal", schoolYearId: "2026-2027" }]), "full");
   assert.equal(meetingsViewMode([{ role: "treasurer" }]), "none");
   assert.equal(meetingsViewMode([]), "none");
   assert.equal(meetingsViewMode(undefined), "none");

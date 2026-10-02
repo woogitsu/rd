@@ -36,7 +36,7 @@ export const PANELS = Object.freeze([
   { id: "events", href: "/events/", label: "Wydarzenia", roles: ["admin", "board", "representative"] },
   // src/pg/meetings.js — admin/board/audit widzą pełne zebrania; representative wyłącznie
   // udostępnione protokoły (meetings/core.js dostosowuje widok do zakresu).
-  { id: "meetings", href: "/meetings/", label: "Zebrania", roles: ["admin", "board", "audit", "representative"] },
+  { id: "meetings", href: "/meetings/", label: "Zebrania", roles: ["admin", "board", "audit", "principal", "representative"] },
   // src/pg/routes/documents.js DOCUMENT_POLICIES (suma ról wszystkich rodzajów dokumentów).
   { id: "documents", href: "/documents/", label: "Dokumenty", roles: ["admin", "board", "treasurer", "representative"] },
   // src/pg/routes/import.js IMPORT_ROLES.

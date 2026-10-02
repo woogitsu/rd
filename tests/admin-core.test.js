@@ -23,6 +23,8 @@ test('#176: PENDING_DECISION_ROLES zgadza się z ROLE_STATUS (src/pg/auth.js), j
     .map(([role]) => role)
     .sort();
   assert.deepEqual([...PENDING_DECISION_ROLES].sort(), pendingOnServer);
+  assert.ok(Object.keys(ROLE_LABELS).includes('principal'), 'dyrekcja ma etykietę w panelu');
+  assert.equal(roleNeedsPendingDecisionWarning('principal'), false, 'principal ma zakres częściowy od 2026-10-02');
   for (const role of Object.keys(ROLE_LABELS)) {
     assert.equal(roleNeedsPendingDecisionWarning(role), pendingOnServer.includes(role), role);
   }

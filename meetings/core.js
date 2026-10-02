@@ -578,7 +578,7 @@ export function canApproveMinutes(minutesItem, minutes, meeting) {
 export const MEETING_MANAGE_ROLES = Object.freeze(["admin", "board"]);
 // Zgodne z READ_ROLES w src/pg/meetings.js (listMeetings) — jeśli się rozjadą,
 // przedstawiciel znów dostanie 403 na pełnym widoku (#167).
-export const MEETING_READ_ROLES = Object.freeze(["admin", "board", "audit"]);
+export const MEETING_READ_ROLES = Object.freeze(["admin", "board", "audit", "principal"]);
 
 export function canManageMeetings(grants) {
   return (Array.isArray(grants) ? grants : []).some((grant) => MEETING_MANAGE_ROLES.includes(grant?.role));

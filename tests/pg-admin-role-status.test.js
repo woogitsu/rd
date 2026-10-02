@@ -1,6 +1,7 @@
-// #176: stan roli (ROLE_STATUS w src/pg/auth.js) — dyrekcja (`principal`) nie ma dziś
-// żadnej trasy chronionej. Admin nie tworzy takiego zaproszenia bez świadomej flagi,
-// a przydział klasowy dla roli bez tras klasowych jest odrzucany zamiast ciche „nic”.
+// #176: stan roli (ROLE_STATUS w src/pg/auth.js). Dyrekcja (`principal`) ma od 2026-10-02
+// odczyt zebrań i sum zbiorczych (status `partial`), więc zaproszenie nie wymaga flagi;
+// mechanizm `pending_decision` zostaje dla przyszłych ról (dziś żadna go nie ma).
+// Przydział klasowy dla roli bez tras klasowych jest odrzucany zamiast ciche „nic”.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
@@ -22,37 +23,27 @@ async function call(env, path, { cookie, method = 'GET', body, origin } = {}) {
 }
 const post = (env, path, cookie, body = {}) => call(env, path, { method: 'POST', cookie, body });
 
-test('ROLE_STATUS: principal jest "pending_decision", audit "partial", reszta "active"', () => {
-  assert.equal(ROLE_STATUS.principal, 'pending_decision');
+test('ROLE_STATUS: principal i audit są "partial", reszta "active", żadna rola nie jest "pending_decision"', () => {
+  assert.equal(ROLE_STATUS.principal, 'partial');
   assert.equal(ROLE_STATUS.audit, 'partial');
   for (const role of ['admin', 'board', 'treasurer', 'representative']) assert.equal(ROLE_STATUS[role], 'active');
+  const pending = Object.values(ROLE_STATUS).filter((status) => status === 'pending_decision');
+  assert.deepEqual(pending, []);
 });
 
-test('zaproszenie principal jest odrzucane (422 role_pending_decision) bez ALLOW_PENDING_ROLES', async () => {
+test('zaproszenie principal działa bez ALLOW_PENDING_ROLES; podwójne kliknięcie daje jedno zaproszenie', async () => {
   const { db, env, admin } = await setup();
   try {
-    const created = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal' });
-    assert.equal(created.status, 422);
-    assert.equal(created.data.error, 'role_pending_decision');
-    // Inne role bez zmian.
-    const board = await post(env, '/api/admin/invitations', admin, { email: 'zarzad@example.invalid', role: 'board' });
-    assert.equal(board.status, 201);
-  } finally { await db.close(); }
-});
-
-test('ALLOW_PENDING_ROLES=true wyłącza blokadę; podwójne kliknięcie daje jedno zaproszenie', async () => {
-  const { db, env, admin } = await setup({ ALLOW_PENDING_ROLES: 'true' });
-  try {
-    const first = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal' });
+    const first = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal', schoolYearId: 'y-now' });
     assert.equal(first.status, 201);
-    const second = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal' });
+    const second = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal', schoolYearId: 'y-now' });
     assert.equal(second.status, 409);
     assert.equal(second.data.error, 'invitation_pending');
   } finally { await db.close(); }
 });
 
 test('przydział classId dla roli bez tras klasowych → 422 class_scope_not_supported (zaproszenie i przydział bezpośredni)', async () => {
-  const { db, env, admin } = await setup({ ALLOW_PENDING_ROLES: 'true' });
+  const { db, env, admin } = await setup();
   try {
     for (const role of ['board', 'treasurer', 'audit', 'principal', 'admin']) {
       const invited = await post(env, '/api/admin/invitations', admin,

@@ -55,6 +55,8 @@ Wskazania właściciela prototypu, przekazane w sesji roboczej 02.10.2026. To **
 | Wiadomości poza kampaniami rodzin | D-16, D-17 | Szkice do zatwierdzenia | Kod generuje treść z szablonu opisanego w dokumentacji; wysyłka wymaga jawnego zatwierdzenia; nadawca wyłącznie z konfiguracji, bez domyślnego adresu. |
 | Zaproszeni na zebranie zarządu | D-21 | Zarząd, przedstawiciele klas, Komisja Rewizyjna i dyrekcja | Dyrekcja wymaga nowej roli/kont (dziś nie istnieje) — zakres D-08/D-09. |
 | Rola „dyrekcja” | D-08, D-09 | Zebrania + raporty zbiorcze | Nowa rola z kontem: zawiadomienia i odczyt zebrań, porządku, protokołów i uchwał oraz raport roczny i zestawienia zbiorcze (sumy); bez księgi szczegółowej, wpłat i danych rodzin. |
+| Lista obecności w szczegółach zebrania dla dyrekcji | D-09 | Jak dla Komisji Rewizyjnej | Dyrekcja widzi pseudonimowe identyfikatory uczestników (bez imion i e-maili) i powiązania kampanii, tak jak `audit`; ocena IOD. |
+| Zakres roku przydziału dyrekcji | D-08, D-09 | Wymusić rok szkolny | Przydział i zaproszenie `principal` bez roku → `422 school_year_required`; dostęp wygasa z kadencją. |
 
 ## Dane osobowe
 
@@ -190,6 +192,7 @@ Wskazania właściciela prototypu, przekazane w sesji roboczej 02.10.2026. To **
 - Dlaczego: dostęp ról `principal` i `audit` do wpłat i księgi jest wyłączony do czasu decyzji (PAYMENTS.md, LEDGER.md). Dotyczy #4, #6, #7, #35, #137 (ścieżka kontroli KR: uwagi, odpowiedzi skarbnika, protokół — zablokowana tą samą decyzją).
 - Warianty w dokumentacji: PRODUCT.md — Komisja Rewizyjna: odczyt wpłat, odczyt i eksport księgi, minimum danych rodzin; dyrekcja: domyślnie brak dostępu do wpłat, raport zbiorczy księgi.
 - Notatka techniczna (28.09.2026): PR #382 (#125, scalony) dodał `GET /api/reports/annual` (projekt sprawozdania rocznego) i `GET /api/reports/cash-flow` (przepływy bank/kasa per miesiąc) z dostępem wyłącznie dla `board`/`treasurer` z MFA w zakresie roku; role `admin`, `audit`, `principal` i przedstawiciel klasy dostają 403 — wariant zachowawczy wprost opisany w PR jako oczekujący na D-08 i tę decyzję. Skutek: Komisja Rewizyjna i dyrekcja nie widzą dziś przez ten endpoint nawet zagregowanego projektu sprawozdania (KR korzysta z osobnego `/api/reports/audit`).
+- Notatka techniczna (02.10.2026, wskazanie właściciela, nie zatwierdzona macierz D-09): rola dyrekcji to istniejąca `principal` (bez nowej roli i bez migracji — CHECK w `role_grants`/`invitations` od 0001 ją zawiera). Przydział i zaproszenie wymagają roku szkolnego (`422 school_year_required`, wskazanie 2026-10-02). Zakres tylko odczyt: zebrania, porządek obrad, protokoły, uchwały i rejestr uchwał (jak `audit`, bez MFA), oraz `GET /api/reports/annual` i `GET /api/reports/cash-flow` (sumy, z MFA, przydział ogólnoszkolny w roku). Nadal 403: księga szczegółowa, wpłaty, dokumenty, dane rodzin, migawki sprawozdania, uzgodnienia, eksporty. Nadaje wyłącznie admin (nie sobie; audyt `role_grant.created`). Szkoła nadal zatwierdza zakres (D-09).
 - Status: otwarta
 - Data decyzji:
 - Kto zatwierdził:

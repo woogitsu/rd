@@ -122,7 +122,7 @@
 
 import { ProcessingRestrictionError, changeProcessingRestriction, listProcessingRestrictions } from '../processing-restrictions.js';
 import {
-  allowPendingRoles, CLASS_SCOPE_ROLES, insertInvitation, isoTimestamp, normalizeEmail, reissueInvitation, revokeInvitation,
+  allowPendingRoles, CLASS_SCOPE_ROLES, YEAR_SCOPE_REQUIRED_ROLES, insertInvitation, isoTimestamp, normalizeEmail, reissueInvitation, revokeInvitation,
   revokeUserSessions,
   revokeUserSessionsWith, ROLE_STATUS, ROLES,
 } from '../auth.js';
@@ -292,6 +292,8 @@ async function resolveScope(executor, { role, classId, schoolYearId }) {
     if (yearId && yearId !== rows[0].school_year_id) throw new RequestError('class_not_in_school_year', 422);
     yearId = rows[0].school_year_id;
   }
+  // Wskazanie 2026-10-02: przydział dyrekcji tylko na wskazany rok szkolny.
+  if (!yearId && YEAR_SCOPE_REQUIRED_ROLES.includes(role)) throw new RequestError('school_year_required', 422);
   if (yearId) {
     const { rows } = await executor.query('SELECT 1 FROM school_years WHERE id = $1', [yearId]);
     if (!rows[0]) throw new RequestError('school_year_not_found', 422);
@@ -881,6 +883,8 @@ async function reissueInvitationRoute(env, actorId, invitationId, json) {
   } catch (error) {
     // rejectPending w insertInvitation: inne oczekujące zaproszenie o tym samym zakresie.
     if (error?.message === 'invitation_pending') throw new RequestError('invitation_pending', 409);
+    // Zaproszenie dyrekcji sprzed wymogu roku (YEAR_SCOPE_REQUIRED_ROLES) nie jest wydawane ponownie bez roku.
+    if (error?.message === 'school_year_required') throw new RequestError('school_year_required', 422);
     throw error;
   }
   if (created.error === 'invitation_not_found') throw new RequestError('invitation_not_found', 404);

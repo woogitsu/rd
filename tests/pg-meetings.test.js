@@ -478,7 +478,10 @@ test('parents and representatives see only approved minutes explicitly shared wi
     await setMinutesVisibility(db, board, { idempotencyKey: key(), minutesId: v2.id, visibility: 'public' });
     assert.deepEqual((await listPublicMinutes(db, { schoolYearId: 'year' })).minutes.map(item => item.version), [2]);
     await assert.rejects(db.query('DELETE FROM meeting_minutes_publications'), /cannot_be_changed/);
-    await assert.rejects(listSharedMinutes(db, principal, { schoolYearId: 'year' }), { code: 'forbidden' });
+    // Dyrekcja (2026-10-02) ma odczyt jak Komisja Rewizyjna: widzi udostępnione protokoły całego roku.
+    const principalView = (await listSharedMinutes(db, principal, { schoolYearId: 'year' })).minutes;
+    assert.ok(principalView.length > 0, 'dyrekcja widzi udostępnione protokoły');
+    assert.deepEqual(principalView, (await listSharedMinutes(db, auditor, { schoolYearId: 'year' })).minutes);
   } finally { await db.close(); }
 });
 

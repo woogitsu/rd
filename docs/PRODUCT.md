@@ -37,7 +37,7 @@ Szczegóły zakresu (`class_id`/`school_year_id`, MFA) i pełna macierz tras:
 | Zarząd | Księga | zatwierdzenie | zapis wpisów i korekt (`ledger.js`, `FINANCIAL_ROLES`); w kodzie nie ma osobnego kroku „zatwierdzenie” — każdy z `FINANCIAL_ROLES` zapisuje bezpośrednio |
 | Skarbnik | Księga | zapis | zapis wpisów i korekt (`ledger.js`) — zgodne |
 | Komisja rewizyjna | Księga | odczyt i eksport | odczyt raportu uzgodnień (`reconciliation.js`, `REPORT_ROLES`); eksport roczny wyłącznie `admin`/`board` (`exports.js`, `YEARLY_EXPORT_ROLES`) — `audit` nie eksportuje |
-| Dyrekcja | Księga | raport zbiorczy | brak dostępu (`principal` nie jest w `READ_ROLES`/`REPORT_ROLES`) |
+| Dyrekcja | Księga | raport zbiorczy | tylko sumy: `GET /api/reports/annual` i `/api/reports/cash-flow` (MFA, rok przydziału; wskazanie właściciela 2026-10-02); bez księgi szczegółowej, wpłat, dokumentów i migawek |
 | Zarząd, Skarbnik | Korespondencja | (brak w macierzy do #163) | `board`+`treasurer` tworzą/edytują kampanie, wyłącznie `board` zatwierdza (`email.js`, `EDITOR_ROLES`/`APPROVER_ROLES`) |
 | Admin, Zarząd | Import | (brak w macierzy do #163) | `admin`+`board`, tylko z przydziałem bez `class_id` (`import.js`, `IMPORT_ROLES`) |
 | Admin, Zarząd | Eksport roczny | (brak w macierzy do #163) | `admin`+`board` (`exports.js`, `YEARLY_EXPORT_ROLES`); eksport archiwum kadencji wyłącznie `board` (`exports.js`, `ARCHIVE_EXPORT_ROLES`) |

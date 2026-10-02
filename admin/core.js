@@ -17,11 +17,12 @@ export const ROLE_LABELS = Object.freeze({
   principal: "Dyrekcja",
 });
 
-// #176: role bez żadnej trasy chronionej dziś (decyzja D-09 nierozstrzygnięta).
+// #176: role bez żadnej trasy chronionej dziś. Od 2026-10-02 lista jest pusta: dyrekcja
+// (`principal`) ma odczyt zebrań i zbiorczych sum roku (docs/AUTHORIZATION.md).
 // Jedyne źródło prawdy jest po stronie serwera: ROLE_STATUS w src/pg/auth.js
 // (tests/admin-core.test.js sprawdza, że ta lista się z nim zgadza). Front-end
 // ostrzega przed wysłaniem formularza; serwer i tak odrzuca 422 role_pending_decision.
-export const PENDING_DECISION_ROLES = Object.freeze(['principal']);
+export const PENDING_DECISION_ROLES = Object.freeze([]);
 
 export function roleNeedsPendingDecisionWarning(role) {
   return PENDING_DECISION_ROLES.includes(role);
@@ -214,6 +215,7 @@ export const ERROR_MESSAGES = Object.freeze({
   // bez tras klasowych — patrz docs/AUTHORIZATION.md „Stan roli i konto bez funkcji”.
   role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji. Potwierdź świadomie albo wybierz inną rolę.",
   class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
+  school_year_required: "Dyrekcja dostaje przydział tylko na wskazany rok szkolny. Wybierz rok.",
 });
 
 export function errorMessage(code, status) {

@@ -25,10 +25,12 @@ export const ROLES = Object.freeze(['admin', 'board', 'treasurer', 'representati
 // #176: stan roli w kodzie, nie tylko w komentarzach — źródło dla admin/ (formularz
 // zaproszenia i nadania roli), ekranu startowego i tests/pg-authz-matrix.test.js.
 // 'active'          — rola ma dziś co najmniej jedną trasę chronioną.
-// 'partial'         — rola ma dziś część tras (np. audit: tylko GET /api/reports/audit,
-//                      reszta czeka na D-09 — zob. docs/LEDGER.md, issue #137).
-// 'pending_decision' — rola nie ma dziś ŻADNEJ trasy chronionej (docs/AUTHORIZATION.md:
-//                      "Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej").
+// 'partial'         — rola ma dziś część tras (audit: raport KR i odczyt zebrań;
+//                      principal: odczyt zebrań i zbiorcze sumy roku; reszta czeka na D-09 —
+//                      zob. docs/LEDGER.md, issue #137, docs/DECISIONS.md „Wskazania użytkownika 2026-10-02”).
+// 'pending_decision' — rola nie ma dziś ŻADNEJ trasy chronionej. Dziś żadna rola nie ma
+//                      tego stanu (dyrekcja `principal` dostała zakres 2026-10-02), ale mechanizm
+//                      (422 role_pending_decision, hasActiveRole) zostaje dla przyszłych ról.
 // Zmiana tej mapy bez zmiany faktycznych tras w modułach byłaby fałszywą obietnicą
 // (AGENTS.md: „widok publiczny/komunikaty nie mogą obiecywać funkcji, których nie ma”).
 export const ROLE_STATUS = Object.freeze({
@@ -37,7 +39,7 @@ export const ROLE_STATUS = Object.freeze({
   treasurer: 'active',
   representative: 'active',
   audit: 'partial',
-  principal: 'pending_decision',
+  principal: 'partial',
 });
 
 // Zaproszenie/nadanie roli 'pending_decision' jest domyślnie odrzucane (422
@@ -54,6 +56,10 @@ export function allowPendingRoles(env) {
 // (isAuthorizedScoped odfiltrowuje przydziały klasowe), a klasowej dla tych ról
 // nie ma. Tylko `representative` używa classId; inne role go dziś nie obsługują.
 export const CLASS_SCOPE_ROLES = Object.freeze(['representative']);
+// Role, których przydział i zaproszenie MUSZĄ wskazywać rok szkolny (wskazanie właściciela
+// 2026-10-02): dyrekcja zmienia się z kadencją, więc dostęp wygasa razem z rokiem, a
+// przydział bez roku (ważny we wszystkich latach) jest odrzucany kodem school_year_required.
+export const YEAR_SCOPE_REQUIRED_ROLES = Object.freeze(['principal']);
 const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled', 'password_changed', 'password_reset', 'mfa_reset', 'idle']);
 
 export function sessionIdleTimeoutSeconds(env) {
@@ -314,6 +320,7 @@ export async function createInvitation(env, { actorId, email, role, classId = nu
   if (!actorId) throw new Error('actor_required');
   if (!ROLES.includes(role)) throw new Error('invalid_role');
   if (role === 'representative' && !classId) throw new Error('class_required');
+  if (YEAR_SCOPE_REQUIRED_ROLES.includes(role) && !schoolYearId) throw new Error('school_year_required');
   const normalized = normalizeEmail(email);
   return database(env).transaction((tx) => insertInvitation(tx, {
     actorId, email: normalized, role, classId, schoolYearId, ttlSeconds, replacesInvitationId, rejectPending,
@@ -330,6 +337,7 @@ export async function insertInvitation(tx, { actorId, email: normalized, role, c
   if (!actorId) throw new Error('actor_required');
   if (!ROLES.includes(role)) throw new Error('invalid_role');
   if (role === 'representative' && !classId) throw new Error('class_required');
+  if (YEAR_SCOPE_REQUIRED_ROLES.includes(role) && !schoolYearId) throw new Error('school_year_required');
   const ttl = Math.max(60, Math.min(Number(ttlSeconds) || INVITATION_DEFAULT_TTL_SECONDS, INVITATION_MAX_TTL_SECONDS));
   const { secret, tokenHash } = await createSessionSecret();
   const invitationId = crypto.randomUUID();

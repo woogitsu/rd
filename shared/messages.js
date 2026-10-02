@@ -185,6 +185,7 @@ export const MESSAGES = Object.freeze({
   production_requires_flag: "Uruchomienie w środowisku produkcyjnym wymaga jawnego potwierdzenia.",
   role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji.",
   class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
+  school_year_required: "Dyrekcja dostaje przydział tylko na wskazany rok szkolny. Wybierz rok.",
 
   // --- Rejestr żądań osób (RODO, #100) -----------------------------------------------
   subject_required: "Podaj gospodarstwo, opiekuna albo ucznia, którego dotyczy żądanie.",
