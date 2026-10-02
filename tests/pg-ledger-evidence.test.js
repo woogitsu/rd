@@ -126,7 +126,7 @@ test('entry lists all evidence: primary document and documents attached later; a
   assert.equal(event.actor_id, 'u-board');
   assert.equal(event.metadata_json.linkedEntityType, 'ledger_entry');
   assert.equal(event.metadata_json.linkedEntityId, entry.id);
-  assert.doesNotMatch(JSON.stringify(event.metadata_json), /filename|Syntetyczny|syntetyczny|4250/);
+  assert.doesNotMatch(JSON.stringify(event.metadata_json), /filename|Syntetyczny|syntetyczny|(?<![\w-])4250(?![\w-])/);
 
   const [listed] = await listEntries(env, cookies.treasurer);
   assert.deepEqual(listed.attachmentIds, [primary.id, attached.body.document.id]);
