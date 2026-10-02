@@ -8,11 +8,13 @@
 // rozbieżności. Gdy ktoś doda parser typów (lub zmieni PGlite), lista przestaje
 // się zgadzać i test każe zaktualizować dokument — to nie jest naprawa kodu.
 // Plik czyta RD_TEST_PG_URL (npm run test:pg-real); bez niej część na prawdziwym
-// PostgreSQL jest pomijana. Wyłącznie dane syntetyczne, żadnej sieci.
+// PostgreSQL jest pomijana. Strona PGlite używa createPgliteTestDb, bo przy
+// `--all` (RD_TEST_PG_BACKEND=real) createTestDb zwraca prawdziwy PostgreSQL i
+// porównanie traciłoby sens. Wyłącznie dane syntetyczne, żadnej sieci.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { toSafeInteger } from '../src/pg/routes/payments.js';
-import { createTestDb, createRealTestDb } from './helpers/pg.js';
+import { createPgliteTestDb, createRealTestDb } from './helpers/pg.js';
 
 const skip = process.env.RD_TEST_PG_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego PostgreSQL)';
 
@@ -105,7 +107,7 @@ async function withDb(make, fn) {
 }
 
 test('#208/5: typy JS na PGlite — int8, COUNT i SUM(integer) jako number, numeric/uuid jako string, date/timestamptz jako Date', async () => {
-  const actual = await withDb(createTestDb, describeAll);
+  const actual = await withDb(createPgliteTestDb, describeAll);
   assert.deepEqual(actual, EXPECTED_PGLITE);
   assert.ok(Object.keys(actual).length > 20, 'opisano wszystkie kolumny zapytań');
 });
@@ -116,7 +118,7 @@ test('#208/5: typy JS na pg (createPgDatabase) — int8, COUNT i SUM(integer) ja
 });
 
 test('#208/5: rozbieżności PGlite vs pg to dokładnie znana lista — nowa rozbieżność albo parser typów wymaga aktualizacji dokumentu', { skip }, async () => {
-  const pglite = await withDb(createTestDb, describeAll);
+  const pglite = await withDb(createPgliteTestDb, describeAll);
   const real = await withDb(createRealTestDb, describeAll);
   assert.deepEqual(Object.keys(pglite).sort(), Object.keys(real).sort());
   const diverging = Object.keys(pglite).filter((key) => pglite[key] !== real[key]).sort();
@@ -144,7 +146,7 @@ test('#208/5: wartości po konwencji aplikacji (::int, toSafeInteger, to_char) s
       createdAt: col.created_at.toISOString(),
     });
   }
-  const pglite = await withDb(createTestDb, normalized);
+  const pglite = await withDb(createPgliteTestDb, normalized);
   const real = await withDb(createRealTestDb, normalized);
   assert.ok(pglite.length > 100);
   assert.equal(real, pglite);
@@ -159,7 +161,7 @@ test('#208/5: kolumna `date` — PGlite zwraca północ UTC, pg północ lokaln�
     );
     return { iso: row.paid_on.toISOString(), text: row.paid_text };
   }
-  const pglite = await withDb(createTestDb, paidOn);
+  const pglite = await withDb(createPgliteTestDb, paidOn);
   const real = await withDb(createRealTestDb, paidOn);
   assert.equal(pglite.text, '2026-09-01');
   assert.equal(real.text, pglite.text);

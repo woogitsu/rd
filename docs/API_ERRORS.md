@@ -572,6 +572,16 @@ tabelę z tym polem, więc zmiana statusu w trasie wymaga aktualizacji tabeli.
 Wybór 403 albo 404 dla poszczególnych modułów jest założeniem do przeglądu, nie
 zatwierdzoną polityką zarządu ani szkoły.
 
+Tabela opisuje stan domyślny. Od D-09 (#137, wariant b) flaga `AUDIT_LEDGER_READ`
+(domyślnie wyłączona) dopuszcza rolę `audit` do odczytu księgi i dowodów
+finansowych roku; statusy odmowy w modułach `ledger` i `documents` się nie
+zmieniają (403 dla księgi i listy dokumentów, 404 dla szczegółu i treści
+dokumentu — także dla dokumentu spoza dozwolonych kategorii albo powiązanego
+z wpłatą). Zmienia się tylko kod: `audit` z flagą, właściwym rokiem i bez
+potwierdzonego MFA dostaje na trasach księgi i liście dokumentów
+`403 mfa_required` albo `403 mfa_enrollment_required` zamiast `forbidden`
+(#161); bez flagi — zwykłe `403 forbidden`.
+
 | Moduł | Statusy odmowy |
 | --- | --- |
 | admin | 403 |
