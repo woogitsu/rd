@@ -88,6 +88,7 @@ export const ERROR_MESSAGES = Object.freeze({
   method_not_allowed: "Operacja niedozwolona.",
   invalid_disposition: "Nieznany sposób otwarcia pliku. Użyj podglądu albo pobrania.",
   document_preview_unsupported: "Podglądu tego typu pliku nie ma. Pobierz plik.",
+  pdf_inline_not_allowed: "Podgląd PDF działa tylko w panelu (PDF.js), bez wbudowanego czytnika przeglądarki. Otwórz dokument w panelu albo pobierz plik.",
   document_preview_blocked: "Ten plik nie przechodzi bieżącej kontroli struktury, więc nie otworzy się w panelu. Można go pobrać; zgłoś go administratorowi.",
 });
 
@@ -255,8 +256,10 @@ export function contentUrl(id) {
   return `${metadataUrl(id)}/content`;
 }
 
-// Podgląd (#89): ten sam autoryzowany adres serwera, z `disposition=inline`.
-// Sesja i uprawnienia są sprawdzane przy każdym żądaniu; adres nie zawiera tokenu.
+// Podgląd (#89): ten sam autoryzowany adres serwera. Obrazy: `disposition=inline`;
+// PDF nie jest wydawany inline (400 pdf_inline_not_allowed) — bajty do PDF.js idą z
+// `purpose=preview` (załącznik, zdarzenie document.viewed). Sesja i uprawnienia są
+// sprawdzane przy każdym żądaniu; adres nie zawiera tokenu.
 export const PREVIEW_MIME = Object.freeze({ "application/pdf": "pdf", "image/png": "image", "image/jpeg": "image" });
 
 export function previewKind(mime) {
@@ -265,6 +268,10 @@ export function previewKind(mime) {
 
 export function previewUrl(id) {
   return `${contentUrl(id)}?disposition=inline`;
+}
+
+export function pdfPreviewUrl(id) {
+  return `${contentUrl(id)}?purpose=preview`;
 }
 
 export function descriptionUrl(id) {

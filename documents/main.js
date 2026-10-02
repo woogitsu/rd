@@ -23,6 +23,7 @@ import {
   makeIdempotencyKey,
   metadataRows,
   metadataUrl,
+  pdfPreviewUrl,
   previewKind,
   previewUrl,
   replacementCandidates,
@@ -72,11 +73,9 @@ const detailsPreview = byId("details-preview");
 const previewArea = byId("preview-area");
 const previewMessage = byId("preview-message");
 const previewImage = byId("preview-image");
-const previewFrame = byId("preview-frame");
-// Przegląd demo 3: Chromium blokuje PDF w <iframe sandbox=""> („This page has been
-// blocked”). Ramka zostaje (inne przeglądarki), a obok jest link do tego samego
-// adresu jako osobna karta — odpowiedź nadal ma CSP `sandbox`, więc bez skryptów.
-const previewOpenTab = byId("preview-open-tab");
+const previewPdf = byId("preview-pdf");
+let pdfPreview = null;
+let previewToken = 0;
 const descriptionHistory = byId("description-history");
 const descriptionForm = byId("description-form");
 const descriptionStatus = byId("description-status");
@@ -463,18 +462,54 @@ statusForm.addEventListener("submit", async (event) => {
 });
 
 function clearPreview() {
+  previewToken += 1;
+  pdfPreview?.destroy();
+  pdfPreview = null;
   previewImage.hidden = true;
   previewImage.removeAttribute("src");
-  previewFrame.hidden = true;
-  previewFrame.removeAttribute("src");
-  previewOpenTab.hidden = true;
-  previewOpenTab.setAttribute("href", "#");
+  previewPdf.hidden = true;
+  previewPdf.replaceChildren();
   previewArea.hidden = true;
   previewMessage.textContent = "";
 }
 
-// Podgląd (#89): obraz przez <img>, PDF w <iframe sandbox=""> (bez skryptów, bez
-// dostępu do originu panelu). Adres to autoryzowany endpoint serwera, nie token.
+function previewFailure(text) {
+  previewMessage.className = "message error";
+  previewMessage.textContent = text;
+}
+
+const PREVIEW_FAILED = "Nie udało się wczytać podglądu. Sesja mogła wygasnąć, brak dostępu albo plik nie przechodzi bieżącej kontroli struktury — spróbuj pobrać plik.";
+
+// PDF (#89, PDF.js): bajty z autoryzowanego endpointu (purpose=preview, zdarzenie
+// document.viewed), render stron do canvas biblioteką dołączoną do panelu — bez ramki,
+// bez wbudowanego czytnika przeglądarki.
+async function showPdf(id, token) {
+  try {
+    const response = await fetch(pdfPreviewUrl(id), { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/pdf" } });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      if (token === previewToken) previewFailure(apiErrorText(response.status, body));
+      return;
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (token !== previewToken) return;
+    previewPdf.hidden = false;
+    const { mountPdfPreview } = await import("./pdf-preview.js");
+    let failed = false;
+    const mounted = await mountPdfPreview(previewPdf, bytes, { onError: () => { failed = true; previewFailure(PREVIEW_FAILED); } });
+    if (token !== previewToken) { mounted.destroy(); return; }
+    pdfPreview = mounted;
+    if (!failed) previewMessage.textContent = "";
+  } catch {
+    if (token === previewToken) {
+      previewPdf.hidden = true;
+      previewFailure(PREVIEW_FAILED);
+    }
+  }
+}
+
+// Podgląd (#89): obraz przez <img> (inline), PDF przez PDF.js. Adres to autoryzowany
+// endpoint serwera, nie token.
 detailsPreview.addEventListener("click", () => {
   const id = state.currentDocumentId;
   if (!id) return;
@@ -484,21 +519,17 @@ detailsPreview.addEventListener("click", () => {
   previewArea.hidden = false;
   previewMessage.className = "message";
   previewMessage.textContent = "Wczytywanie podglądu…";
-  const target = kind === "image" ? previewImage : previewFrame;
-  target.addEventListener("load", () => { previewMessage.textContent = ""; }, { once: true });
-  if (kind === "image") {
-    previewImage.addEventListener("error", () => {
-      previewMessage.className = "message error";
-      previewMessage.textContent = "Nie udało się wczytać podglądu. Sesja mogła wygasnąć, brak dostępu albo plik nie przechodzi bieżącej kontroli struktury — spróbuj pobrać plik.";
-      previewImage.hidden = true;
-    }, { once: true });
-  }
-  target.src = previewUrl(id);
-  target.hidden = false;
   if (kind === "pdf") {
-    previewOpenTab.setAttribute("href", previewUrl(id));
-    previewOpenTab.hidden = false;
+    showPdf(id, previewToken);
+    return;
   }
+  previewImage.addEventListener("load", () => { previewMessage.textContent = ""; }, { once: true });
+  previewImage.addEventListener("error", () => {
+    previewFailure(PREVIEW_FAILED);
+    previewImage.hidden = true;
+  }, { once: true });
+  previewImage.src = previewUrl(id);
+  previewImage.hidden = false;
 });
 
 // #124: fokus wraca do „Szczegóły” tego samego dokumentu. Lista mogła zostać

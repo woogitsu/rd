@@ -382,6 +382,7 @@ wpisów).
 | `payment_reference_already_active` | To gospodarstwo ma już aktywną referencję płatności w tym roku. Najpierw ją unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_reference_already_revoked` | Ta referencja płatności jest już unieważniona. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_reference_not_found` | Nie znaleziono referencji płatności. | Nie — popraw dane żądania. |
+| `pdf_inline_not_allowed` | Podgląd PDF działa tylko w panelu (PDF.js), bez wbudowanego czytnika przeglądarki. Otwórz dokument w panelu albo pobierz plik. | Nie — popraw dane żądania. |
 | `pending_admin_invitation` | Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
 | `personal_data_forbidden` | Tekst zawiera adres e-mail, numer rachunku (IBAN) albo numer rejestru krajowego. Ten zapis jest niezmienny i trafia do eksportu — usuń te dane osobowe i zapisz ponownie (nie można tego potwierdzić). | Nie — popraw dane żądania. |
 | `photo_file_exists` | To zdjęcie ma już przesłany inny plik. Zarejestruj nowe zdjęcie, żeby przesłać inny plik. | Nie — popraw dane żądania. |
