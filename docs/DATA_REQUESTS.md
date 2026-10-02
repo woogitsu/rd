@@ -90,6 +90,7 @@ W tej samej transakcji co budowa paczki (awaria zapisu = brak pliku):
   - Powiązanie z rejestrem (`dataRequestId`): tylko admin (rejestr widzi wyłącznie admin, D-07/D-08); żądanie musi być rodzaju `rectification`, po `identity_verified`, niezamknięte i dotyczyć tej osoby, jej gospodarstwa, dziecka lub opiekuna (409 `data_request_kind_not_rectification`, `data_request_identity_not_verified`, `data_request_closed`, `data_request_subject_mismatch`; 404 `data_request_not_found`). Trasa NIE zamyka żądania — robi to administrator (`answered`/`rejected`).
   - Eksport danych rodziny zawiera tę historię (imiona przed/po, bez powodu); eksport roczny jej nie zawiera (wariant zachowawczy); anonimizacja gospodarstwa zastępuje imiona w historii wartością `[zanonimizowano]` i zeruje powód.
   - Poza zakresem: propagacja do już wysłanych wiadomości, wydruków i kopii zapasowych (dług jak w RETENCJI); zakres sprostowania innych danych (adres, data urodzenia) — nie ma ich w schemacie.
+- **Retencja dziennika odczytów i historii sprostowań** (wskazanie D-04 z 2026-10-02, do formalnego potwierdzenia): ani `data_access_log`, ani `identity_changes` nie są usuwane automatycznie. Usunięcie na żądanie osoby oznacza wyłącznie anonimizację gospodarstwa. Zastępuje ona imiona w `identity_changes`, a `data_access_log` (same identyfikatory) zostawia bez zmian. Szczegóły: [RETENTION.md](RETENTION.md), „Dziennik odczytów i historia sprostowań”.
 
 ## Ograniczenie przetwarzania (art. 18 RODO)
 
