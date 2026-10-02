@@ -51,9 +51,10 @@ import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
 import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
-  AUDIENCES, MEETING_AUDIENCES, parseCampaignContent, recipientsHash, renderMessage, sha256Hex, verifyPreferencesToken,
-  SAMPLE_STRUCTURED_REFERENCE, usesPaymentInstructions, usesStructuredReference,
+  AUDIENCES, inviteeGrantSql, isAccountAudience, MEETING_AUDIENCES, MEETING_INVITEE_ROLES, parseCampaignContent, recipientsHash, renderMessage,
+  sha256Hex, verifyPreferencesToken, SAMPLE_STRUCTURED_REFERENCE, usesPaymentInstructions, usesStructuredReference,
 } from '../../email/content.js';
+import { meetingNoticeCampaignStale } from '../meetings.js';
 import { campaignPaymentInstructions, loadCurrentPaymentInstructions } from './payment-instructions.js';
 import { campaignPrivacyNotice, loadPublishedNotice } from './privacy-notice.js';
 import { estimateSchedule } from '../../email/schedule.js';
@@ -429,6 +430,7 @@ async function updateCampaign(request, env, id, json) {
 // Przy opiece naprzemiennej drugie gospodarstwo nie dostaje osobnej wiadomości
 // (założenie do D-11/D-17). `on` ('YYYY-MM-DD') domyślnie = rd_today() (Bruksela).
 export async function computeSnapshot(executor, campaign, { on = null } = {}) {
+  if (isAccountAudience(campaign.audience)) return computeAccountSnapshot(executor, campaign);
   if (campaign.audience === 'class_households' && !campaign.class_id) throw new Error('class_households_requires_class');
   // #139: uzupełnienie obejmuje wyłącznie rodziny z kampanii źródłowej, których
   // wiersz ma ZATWIERDZONE (cztery oczy) „nie wyszła”; pozostałe reguły doboru
@@ -532,6 +534,61 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
   return { recipients, exclusions, hash: recipientsHash(recipients) };
 }
 
+// 0183 (#113, D-21 — wskazanie właściciela 2026-10-02): odbiorcy zawiadomienia
+// o zebraniu zarządu to KONTA, nie rodziny. Kandydat = konto z co najmniej jednym
+// aktywnym przydziałem (nie cofniętym, nie wygasłym) roli z MEETING_INVITEE_ROLES
+// (board, treasurer, representative, audit, principal),
+// obowiązującym w roku kampanii: przydział z tym rokiem albo bez roku (bez roku
+// obowiązuje we wszystkich latach — tak samo liczy go resolver zakresu scope.js;
+// `principal` ma dziś wymóg roku przy nadawaniu). Przydział klasowy (przedstawiciel,
+// także zarząd z klasą) w tym roku też się liczy. Konto z kilkoma przydziałami =
+// jeden kandydat (jedna wiadomość). Adres = users.email. Konto wyłączone → wykluczenie
+// account_disabled; dalej te same reguły co dla rodzin: poprawny adres, wypisanie
+// z kategorii (opted_out), aktywna blokada adresu (suppressed), ten sam adres
+// dwa razy (duplicate_address). Ograniczenie przetwarzania (#100) dotyczy rodzin
+// i opiekunów, nie kont — nie jest tu sprawdzane.
+async function computeAccountSnapshot(executor, campaign) {
+  const { rows: candidates } = await executor.query(
+    `SELECT u.id AS user_id, u.email, u.disabled_at IS NOT NULL AS disabled
+       FROM users u
+      WHERE ${inviteeGrantSql({ user: 'u.id', roles: '$2::text[]', at: 'now()', year: '$1' })}
+      ORDER BY u.id`,
+    [campaign.school_year_id, MEETING_INVITEE_ROLES],
+  );
+  for (const row of candidates) {
+    row.normalized = normalizeEmail(row.email);
+    row.hash = row.normalized ? emailHash(row.normalized) : null;
+  }
+  const hashes = candidates.map((row) => row.hash).filter(Boolean);
+  const suppressed = new Set();
+  const optedOut = new Set();
+  if (hashes.length) {
+    const { rows } = await executor.query('SELECT email_hash FROM email_active_suppressions WHERE email_hash = ANY($1::text[])', [hashes]);
+    for (const row of rows) suppressed.add(row.email_hash);
+    const { rows: prefRows } = await executor.query(
+      `SELECT DISTINCT ON (email_hash) email_hash, action FROM email_preferences_events
+        WHERE email_hash = ANY($1::text[]) AND category = $2
+        ORDER BY email_hash, created_at DESC, id DESC`,
+      [hashes, campaign.category],
+    );
+    for (const row of prefRows) if (row.action === 'opt_out') optedOut.add(row.email_hash);
+  }
+  const recipients = [];
+  const exclusions = [];
+  const used = new Set();
+  for (const row of candidates) {
+    const userId = row.user_id;
+    if (row.disabled) { exclusions.push({ userId, reason: 'account_disabled' }); continue; }
+    if (!row.normalized) { exclusions.push({ userId, reason: 'no_valid_email' }); continue; }
+    if (optedOut.has(row.hash)) { exclusions.push({ userId, reason: 'opted_out' }); continue; }
+    if (suppressed.has(row.hash)) { exclusions.push({ userId, reason: 'suppressed' }); continue; }
+    if (used.has(row.hash)) { exclusions.push({ userId, reason: 'duplicate_address' }); continue; }
+    used.add(row.hash);
+    recipients.push({ userId, email: row.normalized, emailHash: row.hash });
+  }
+  return { recipients, exclusions, hash: recipientsHash(recipients) };
+}
+
 // Rodziny z aktywną (nieunieważnioną) komunikacją strukturalną w roku (#83).
 async function activeReferenceHouseholds(executor, schoolYearId) {
   const { rows } = await executor.query(
@@ -578,6 +635,7 @@ async function followupHouseholds(executor, campaign) {
 // to zarządowi PRZED wysyłką i zachęca do przebudowania migawki (nowe zatwierdzenie).
 // Zwraca liczniki wg powodu, bez identyfikatorów osób.
 export async function staleRecipientCounts(executor, campaign, { on = null } = {}) {
+  if (isAccountAudience(campaign.audience)) return staleAccountCounts(executor, campaign);
   const { rows } = await executor.query(
     `WITH d AS (SELECT COALESCE($3::date, rd_today()) AS on_date)
      SELECT CASE
@@ -615,6 +673,26 @@ export async function staleRecipientCounts(executor, campaign, { on = null } = {
   return counts;
 }
 
+// 0183: konta zaproszonych, które po migawce przestały się kwalifikować — te same
+// warunki co worker tuż przed wysyłką (konto wyłączone, brak aktywnego przydziału
+// zapraszanej roli w roku, zmiana adresu konta). Liczniki wg powodu, bez identyfikatorów.
+async function staleAccountCounts(executor, campaign) {
+  const { rows } = await executor.query(
+    `SELECT CASE
+              WHEN u.id IS NULL OR u.disabled_at IS NOT NULL THEN 'account_disabled'
+              WHEN NOT ${inviteeGrantSql({ user: 'u.id', roles: '$3::text[]', at: 'now()', year: '$2' })} THEN 'role_grant_inactive'
+              WHEN lower(btrim(u.email)) <> r.email THEN 'account_address_changed'
+            END AS reason
+       FROM email_campaign_recipients r
+       LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.campaign_id = $1`,
+    [campaign.id, campaign.school_year_id, MEETING_INVITEE_ROLES],
+  );
+  const counts = {};
+  for (const row of rows) if (row.reason) counts[row.reason] = (counts[row.reason] ?? 0) + 1;
+  return counts;
+}
+
 async function buildSnapshot(request, env, id, json) {
   const { context } = await campaignFor(request, env, id, EDITOR_ROLES);
   const actorId = context.session.user.id;
@@ -633,20 +711,23 @@ async function buildSnapshot(request, env, id, json) {
       await tx.query('DELETE FROM email_campaign_recipients WHERE campaign_id = $1', [id]);
       await tx.query('DELETE FROM email_campaign_exclusions WHERE campaign_id = $1', [id]);
       const snapshot = await computeSnapshot(tx, campaign, { on: effectiveDay(env) });
+      // 0183: wiersz migawki to rodzina (household_id + guardian_id) albo konto (user_id).
       if (snapshot.recipients.length) {
         await tx.query(
-          `INSERT INTO email_campaign_recipients (id, campaign_id, household_id, guardian_id, email, email_hash)
-           SELECT gen_random_uuid()::text, $1, h, g, e, x
-             FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS t(h, g, e, x)`,
-          [id, snapshot.recipients.map((r) => r.householdId), snapshot.recipients.map((r) => r.guardianId),
+          `INSERT INTO email_campaign_recipients (id, campaign_id, household_id, guardian_id, user_id, email, email_hash)
+           SELECT gen_random_uuid()::text, $1, h, g, u, e, x
+             FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) AS t(h, g, u, e, x)`,
+          [id, snapshot.recipients.map((r) => r.householdId ?? null), snapshot.recipients.map((r) => r.guardianId ?? null),
+            snapshot.recipients.map((r) => r.userId ?? null),
             snapshot.recipients.map((r) => r.email), snapshot.recipients.map((r) => r.emailHash)],
         );
       }
       if (snapshot.exclusions.length) {
         await tx.query(
-          `INSERT INTO email_campaign_exclusions (campaign_id, household_id, reason)
-           SELECT $1, h, r FROM unnest($2::text[], $3::text[]) AS t(h, r)`,
-          [id, snapshot.exclusions.map((e) => e.householdId), snapshot.exclusions.map((e) => e.reason)],
+          `INSERT INTO email_campaign_exclusions (campaign_id, household_id, user_id, reason)
+           SELECT $1, h, u, r FROM unnest($2::text[], $3::text[], $4::text[]) AS t(h, u, r)`,
+          [id, snapshot.exclusions.map((e) => e.householdId ?? null), snapshot.exclusions.map((e) => e.userId ?? null),
+            snapshot.exclusions.map((e) => e.reason)],
         );
       }
       await tx.query(
@@ -682,8 +763,8 @@ function summarizeExclusions(list) {
 
 async function loadRecipients(executor, campaignId) {
   const { rows } = await executor.query(
-    `SELECT household_id, guardian_id, email, email_hash FROM email_campaign_recipients
-      WHERE campaign_id = $1 ORDER BY household_id`,
+    `SELECT household_id, guardian_id, user_id, email, email_hash FROM email_campaign_recipients
+      WHERE campaign_id = $1 ORDER BY household_id, user_id`,
     [campaignId],
   );
   return rows;
@@ -699,6 +780,7 @@ async function preview(request, env, id, json) {
     'SELECT reason, COUNT(*)::int AS n FROM email_campaign_exclusions WHERE campaign_id = $1 GROUP BY reason ORDER BY reason',
     [id],
   );
+  const accountAudience = isAccountAudience(campaign.audience);
   const sampleHousehold = recipients[0]?.household_id ?? 'PRZYKLAD';
   const sampleEmailHash = recipients[0]?.email_hash ?? emailHash('podglad@example.invalid');
   const sampleUnsubscribeUrl = unsubscribeUrlFor(config, { campaignId: campaign.id, category: campaign.category, emailHash: sampleEmailHash });
@@ -735,7 +817,11 @@ async function preview(request, env, id, json) {
     snapshotCurrent: campaign.recipients_hash ? recipientsHash(recipients) === campaign.recipients_hash : null,
     recipientsCount: count,
     exclusions: Object.fromEntries(exclusions.map((row) => [row.reason, row.n])),
-    sample: { householdId: sampleHousehold, recipient: recipients[0] ? maskEmail(recipients[0].email) : null, ...sample },
+    sample: {
+      householdId: accountAudience ? null : sampleHousehold,
+      ...(accountAudience ? { userId: recipients[0]?.user_id ?? null } : {}),
+      recipient: recipients[0] ? maskEmail(recipients[0].email) : null, ...sample,
+    },
     plan: {
       dailyCap, days: planDays(count, dailyCap, config),
       accountDailyLimit: config.dailyLimit, reservedForOtherMail: config.dailyReserved,
@@ -750,8 +836,10 @@ async function preview(request, env, id, json) {
       },
       ...estimateSchedule({ now: new Date(), sendNotBefore: campaign.send_not_before, days: planDays(count, dailyCap, config), sendWindow: config.sendWindow }),
     },
-    warnings: [...contentWarnings({ bodyText: campaign.body_text }), ...paymentWarnings,
-      ...(privacyNotice ? [] : ['privacy_notice_missing'])],
+    warnings: [...contentWarnings({ bodyText: campaign.body_text, audience: campaign.audience }), ...paymentWarnings,
+      ...(privacyNotice ? [] : ['privacy_notice_missing']),
+      // #113: zawiadomienie zmieniło się po utworzeniu szkicu (porządek, termin, nowa wersja).
+      ...(await meetingNoticeCampaignStale(env.db, campaign) ? ['notice_outdated'] : [])],
     // #145: wersja informacji w stopce podglądu (bez treści informacji).
     privacyNotice: privacyNotice ? { id: privacyNotice.id, version: privacyNotice.version } : null,
     // #92: wersja danych do wpłaty użyta w podglądzie (bez IBAN — ten jest w sample.text).
@@ -773,19 +861,24 @@ async function listRecipients(request, env, id, url, json) {
   const scope = JSON.stringify(['recipients', id]);
   const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'text', scope }, fail);
   const values = [id];
-  const after = cursor ? `AND ${afterTupleAscSql(['household_id', 'id'], [cursor.key, cursor.id], values)}` : '';
+  // 0183: kampania do kont — kursor po (user_id, id) zamiast (household_id, id).
+  const keyColumn = isAccountAudience(campaign.audience) ? 'user_id' : 'household_id';
+  const after = cursor ? `AND ${afterTupleAscSql([keyColumn, 'id'], [cursor.key, cursor.id], values)}` : '';
   const { rows } = await env.db.query(
-    `SELECT id, household_id, guardian_id, email FROM email_campaign_recipients
-      WHERE campaign_id = $1 ${after} ORDER BY household_id, id LIMIT ${limit + 1}`,
+    `SELECT id, household_id, guardian_id, user_id, email FROM email_campaign_recipients
+      WHERE campaign_id = $1 ${after} ORDER BY ${keyColumn}, id LIMIT ${limit + 1}`,
     values,
   );
-  const page = pageOf(rows, limit, (row) => ({ key: row.household_id, id: row.id }), scope);
+  const page = pageOf(rows, limit, (row) => ({ key: row[keyColumn], id: row.id }), scope);
   await insertAuditEvent(env.db, {
     actorId: context.session.user.id, action: 'email.recipients.viewed', entityType: 'email_campaign', entityId: id,
     metadata: { schoolYearId: campaign.school_year_id, continued: Boolean(cursor), recipientsHash: campaign.recipients_hash ?? null },
   });
   return json({
-    recipients: page.items.map((row) => ({ householdId: row.household_id, guardianId: row.guardian_id, email: row.email })),
+    recipients: page.items.map((row) => ({
+      householdId: row.household_id ?? null, guardianId: row.guardian_id ?? null,
+      ...(row.user_id ? { userId: row.user_id } : {}), email: row.email,
+    })),
     nextCursor: page.nextCursor, truncated: page.truncated, limit: page.limit,
   });
 }
@@ -826,6 +919,15 @@ function assertPrivacyNoticeRecorded(campaign) {
   if (!campaign.privacy_notice_id) throw new RequestError('privacy_notice_missing', 409);
 }
 
+// #113: kampania z zawiadomienia o zebraniu jest kopią treści wersji zawiadomienia.
+// Zmiana porządku obrad (także kolejności), terminu, miejsca lub tytułu zebrania albo
+// nowsza wersja zawiadomienia po utworzeniu szkicu → 409 notice_outdated przy
+// zatwierdzeniu, kolejce i wznowieniu (worker pomija taką kampanię). Nowa wersja
+// zawiadomienia daje nowy szkic kampanii do zatwierdzenia.
+async function assertMeetingNoticeCurrent(executor, campaign) {
+  if (await meetingNoticeCampaignStale(executor, campaign)) throw new RequestError('notice_outdated', 409);
+}
+
 async function approve(request, env, id, json) {
   const data = await readJson(request);
   if (!HASH_PATTERN.test(data.contentHash ?? '') || !HASH_PATTERN.test(data.recipientsHash ?? '')) {
@@ -863,6 +965,7 @@ async function approve(request, env, id, json) {
         throw new RequestError('approval_stale', 409);
       }
       if (!recipients.length) throw new RequestError('no_recipients', 409);
+      await assertMeetingNoticeCurrent(tx, campaign);
       // #92: treść z {rachunek}/{odbiorca} wymaga zatwierdzonej wersji danych do
       // wpłaty roku — tej samej, którą zatwierdzający widział w podglądzie (jak
       // skróty treści i odbiorców). Jej identyfikator trafia do kampanii
@@ -931,11 +1034,14 @@ async function queue(request, env, id, json) {
       }
       await assertPaymentInstructionsCurrent(tx, campaign);
       assertPrivacyNoticeRecorded(campaign);
+      await assertMeetingNoticeCurrent(tx, campaign);
       const dailyCap = campaignDailyCap(recipients.length, config);
+      // Klucz idempotencji: kampania + rodzina albo (0183) kampania + konto.
       const { rows: inserted } = await tx.query(
-        `INSERT INTO email_outbox (id, campaign_id, household_id, recipient_id, idempotency_key)
-         SELECT gen_random_uuid()::text, r.campaign_id, r.household_id, r.id,
-                'campaign:' || r.campaign_id || ':household:' || r.household_id
+        `INSERT INTO email_outbox (id, campaign_id, household_id, user_id, recipient_id, idempotency_key)
+         SELECT gen_random_uuid()::text, r.campaign_id, r.household_id, r.user_id, r.id,
+                'campaign:' || r.campaign_id || CASE WHEN r.user_id IS NOT NULL THEN ':user:' || r.user_id
+                                                     ELSE ':household:' || r.household_id END
            FROM email_campaign_recipients r WHERE r.campaign_id = $1
          ON CONFLICT (idempotency_key) DO NOTHING
          RETURNING id`,
@@ -1000,6 +1106,7 @@ async function resume(request, env, id, json) {
       // kampanii z {rachunek}/{odbiorca} — wznowienie odmawia, worker i tak by ją pominął.
       await assertPaymentInstructionsCurrent(tx, campaign);
       assertPrivacyNoticeRecorded(campaign);
+      await assertMeetingNoticeCurrent(tx, campaign);
       const { rows } = await tx.query(
         `UPDATE email_campaigns SET status = 'sending', resumed_by = $2, resumed_at = now()
           WHERE id = $1 RETURNING ${CAMPAIGN_COLUMNS.replaceAll('c.', '')}`,
@@ -1799,6 +1906,8 @@ async function createFollowup(request, env, id, json) {
       if (existing) return existing;
       const source = await loadCampaign(tx, id, { lock: true });
       if (!FOLLOWUP_SOURCE_STATUSES.includes(source.status)) throw new RequestError('followup_source_not_eligible', 409);
+      // 0183: uzupełnienie dotyczy wyłącznie rodzin — nie kampanii do kont (trigger bazy to samo).
+      if (isAccountAudience(source.audience)) throw new RequestError('followup_source_not_eligible', 409);
       const households = await followupHouseholds(tx, { id: null, source_campaign_id: id });
       const eligible = households.eligible.filter((householdId) => !households.covered.has(householdId));
       if (!eligible.length) throw new RequestError('followup_no_households', 409);
@@ -1957,7 +2066,7 @@ async function recordWebhookEvent(db, event) {
   const dedupeKey = sha256Hex(JSON.stringify([eventName, messageId, event.id ?? null, event.ts_event ?? event.date ?? null, hash]));
   return db.transaction(async (tx) => {
     const { rows: outboxRows } = await tx.query(
-      `SELECT o.id, o.state, o.campaign_id, c.school_year_id, r.guardian_id, r.email_hash, c.category
+      `SELECT o.id, o.state, o.campaign_id, c.school_year_id, r.guardian_id, r.user_id, r.email_hash, c.category
          FROM email_outbox o JOIN email_campaign_recipients r ON r.id = o.recipient_id
               JOIN email_campaigns c ON c.id = o.campaign_id
         WHERE ($1::text IS NOT NULL AND o.provider_message_id = $1) OR ($2::text IS NOT NULL AND o.id = $2)
@@ -2019,6 +2128,8 @@ async function recordWebhookEvent(db, event) {
       entityId: outbox?.id ?? eventId,
       metadata: {
         event: eventName, reason, guardianId: outbox?.guardian_id ?? null,
+        // 0183: adres konta (zawiadomienie o zebraniu zarządu) — identyfikator konta, bez adresu.
+        ...(outbox?.user_id ? { userId: outbox.user_id } : {}),
         campaignId: outbox?.campaign_id ?? null, schoolYearId: outbox?.school_year_id ?? null,
       },
     });

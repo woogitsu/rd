@@ -510,14 +510,16 @@ const recipientsBody = byId("recipients-body");
 
 function recipientRow(entry) {
   const row = document.createElement("tr");
-  row.append(textCell(entry.householdId));
+  // 0183: odbiorcą zawiadomienia o zebraniu zarządu jest konto, nie rodzina.
+  const subject = entry.householdId ? `rodziny ${entry.householdId}` : `konta ${entry.userId}`;
+  row.append(textCell(entry.householdId ?? `konto ${entry.userId}`));
   const emailCell = document.createElement("td");
   const button = document.createElement("button");
   button.type = "button";
   button.className = "reveal";
   button.textContent = maskEmail(entry.email);
   button.dataset.revealed = "false";
-  button.setAttribute("aria-label", `Pokaż pełny adres dla rodziny ${entry.householdId}`);
+  button.setAttribute("aria-label", `Pokaż pełny adres dla ${subject}`);
   button.addEventListener("click", () => {
     const revealed = button.dataset.revealed === "true";
     button.textContent = revealed ? maskEmail(entry.email) : entry.email;

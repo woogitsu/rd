@@ -19719,7 +19719,6 @@
           "nothing_to_extend",
           "nothing_to_promote",
           "notice_calendar_unavailable",
-          "notice_campaign_audience_unsupported",
           "notice_four_eyes_required",
           "notice_not_approved",
           "notice_not_found",
@@ -21461,11 +21460,6 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
-        "code": "notice_campaign_audience_unsupported",
-        "meaning": "Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana.",
-        "retry": "Nie — popraw dane żądania."
-      },
-      {
         "code": "notice_four_eyes_required",
         "meaning": "Zawiadomienie zatwierdza inna osoba niż jego autor.",
         "retry": "Nie — popraw dane żądania."
@@ -21487,7 +21481,7 @@
       },
       {
         "code": "notice_outdated",
-        "meaning": "Termin, miejsce albo porządek obrad zmieniły się po przygotowaniu zawiadomienia. Przygotuj nową wersję.",
+        "meaning": "Termin, miejsce albo porządek obrad zmieniły się po przygotowaniu zawiadomienia (albo istnieje jego nowsza wersja). Przygotuj nową wersję; kampania e-mail z poprzedniej wersji nie zostanie zatwierdzona, zakolejkowana ani wznowiona (#113).",
         "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
       },
       {

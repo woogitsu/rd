@@ -50,10 +50,14 @@
 // z „queued” do „sending” w tej samej transakcji.
 
 import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
-import { contentHash, preferencesToken, renderMessage, usesPaymentInstructions, usesStructuredReference } from './content.js';
+import {
+  contentHash, inviteeGrantSql, MEETING_INVITEE_ROLES, preferencesToken, renderMessage, usesPaymentInstructions,
+  usesStructuredReference,
+} from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { campaignPaymentInstructions } from '../pg/routes/payment-instructions.js';
 import { campaignPrivacyNotice } from '../pg/routes/privacy-notice.js';
+import { meetingNoticeCampaignStale } from '../pg/meetings.js';
 import { brusselsDay } from '../pg/today.js';
 
 export const QUOTA_LOCK_ID = 732481707;
@@ -210,7 +214,40 @@ export function unsubscribeUrlFor(config, { campaignId, category, emailHash }) {
   return `${config.publicBaseUrl.replace(/\/+$/, '')}/api/email/preferences?t=${encodeURIComponent(token)}`;
 }
 
+// 0183 (#113): wiersz kolejki konta (zawiadomienie o zebraniu zarządu). Tuż przed
+// wysyłką: blokada adresu i wypisanie z kategorii (jak dla rodzin), konto nadal
+// istnieje i nie jest wyłączone, adres konta się nie zmienił (wiadomość idzie na
+// adres z zatwierdzonej migawki, więc zmiana adresu = brak wysyłki do nowej
+// migawki) i konto nadal ma aktywny przydział zapraszanej roli w roku kampanii
+// (w chwili row.checkAt). Inaczej wiersz jest pomijany (suppressed z powodem),
+// a reszta kampanii idzie dalej. Nowy zaproszony nie jest dobierany — to nowa migawka.
+async function recheckAccountRow(tx, campaign, row, config) {
+  const suppressed = await tx.query('SELECT 1 FROM email_active_suppressions WHERE email_hash = $1', [row.email_hash]);
+  if (suppressed.rows[0]) return { state: 'suppressed', error: 'address_suppressed' };
+  const preference = await tx.query(
+    `SELECT action FROM email_preferences_events
+      WHERE email_hash = $1 AND category = $2
+      ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [row.email_hash, campaign.category],
+  );
+  if (preference.rows[0]?.action === 'opt_out') return { state: 'suppressed', error: 'category_opted_out' };
+  const { rows } = await tx.query(
+    `SELECT u.disabled_at IS NOT NULL AS disabled, lower(btrim(u.email)) AS email,
+            ${inviteeGrantSql({ user: 'u.id', roles: '$2::text[]', at: '$3::timestamptz', year: '$4' })} AS invited
+       FROM users u WHERE u.id = $1`,
+    [row.user_id, MEETING_INVITEE_ROLES, row.checkAt ?? new Date().toISOString(), campaign.school_year_id],
+  );
+  const account = rows[0];
+  if (!account || account.disabled) return { state: 'suppressed', error: 'account_disabled' };
+  if (account.email !== row.email) return { state: 'suppressed', error: 'account_address_changed' };
+  if (!account.invited) return { state: 'suppressed', error: 'role_grant_inactive' };
+  const refusal = recipientRefusal(config, row.email);
+  if (refusal) return { state: 'failed', error: refusal };
+  return null;
+}
+
 async function recheckRow(tx, campaign, row, config) {
+  if (row.user_id) return recheckAccountRow(tx, campaign, row, config);
   // #100 (art. 18 RODO): ograniczenie nałożone po zatwierdzeniu kampanii wstrzymuje wysyłkę
   // do ograniczonego gospodarstwa albo opiekuna; wiersz jest pomijany, nie usuwany.
   const restricted = await tx.query(
@@ -406,7 +443,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
     let batchLeft = config.batchSize;
     const claimed = [];
     const { rows: campaigns } = await tx.query(
-      `SELECT c.id, c.school_year_id, c.audience, c.class_id, c.category, c.subject, c.body_text, c.content_hash,
+      `SELECT c.id, c.school_year_id, c.audience, c.class_id, c.meeting_notice_id, c.category, c.subject, c.body_text, c.content_hash,
               c.approved_content_hash, c.approved_recipients_hash, c.recipients_hash, c.daily_cap,
               c.status, c.approved_at, c.approved_payment_instructions_id, c.privacy_notice_id,
               y.label AS school_year_label,
@@ -452,10 +489,18 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         run.stoppedReason = 'privacy_notice_missing';
         continue;
       }
+      // #113: kampania z zawiadomienia o zebraniu, które zmieniło się po utworzeniu
+      // szkicu (porządek obrad, termin, miejsce, tytuł, nowsza wersja zawiadomienia),
+      // nie wychodzi — wiersze zostają 'queued', jak przy korekcie rachunku. Zarząd
+      // anuluje kampanię i przygotowuje nową z aktualnego zawiadomienia.
+      if (campaign.meeting_notice_id && await meetingNoticeCampaignStale(tx, campaign)) {
+        run.stoppedReason = 'meeting_notice_outdated';
+        continue;
+      }
       let capLeft = campaign.daily_cap - campaign.sent_today;
       if (capLeft <= 0) continue;
       const { rows } = await tx.query(
-        `SELECT o.id, o.household_id, o.idempotency_key, o.attempts,
+        `SELECT o.id, o.household_id, o.user_id, o.idempotency_key, o.attempts,
                 r.guardian_id, r.email, r.email_hash, $2::date AS day
            FROM email_outbox o
            JOIN email_campaign_recipients r ON r.id = o.recipient_id
@@ -469,6 +514,7 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         if (remaining <= 0 || capLeft <= 0 || batchLeft <= 0) break;
         row.day = day;
         row.memberDay = brusselsDay(now);
+        row.checkAt = now.toISOString();
         const verdict = await recheckRow(tx, campaign, row, config);
         if (verdict) {
           run[verdict.state === 'skipped' ? 'skipped' : verdict.state === 'suppressed' ? 'suppressed' : 'failed'] += 1;
@@ -508,7 +554,10 @@ async function claim(db, { config, now, day, dryRun, run, runToken }) {
         );
         claimed.push({
           ...row, attempts: row.attempts + 1, campaignId: campaign.id, message,
-          campaign: { id: campaign.id, audience: campaign.audience, school_year_id: campaign.school_year_id },
+          campaign: {
+            id: campaign.id, audience: campaign.audience, school_year_id: campaign.school_year_id,
+            class_id: campaign.class_id, category: campaign.category,
+          },
         });
       }
     }
@@ -542,7 +591,7 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
             SELECT 1 FROM email_campaign_recipients r
               JOIN processing_restricted_subjects x ON x.household_id = o.household_id OR x.guardian_id = r.guardian_id
              WHERE r.id = o.recipient_id)
-          AND EXISTS (
+          AND ((o.user_id IS NULL AND EXISTS (
             SELECT 1
               FROM email_campaign_recipients r
               JOIN guardians g ON g.id = r.guardian_id
@@ -554,9 +603,22 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
                AND EXISTS (SELECT 1 FROM enrollments_current en
                             WHERE en.student_id = sg.student_id
                               AND en.school_year_id = (SELECT c.school_year_id FROM email_campaigns c WHERE c.id = o.campaign_id)
-                              AND (SELECT c.class_id IS NULL OR en.class_id = c.class_id FROM email_campaigns c WHERE c.id = o.campaign_id)))
+                              AND (SELECT c.class_id IS NULL OR en.class_id = c.class_id FROM email_campaigns c WHERE c.id = o.campaign_id))))
+            -- 0183: konto zaproszone na zebranie zarządu — nadal aktywne, z tym samym
+            -- adresem i aktywnym przydziałem zapraszanej roli w roku kampanii w chwili wysyłki.
+            OR (o.user_id IS NOT NULL AND EXISTS (
+              SELECT 1
+                FROM email_campaign_recipients r
+                JOIN users u ON u.id = r.user_id
+                JOIN email_campaigns c ON c.id = o.campaign_id
+               WHERE r.id = o.recipient_id AND r.user_id = o.user_id
+                 AND u.disabled_at IS NULL AND lower(btrim(u.email)) = r.email
+                 AND ${inviteeGrantSql({ user: 'u.id', roles: '$5::text[]', at: '$3::timestamptz', year: 'c.school_year_id' })}
+                 AND COALESCE((SELECT p.action FROM email_preferences_events p
+                                 WHERE p.email_hash = r.email_hash AND p.category = c.category
+                                 ORDER BY p.created_at DESC, p.id DESC LIMIT 1), '') <> 'opt_out')))
         RETURNING o.id`,
-      [item.id, runToken, sendAt.toISOString(), item.memberDay],
+      [item.id, runToken, sendAt.toISOString(), item.memberDay, MEETING_INVITEE_ROLES],
     );
     if (rows[0]) return null;
     const { rows: current } = await tx.query(
@@ -576,7 +638,7 @@ async function confirmSend(db, item, { runToken, config, sendAt }) {
     }
     let verdict;
     if (row.campaign_status !== 'sending') verdict = { state: 'cancelled', error: 'campaign_cancelled' };
-    else verdict = await recheckRow(tx, item.campaign, item, config);
+    else verdict = await recheckRow(tx, item.campaign, { ...item, checkAt: sendAt.toISOString() }, config);
     // Warunek zmienił się z powrotem między dwoma odczytami — nie wysyłamy w tym
     // przebiegu, wiersz wraca do kolejki (zachowawczo).
     if (!verdict) verdict = { state: 'queued', error: 'send_recheck_changed' };
@@ -639,7 +701,11 @@ async function recordSent(db, item, { messageId, now, runToken }) {
     }
     await insertAuditEvent(tx, {
       action: 'email.sent', entityType: 'email_outbox', entityId: item.id,
-      metadata: { schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, householdId: item.household_id },
+      metadata: {
+        schoolYearId: item.campaign.school_year_id, campaignId: item.campaignId, householdId: item.household_id,
+        // 0183: wiadomość do konta (zawiadomienie o zebraniu zarządu) — identyfikator, bez adresu.
+        ...(item.user_id ? { userId: item.user_id } : {}),
+      },
     });
     // Webhook bounce mógł dotrzeć między przyjęciem wiadomości a tym zapisem
     // (wiersz był w „sending”, więc tylko zapisał zdarzenie) — stosujemy go teraz.

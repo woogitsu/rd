@@ -13,7 +13,32 @@ export const AUDIENCES = Object.freeze(['all_households', 'no_payment_record']);
 // #113: odbiorcy kampanii powiązanej z zebraniem klasowym (rodziny dzieci jednej
 // klasy w roku). Nie do wyboru w ręcznie tworzonym szkicu — powstaje wyłącznie
 // z zatwierdzonego zawiadomienia (src/pg/meetings.js) razem z class_id.
-export const MEETING_AUDIENCES = Object.freeze(['class_households']);
+// 0183 (#113): 'meeting_invitees' — KONTA (users) zaproszonych na zebranie zarządu,
+// nie rodziny: aktywny przydział jednej z ról MEETING_INVITEE_ROLES w roku kampanii.
+export const MEETING_AUDIENCES = Object.freeze(['class_households', 'meeting_invitees']);
+// Odbiorcy-konta (0183). Jedna wiadomość na konto, adres = users.email.
+export const ACCOUNT_AUDIENCES = Object.freeze(['meeting_invitees']);
+// Role zapraszane na zebranie zarządu (wskazania właściciela 2026-10-02, D-21):
+// zarząd, skarbnik, przedstawiciele klas, Komisja Rewizyjna i dyrekcja. Admin
+// techniczny — nie (rola techniczna, nie członek Rady).
+export const MEETING_INVITEE_ROLES = Object.freeze(['board', 'treasurer', 'representative', 'audit', 'principal']);
+
+export function isAccountAudience(audience) {
+  return ACCOUNT_AUDIENCES.includes(audience);
+}
+
+// Warunek SQL „konto ma aktywny przydział zapraszanej roli w roku kampanii” —
+// jedna definicja dla migawki (src/pg/routes/email.js) i dla ponownego sprawdzenia
+// w workerze tuż przed wysyłką (src/email/worker.js). Argumenty to wyrażenia SQL
+// (kolumna konta, parametr listy ról, chwila, parametr roku). Przydział aktywny =
+// niecofnięty i niewygasły w tej chwili; obowiązuje w roku, gdy ma ten rok albo
+// nie ma roku (jak resolver zakresu src/pg/scope.js). Przydział klasowy też się liczy.
+export function inviteeGrantSql({ user, roles, at, year }) {
+  return `EXISTS (SELECT 1 FROM role_grants g
+             WHERE g.user_id = ${user} AND g.role = ANY(${roles})
+               AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > ${at})
+               AND (g.school_year_id IS NULL OR g.school_year_id = ${year}))`;
+}
 // Kategoria komunikatu (#110). `organizational` bez linku wypisania wymaga
 // osobnej decyzji zarządu/szkoły (D-06) — do tego czasu każda kategoria ma link.
 export const CATEGORIES = Object.freeze(['contribution_reminder', 'organizational']);
@@ -33,6 +58,9 @@ export const PAYMENT_INSTRUCTION_PLACEHOLDERS = Object.freeze(['rachunek', 'odbi
 // losuje samych zer, src/pg/ogm.js randomBase).
 export const SAMPLE_STRUCTURED_REFERENCE = '000000000097';
 export const SUBJECT_PLACEHOLDERS = Object.freeze(['rok']);
+// Wiadomość do konta (0183) nie dotyczy rodziny: bez {rodzina}, {komunikat},
+// {rachunek} i {odbiorca} (nie ma czym ich wypełnić).
+export const ACCOUNT_BODY_PLACEHOLDERS = Object.freeze(['rok']);
 
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 const PLACEHOLDER = /\{([^{}]*)\}/g;
@@ -73,7 +101,8 @@ export function parseCampaignContent(data, { audiences = AUDIENCES } = {}) {
   if (!data || typeof data !== 'object') throw new ContentError('invalid_request');
   const title = checkText(data.title, { min: 3, max: 200, field: 'title', allowNewlines: false, placeholders: [] });
   const subject = checkText(data.subject, { min: 3, max: 200, field: 'subject', allowNewlines: false, placeholders: SUBJECT_PLACEHOLDERS });
-  const bodyText = checkText(data.bodyText, { min: 20, max: 10000, field: 'body', allowNewlines: true, placeholders: BODY_PLACEHOLDERS });
+  const bodyPlaceholders = isAccountAudience(data.audience) ? ACCOUNT_BODY_PLACEHOLDERS : BODY_PLACEHOLDERS;
+  const bodyText = checkText(data.bodyText, { min: 20, max: 10000, field: 'body', allowNewlines: true, placeholders: bodyPlaceholders });
   if (!audiences.includes(data.audience)) throw new ContentError('invalid_audience');
   const category = data.category === undefined ? DEFAULT_CATEGORY : data.category;
   if (!CATEGORIES.includes(category)) throw new ContentError('invalid_category');
@@ -88,7 +117,15 @@ export function contentHash({ schoolYearId, audience, subject, bodyText, categor
 }
 
 // Skrót migawki odbiorców: posortowane trójki (rodzina, opiekun, skrót adresu).
+// Migawka kont (0183) ma osobną wersję skrótu: posortowane pary (konto, skrót
+// adresu) — skrót kampanii rodzin pozostaje bajt w bajt taki sam jak wcześniej.
 export function recipientsHash(rows) {
+  if (rows.some((row) => (row.user_id ?? row.userId) != null)) {
+    const accounts = rows
+      .map((row) => [row.user_id ?? row.userId, row.email_hash ?? row.emailHash])
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    return sha256Hex(JSON.stringify(['rd-email-recipients-accounts-v1', accounts]));
+  }
   const lines = rows
     .map((row) => [row.household_id ?? row.householdId, row.guardian_id ?? row.guardianId, row.email_hash ?? row.emailHash])
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
@@ -241,8 +278,10 @@ export function verifyPreferencesToken(secret, token) {
 }
 
 // Uwagi dla zatwierdzającego (nie blokują — treść szablonu zatwierdza Rada, D-16).
-export function contentWarnings({ bodyText }) {
+// Zawiadomienie do kont (0183) nie dotyczy składki — bez ostrzeżeń o wpłacie.
+export function contentWarnings({ bodyText, audience = null }) {
   const warnings = [];
+  if (isAccountAudience(audience)) return ['template_requires_board_decision_d16'];
   if (!SKIP_HINT.test(bodyText)) warnings.push('missing_skip_if_paid_sentence');
   if (!bodyText.includes('{rodzina}') && !bodyText.includes('{komunikat}')) warnings.push('missing_payment_reference');
   // #83: identyfikator rodziny (UUID, bez sumy kontrolnej) łatwo przepisać z błędem.

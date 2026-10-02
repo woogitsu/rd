@@ -1491,3 +1491,31 @@ Zmiana dotyczy wyłącznie uprawnień tras (odczyt zebrań, sumy raportu roczneg
 więc żaden wiersz ani schemat się nie zmienia; wycofanie to cofnięcie kodu, a
 istniejące przydziały `principal` po prostu zyskują odczyt opisany w
 docs/AUTHORIZATION.md. Numeracja migracji bez zmian (ostatnia: 0182).
+
+`0183_email_account_recipients.sql` (#113, część „odbiorcy-konta”; wskazanie
+właściciela 2026-10-02, D-21 + D-16/D-17) dodaje odbiorcę-konto w kampaniach
+e-mail dla zawiadomienia o zebraniu zarządu: audience `meeting_invitees`
+(dopuszczone wyłącznie dla kampanii powiązanej z zebraniem `board` — CHECK
+`email_campaigns_invitees_require_meeting` i nowa wersja
+`email_campaign_meeting_link_guard()`), kolumnę `user_id` (FK `users`) w
+`email_campaign_recipients`, `email_campaign_exclusions` i `email_outbox` z CHECK
+„dokładnie jedno: gospodarstwo (z opiekunem) albo konto”, unikalność (kampania,
+konto) w migawce i kolejce, klucz idempotencji `campaign:<id>:user:<id>` (obok
+niezmienionego `campaign:<id>:household:<id>`), złożony FK wiersza kolejki do
+wiersza migawki tego samego konta, powód wykluczenia `account_disabled` oraz
+trigger `email_outbox_user_immutable` (konto w wierszu kolejki jest niezmienne;
+`email_outbox_guard()` bez zmian). Klucz główny `email_campaign_exclusions`
+(campaign_id, household_id) zastępują dwa unikalne indeksy częściowe (rodzina
+albo konto). `email_campaign_followup_guard()` nie przyjmuje kampanii do kont
+jako źródła uzupełnienia (`email_followup_source_not_eligible`). Skutki dla
+danych: istniejące wiersze bez zmian — `user_id` = NULL, każdy ma
+`household_id`/`guardian_id`, więc spełnia nowe CHECK (sprawdzane przy ADD
+CONSTRAINT); indeks częściowy rodzin ma tę samą unikalność co dawny klucz
+główny; ADD COLUMN bez DEFAULT nie przepisuje tabel; nowe wiersze kont niosą
+kopię `users.email` jak wiersze rodzin kopię adresu opiekuna (retencja — D-04).
+Wycofanie: na bazie bez wierszy z `user_id` — DROP triggera i funkcji
+`email_outbox_user_immutable`, DROP nowych CONSTRAINT i indeksów, DROP COLUMN
+`user_id` w trzech tabelach, SET NOT NULL dla `household_id`/`guardian_id`,
+przywrócenie klucza głównego wykluczeń, CHECK audience (z 0139) i powodów
+wykluczeń (z 0178) oraz funkcji z 0139 i 0156; z wierszami kont — tylko po
+anulowaniu takich kampanii i kopii zapasowej (wierszy kolejki się nie usuwa).

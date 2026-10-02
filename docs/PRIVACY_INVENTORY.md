@@ -48,15 +48,18 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`document_status_events`|`reason`|Osoba trzecia|direct|wolny tekst|uzasadnienie zastąpienia/unieważnienia dokumentu|document_financial|tak|tak|
 |`document_uploads`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`documents`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
-|`email_campaign_recipients`|`email`|Opiekun|direct|kontakt|migawka adresu w chwili wysyłki|email_snapshot|nie|nie|
+|`email_campaign_exclusions`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z kontem członka Rady (zawiadomienie o zebraniu zarządu, 0183)|nieustalona (D-04)|nie|nie|
+|`email_campaign_recipients`|`email`|Opiekun|direct|kontakt|migawka adresu w chwili wysyłki (opiekuna; dla zawiadomienia o zebraniu zarządu — konta członka Rady, 0183)|email_snapshot|nie|nie|
 |`email_campaign_recipients`|`email_hash`|Opiekun|pseudonymous|kontakt|dziennik limitu/tłumienia bez jawnego adresu|email_snapshot|nie|nie|
 |`email_campaign_recipients`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
+|`email_campaign_recipients`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z kontem członka Rady (zawiadomienie o zebraniu zarządu, 0183)|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`body_text`|Opiekun|direct|wolny tekst|treść kampanii e-mail|email_snapshot|tak|nie|
 |`email_campaigns`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`paused_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`resumed_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_campaigns`|`subject`|Opiekun|direct|wolny tekst|temat kampanii e-mail|email_snapshot|tak|nie|
+|`email_outbox`|`user_id`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z kontem członka Rady (zawiadomienie o zebraniu zarządu, 0183)|nieustalona (D-04)|nie|nie|
 |`email_outbox_resolution_approvals`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_outbox_resolution_approvals`|`resolved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`email_outbox_resolutions`|`resolved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
@@ -246,7 +249,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **233**, w tym wolnego tekstu: **67** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **236**, w tym wolnego tekstu: **67** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -561,6 +564,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `campaign_id` | none | — | nie |
 | `household_id` | none | — | nie |
 | `reason` | none | — | nie |
+| `user_id` | pseudonymous | board_member | nie |
 
 ### `email_campaign_recipients`
 
@@ -573,6 +577,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `guardian_id` | pseudonymous | guardian | nie |
 | `household_id` | none | — | nie |
 | `id` | none | — | nie |
+| `user_id` | pseudonymous | board_member | nie |
 
 ### `email_campaigns`
 
@@ -640,6 +645,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `sent_at` | none | — | nie |
 | `state` | none | — | nie |
 | `updated_at` | none | — | nie |
+| `user_id` | pseudonymous | board_member | nie |
 
 ### `email_outbox_resolution_approvals`
 
