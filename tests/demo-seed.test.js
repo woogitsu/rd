@@ -413,9 +413,9 @@ test('demo-seed: panel Dokumenty — 2 syntetyczne PDF-y, podgląd, zastąpienie
     assert.equal(doc.mimeType, 'application/pdf');
     assert.equal(doc.status, 'active');
   }
-  // Podgląd inline (#466): treść przechodzi przez atrapę magazynu i ma sygnaturę PDF.
+  // Podgląd PDF (#89, PDF.js, purpose=preview): treść przechodzi przez atrapę magazynu i ma sygnaturę PDF.
   const content = await handlePgRequest(new Request(
-    new URL(`/api/documents/${invoice.id}/content?disposition=inline`, DEMO_ORIGIN),
+    new URL(`/api/documents/${invoice.id}/content?purpose=preview`, DEMO_ORIGIN),
     { headers: { Cookie: treasurer.cookie } },
   ), seeded.env);
   assert.equal(content.status, 200);

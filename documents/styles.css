@@ -117,4 +117,7 @@ a { color: var(--red); }
 }
 
 .preview-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--line, #ddd); }
-.preview-frame { display: block; width: 100%; height: 70vh; min-height: 24rem; border: 1px solid var(--line, #ddd); background: #fff; }
+.preview-pdf { width: 100%; }
+.pdf-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+.pdf-status { min-width: 8rem; text-align: center; }
+.pdf-canvas { display: block; max-width: 100%; border: 1px solid var(--line, #ddd); background: #fff; }

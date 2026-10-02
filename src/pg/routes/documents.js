@@ -7,7 +7,8 @@
 //        kursor keyset (#159, docs/API.md); `offset` zostaje jako przestarzały, gdy brak `cursor`; kursor działa tylko przy sort=createdAt
 //   GET  /api/documents/{id}            metadane (stan, „zastąpiony przez”/„zastępuje”, historia opisu)
 //   GET  /api/documents/{id}/content    pobranie przez serwer (proxy) po autoryzacji
-//   GET  /api/documents/{id}/content?disposition=inline  podgląd PDF/PNG/JPEG w panelu (issue #89), zdarzenie document.viewed;
+//   GET  /api/documents/{id}/content?disposition=inline  podgląd PNG/JPEG w panelu (issue #89), zdarzenie document.viewed;
+//        PDF + inline = 400 pdf_inline_not_allowed; bajty PDF do PDF.js: ?purpose=preview (załącznik, document.viewed);
 //        plik, który nie przechodzi BIEŻĄCEJ kontroli struktury, dostaje 409 document_preview_blocked;
 //        plik sprawdzony bieżącą wersją reguł (validation_version, 0161) nie jest przeszukiwany ponownie
 //   POST /api/documents/{id}/supersede  { replacementDocumentId, reason } — issue #82
@@ -91,9 +92,8 @@ const DOWNLOAD_HEADERS = Object.freeze({
 // Podgląd (issue #89): tylko typy, które wcześniej przeszły walidację sygnatury i
 // struktury przy przesyłaniu. Lista zamknięta, niezależna od ALLOWED_TYPES.
 const PREVIEW_TYPES = Object.freeze(['application/pdf', 'image/png', 'image/jpeg']);
-// Podgląd PDF ładuje się w <iframe sandbox> tego samego originu, więc tylko ta odpowiedź
-// dopuszcza ramkę z własnego originu; baseline serwera (X-Frame-Options: DENY) zostaje
-// dla całej reszty. CSP `sandbox` bez `allow-scripts`: nawet gdyby plik zawierał aktywną
+// Odpowiedź inline (obrazy) dopuszcza ramkę z własnego originu; baseline serwera
+// (X-Frame-Options: DENY) zostaje dla całej reszty. CSP `sandbox` bez `allow-scripts`: nawet gdyby plik zawierał aktywną
 // treść, którą heurystyka pominęła, nie ma skryptów ani dostępu do originu panelu.
 const PREVIEW_HEADERS = Object.freeze({
   'Cache-Control': 'no-store',
@@ -285,11 +285,19 @@ async function download(request, env, id, json, url) {
   const disposition = url.searchParams.has('disposition') ? url.searchParams.get('disposition') : 'attachment';
   if (disposition !== 'inline' && disposition !== 'attachment') return json({ error: 'invalid_disposition' }, 400);
   const inline = disposition === 'inline';
+  // `purpose=preview` (issue #89, PDF.js): bajty PDF do renderowania w panelu wydawane jako
+  // załącznik (bez inline), ale z tą samą kontrolą struktury i dziennikiem `document.viewed`.
+  const purpose = url.searchParams.has('purpose') ? url.searchParams.get('purpose') : null;
+  if (purpose !== null && purpose !== 'preview') return json({ error: 'invalid_disposition' }, 400);
+  const preview = inline || purpose === 'preview';
   if (!env.storage) return json({ error: 'storage_unavailable' }, 503);
   const found = await authorizedDocument(env, context, id, { auditDenied: true });
   if (!found) return json({ error: 'not_found' }, 404);
   const { doc, objectKey, auditView } = found;
-  if (inline && !PREVIEW_TYPES.includes(doc.mimeType)) return json({ error: 'document_preview_unsupported' }, 400);
+  if (preview && !PREVIEW_TYPES.includes(doc.mimeType)) return json({ error: 'document_preview_unsupported' }, 400);
+  // PDF nigdy nie jest wydawany inline: panel renderuje go PDF.js z bajtów (purpose=preview),
+  // a wbudowany czytnik przeglądarki nie jest używany. Obrazy zostają inline.
+  if (inline && doc.mimeType === 'application/pdf') return json({ error: 'pdf_inline_not_allowed' }, 400);
 
   let object;
   try {
@@ -328,7 +336,7 @@ async function download(request, env, id, json, url) {
   // SHA-256 zgodził się wyżej z zapisanym — te same bajty i te same reguły dają ten
   // sam wynik, więc nie przeszukujemy go ponownie (duży PDF to do ~1 s CPU na podgląd).
   // Sygnaturę sprawdzamy zawsze (tanio). Bez zapisanego SHA-256 — pełna kontrola.
-  if (inline) {
+  if (preview) {
     const signatureOk = detectType(object.body) === doc.mimeType;
     const checkedWithCurrentRules = doc.validationCurrent && Boolean(doc.sha256);
     const structure = !signatureOk
@@ -342,7 +350,7 @@ async function download(request, env, id, json, url) {
       return json({ error: 'document_preview_blocked' }, 409);
     }
   }
-  if (inline) {
+  if (preview) {
     await insertAuditEvent(env.db, {
       actorId: context.session.user.id, action: 'document.viewed', entityType: 'document', entityId: doc.id, metadata: auditMetadata,
     });

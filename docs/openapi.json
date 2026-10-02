@@ -19713,6 +19713,7 @@
           "payment_reference_already_active",
           "payment_reference_already_revoked",
           "payment_reference_not_found",
+          "pdf_inline_not_allowed",
           "pending_admin_invitation",
           "personal_data_forbidden",
           "photo_file_exists",
@@ -21594,6 +21595,11 @@
       {
         "code": "payment_reference_not_found",
         "meaning": "Nie znaleziono referencji płatności.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "pdf_inline_not_allowed",
+        "meaning": "Podgląd PDF działa tylko w panelu (PDF.js), bez wbudowanego czytnika przeglądarki. Otwórz dokument w panelu albo pobierz plik.",
         "retry": "Nie — popraw dane żądania."
       },
       {

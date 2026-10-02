@@ -47,9 +47,12 @@ const MIME_TYPES = new Map([
   ['.csv', 'text/csv; charset=utf-8'],
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
+  ['.mjs', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
+  ['.pfb', 'application/octet-stream'],
   ['.png', 'image/png'],
   ['.svg', 'image/svg+xml'],
+  ['.ttf', 'font/ttf'],
   ['.txt', 'text/plain; charset=utf-8'],
   ['.webp', 'image/webp'],
 ]);

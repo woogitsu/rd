@@ -299,6 +299,27 @@ function e2ePdfWithLink(uri) {
   out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`;
   return Uint8Array.from(out, (ch) => ch.charCodeAt(0));
 }
+// Dwustronicowy PDF syntetyczny (stronicowanie podglądu PDF.js, #89).
+function e2ePdfTwoPages() {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 7 0 R >> >> >>',
+  ];
+  const first = 'BT /F1 28 Tf 56 780 Td (Syntetyczna strona pierwsza - e2e) Tj ET';
+  const second = 'BT /F1 28 Tf 56 780 Td (Syntetyczna strona druga - e2e) Tj ET';
+  objects.push(`<< /Length ${first.length} >>\nstream\n${first}\nendstream`);
+  objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>');
+  objects.push(`<< /Length ${second.length} >>\nstream\n${second}\nendstream`);
+  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  let out = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, index) => { offsets.push(out.length); out += `${index + 1} 0 obj\n${body}\nendobj\n`; });
+  const xrefAt = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`;
+  return Uint8Array.from(out, (ch) => ch.charCodeAt(0));
+}
 function e2ePdfWithHiddenScript() {
   const payload = deflateSync(Buffer.from('5 0 << /S /JavaScript /JS (app.alert(1)) >>', 'latin1'));
   return new Uint8Array(Buffer.concat([
@@ -311,6 +332,7 @@ const E2E_DOCS89 = [
   { id: '00000000-0000-4000-8000-0000000e89a1', title: 'Protokół (syntetyczny PDF)', bytes: () => buildDemoPdf({ title: 'Protokol - dokument syntetyczny e2e', lines: ['To nie jest prawdziwy dokument.'] }) },
   { id: '00000000-0000-4000-8000-0000000e89a2', title: 'Plik z linkiem (syntetyczny PDF)', bytes: () => e2ePdfWithLink(`http://127.0.0.1:${PORT}/site/`) },
   { id: '00000000-0000-4000-8000-0000000e89a3', title: 'Plik sprzed kontroli struktury (syntetyczny)', bytes: e2ePdfWithHiddenScript },
+  { id: '00000000-0000-4000-8000-0000000e89a4', title: 'Dwie strony (syntetyczny PDF)', bytes: e2ePdfTwoPages },
 ];
 async function seedDocs89(db, storage, userId) {
   for (const [index, doc] of E2E_DOCS89.entries()) {

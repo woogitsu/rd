@@ -295,8 +295,13 @@ test('flaga włączona: metadane i treść dowodu dla audit — 200, bez wolnego
   const content = await call(env, `/api/documents/${id}/content`, { cookie: sessions.audit });
   assert.equal(content.status, 200);
   assert.deepEqual([...content.bytes], [...PDF]);
-  const preview = await call(env, `/api/documents/${id}/content?disposition=inline`, { cookie: sessions.audit });
+  // PDF nie jest wydawany inline (PDF.js, #89): bajty do podglądu idą z purpose=preview.
+  const inlinePdf = await call(env, `/api/documents/${id}/content?disposition=inline`, { cookie: sessions.audit });
+  assert.equal(inlinePdf.status, 400);
+  assert.equal(inlinePdf.json.error, 'pdf_inline_not_allowed');
+  const preview = await call(env, `/api/documents/${id}/content?purpose=preview`, { cookie: sessions.audit });
   assert.equal(preview.status, 200);
+  assert.deepEqual([...preview.bytes], [...PDF]);
 
   const trail = {
     list: await call(env, `/api/documents?schoolYearId=${Y1}`, { cookie: sessions.audit }),
