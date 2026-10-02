@@ -2013,7 +2013,7 @@ export async function meetingNoticeCampaignStale(executor, campaign) {
 // module kampanii (cztery oczy, dzienny limit, idempotentny klucz kampania + rodzina
 // albo kampania + konto). Zebranie ogólne -> wszystkie rodziny roku; klasowe ->
 // rodziny dzieci tej klasy; zarządu -> konta zaproszonych (meeting_invitees, 0183:
-// aktywny przydział board/representative/audit/principal w roku; listę buduje moduł
+// aktywny przydział board/treasurer/representative/audit/principal w roku; listę buduje moduł
 // kampanii przy migawce, nie ten szkic).
 export async function createNoticeCampaignDraft(db, actor, input = {}) {
   const meeting = await meetingForManage(db, actor, input.meetingId);

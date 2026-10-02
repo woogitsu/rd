@@ -1,7 +1,7 @@
 // #113 (część „odbiorcy-konta”, migracja 0183): zawiadomienie o zebraniu ZARZĄDU jako
 // kampania e-mail do KONT członków Rady (audience meeting_invitees). Wskazanie właściciela
 // 2026-10-02 (D-21, D-16/D-17): odbiorcy = konta z aktywnym przydziałem ról board,
-// representative, audit, principal w roku zebrania; jedna wiadomość na konto; adres =
+// treasurer, representative, audit, principal w roku zebrania (admin — nie); jedna wiadomość na konto; adres =
 // users.email. Testy PGlite przez handlePgRequest i runEmailBatch z atrapą transportu.
 // Dane wyłącznie syntetyczne (@example.invalid); żadna wiadomość nie wychodzi z procesu.
 import test from 'node:test';
@@ -19,7 +19,7 @@ const WEBHOOK_SECRET = 'w'.repeat(48);
 const SCHEDULED_AT = '2027-01-15T18:00:00.000Z';
 
 // Konta zaproszone (aktywny przydział zapraszanej roli w roku 2026 albo bez roku).
-const INVITED = ['u-aud', 'u-bd', 'u-bd2', 'u-bdclass', 'u-noyear', 'u-pri', 'u-rep', 'u-two'];
+const INVITED = ['u-aud', 'u-bd', 'u-bd2', 'u-bdclass', 'u-bdtreas', 'u-noyear', 'u-pri', 'u-rep', 'u-treas', 'u-two'];
 
 async function setup(extraEnv = {}) {
   const db = await createTestDb();
@@ -41,6 +41,8 @@ async function setup(extraEnv = {}) {
   };
   // Dwie role tego samego konta = jedna wiadomość.
   await s('u-two', [{ role: 'board', schoolYearId: YEAR }, { role: 'representative', schoolYearId: YEAR, classId: 'ca' }]);
+  // Zarząd + skarbnik w tym samym roku = jedna wiadomość (skarbnik jest zapraszany, wskazanie 2026-10-02).
+  await s('u-bdtreas', [{ role: 'board', schoolYearId: YEAR }, { role: 'treasurer', schoolYearId: YEAR }]);
   // Przydział bez roku obowiązuje we wszystkich latach (jak resolver zakresu) — zaproszony.
   await s('u-noyear', [{ role: 'audit' }]);
   // Pominięci: przydział cofnięty, wygasły, z innego roku, rola spoza listy.
@@ -131,7 +133,7 @@ async function recipientUsers(db, campaignId) {
   return rows;
 }
 
-test('zebranie zarządu: odbiorcy z aktywnych przydziałów roku (board, representative, audit, principal), jedna wiadomość na konto, adres z konta', async () => {
+test('zebranie zarządu: odbiorcy z aktywnych przydziałów roku (board, treasurer, representative, audit, principal), jedna wiadomość na konto, adres z konta', async () => {
   const t = await setup();
   try {
     const { meeting, notice } = await boardMeetingWithNotice(t);
@@ -150,9 +152,8 @@ test('zebranie zarządu: odbiorcy z aktywnych przydziałów roku (board, represe
     const { snap, preview } = await snapshotAndPreview(t, id);
     const rows = await recipientUsers(t.db, id);
     assert.deepEqual(rows.map((r) => r.user_id), INVITED);
-    assert.ok(rows.length > 0);
-    assert.ok(rows.every((r) => r.household_id === null && r.guardian_id === null), 'odbiorca to konto, nie rodzina');
-    assert.ok(rows.every((r) => r.email === `${r.user_id}@example.invalid`), 'adres = users.email');
+    assert.ok(rows.length > 0 && rows.every((r) => r.household_id === null && r.guardian_id === null), 'odbiorca to konto, nie rodzina');
+    assert.ok(rows.length > 0 && rows.every((r) => r.email === `${r.user_id}@example.invalid`), 'adres = users.email');
     assert.equal(snap.recipientsCount, INVITED.length);
     assert.deepEqual(snap.exclusions, { account_disabled: 1, no_valid_email: 1 });
     const { rows: exclusions } = await t.db.query(
@@ -161,7 +162,10 @@ test('zebranie zarządu: odbiorcy z aktywnych przydziałów roku (board, represe
       { user_id: 'u-bad', household_id: null, reason: 'no_valid_email' },
       { user_id: 'u-disabled', household_id: null, reason: 'account_disabled' },
     ]);
-    for (const absent of ['u-revoked', 'u-expired', 'u-other', 'u-treas', 'u-admin']) {
+    // Skarbnik z przydziałem roku jest zaproszony; konto zarząd + skarbnik ma jeden wiersz.
+    assert.equal(rows.filter((r) => r.user_id === 'u-treas').length, 1);
+    assert.equal(rows.filter((r) => r.user_id === 'u-bdtreas').length, 1);
+    for (const absent of ['u-revoked', 'u-expired', 'u-other', 'u-admin']) {
       assert.ok(!rows.some((r) => r.user_id === absent), `${absent} nie jest zaproszony`);
     }
 
@@ -253,7 +257,7 @@ test('zebranie zarządu: brak wysyłki bez zatwierdzenia; podwójne kliknięcie 
     assert.deepEqual(queues.map((r) => r.body.queued).sort(), [0, INVITED.length]);
     const { rows: outbox } = await t.db.query('SELECT user_id, household_id, idempotency_key, state FROM email_outbox WHERE campaign_id = $1 ORDER BY user_id', [id]);
     assert.deepEqual(outbox.map((r) => r.user_id), INVITED);
-    assert.ok(outbox.every((r) => r.household_id === null && r.idempotency_key === `campaign:${id}:user:${r.user_id}`),
+    assert.ok(outbox.length > 0 && outbox.every((r) => r.household_id === null && r.idempotency_key === `campaign:${id}:user:${r.user_id}`),
       'klucz idempotencji kampania + konto');
 
     // Nadawca wyłącznie z konfiguracji: bez BREVO_FROM_EMAIL zadanie odmawia i nic nie wychodzi.

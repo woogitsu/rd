@@ -536,7 +536,8 @@ export async function computeSnapshot(executor, campaign, { on = null } = {}) {
 
 // 0183 (#113, D-21 — wskazanie właściciela 2026-10-02): odbiorcy zawiadomienia
 // o zebraniu zarządu to KONTA, nie rodziny. Kandydat = konto z co najmniej jednym
-// aktywnym przydziałem (nie cofniętym, nie wygasłym) roli z MEETING_INVITEE_ROLES,
+// aktywnym przydziałem (nie cofniętym, nie wygasłym) roli z MEETING_INVITEE_ROLES
+// (board, treasurer, representative, audit, principal),
 // obowiązującym w roku kampanii: przydział z tym rokiem albo bez roku (bez roku
 // obowiązuje we wszystkich latach — tak samo liczy go resolver zakresu scope.js;
 // `principal` ma dziś wymóg roku przy nadawaniu). Przydział klasowy (przedstawiciel,

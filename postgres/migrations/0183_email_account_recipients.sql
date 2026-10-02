@@ -4,7 +4,8 @@
 --
 -- Co się zmienia:
 -- * email_campaigns: nowe audience 'meeting_invitees' — konta (users) z
---   aktywnym przydziałem ról board/representative/audit/principal w roku
+--   aktywnym przydziałem ról zapraszanych (lista MEETING_INVITEE_ROLES w kodzie:
+--   board/treasurer/representative/audit/principal) w roku
 --   kampanii. Wyłącznie dla kampanii powiązanej z zebraniem (CHECK
 --   email_campaigns_invitees_require_meeting); trigger
 --   email_campaign_meeting_link_guard() dopuszcza je wyłącznie dla zebrania

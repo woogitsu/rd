@@ -18,9 +18,10 @@ export const AUDIENCES = Object.freeze(['all_households', 'no_payment_record']);
 export const MEETING_AUDIENCES = Object.freeze(['class_households', 'meeting_invitees']);
 // Odbiorcy-konta (0183). Jedna wiadomość na konto, adres = users.email.
 export const ACCOUNT_AUDIENCES = Object.freeze(['meeting_invitees']);
-// Role zapraszane na zebranie zarządu (wskazanie właściciela 2026-10-02, D-21):
-// zarząd, przedstawiciele klas, Komisja Rewizyjna i dyrekcja.
-export const MEETING_INVITEE_ROLES = Object.freeze(['board', 'representative', 'audit', 'principal']);
+// Role zapraszane na zebranie zarządu (wskazania właściciela 2026-10-02, D-21):
+// zarząd, skarbnik, przedstawiciele klas, Komisja Rewizyjna i dyrekcja. Admin
+// techniczny — nie (rola techniczna, nie członek Rady).
+export const MEETING_INVITEE_ROLES = Object.freeze(['board', 'treasurer', 'representative', 'audit', 'principal']);
 
 export function isAccountAudience(audience) {
   return ACCOUNT_AUDIENCES.includes(audience);
