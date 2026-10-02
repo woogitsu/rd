@@ -136,6 +136,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
 });
 
 export const REASON_LABELS = Object.freeze({
+  account_disabled: "konto wyłączone",
   admin: "wycofanie przez administratora",
   change: "zmiana",
   duplicate_address: "powtórzony adres",
