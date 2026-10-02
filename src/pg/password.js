@@ -276,6 +276,48 @@ const BASE_COMMON_PASSWORDS = [
   'szkolapolska', 'szkolapolska1', 'szkolapolska123', 'kochamcie123', 'kochamcie1234',
   ...loadLeakedPasswords(),
 ];
+let allListedSet;
+// D-10 (wskazanie 2026-10-02): pełna lista 10k BEZ odcinania krótkich wpisów —
+// służy wyłącznie do porównania z rdzeniem całego hasła (`reducesToListedCore`).
+function allListedPasswords() {
+  if (!allListedSet) {
+    allListedSet = new Set();
+    for (const line of readWordlist('weak-passwords-10k.txt')) {
+      const entry = foldLatin(line.normalize('NFKC').toLowerCase());
+      allListedSet.add(entry);
+      allListedSet.add(entry.replace(SEPARATORS, ''));
+    }
+    allListedSet.delete('');
+  }
+  return allListedSet;
+}
+const SEPARATORS = /[\s\-_.!@#$%^&*]+/g;
+
+// Najkrótsza jednostka, której wielokrotność (≥ 2 razy) daje cały napis
+// („qwertyqwerty” → „qwerty”); napis bez powtórzeń wraca bez zmian.
+function reduceRepeats(value) {
+  const n = value.length;
+  for (let size = 1; size <= n / 2; size += 1) {
+    if (n % size === 0 && value.slice(0, size).repeat(n / size) === value) return value.slice(0, size);
+  }
+  return value;
+}
+
+// Całe hasło (nie podciąg) po zdjęciu początkowych/końcowych cyfr i znaków
+// nieliterowych oraz redukcji powtórzeń daje wpis z listy 10k, np.
+// „password2024!!”, „qwertyqwerty”, „Monkey2026!!”. Fraza z kilku słów
+// („korale dla mamy 2026”) po złożeniu nie jest wpisem listy, więc przechodzi.
+function reducesToListedCore(folded) {
+  const listed = allListedPasswords();
+  const compact = folded.replace(SEPARATORS, '');
+  const core = folded.replace(/^[^a-z]+|[^a-z]+$/g, '');
+  for (const candidate of new Set([compact, core, core.replace(SEPARATORS, '')])) {
+    if (!candidate) continue;
+    if (listed.has(candidate) || listed.has(reduceRepeats(candidate))) return true;
+  }
+  return false;
+}
+
 let commonPasswordsSet;
 function commonPasswords() {
   commonPasswordsSet ??= new Set([...BASE_COMMON_PASSWORDS, ...loadSecListsPasswords()]);
@@ -376,6 +418,7 @@ export function checkPasswordPolicy(password, { email, env } = {}) {
   const common = commonPasswords();
   if (common.has(folded) || common.has(compact)) return 'password_common';
   if (isRepetitive(compact) || isSequential(compact)) return 'password_common';
+  if (reducesToListedCore(folded)) return 'password_common';
   // Rdzeń + same cyfry/znaki (np. „haslo12345678!”, „Hasło123456789”).
   const letters = compact.replace(/[^a-z]/g, '');
   const isStem = (stem) => letters === stem || letters === stem.repeat(2);

@@ -172,3 +172,25 @@ test('lista SecLists 10k: nie powoduje fałszywych odrzuceń długich syntetyczn
   assert.equal(checkPasswordPolicy('Unbelievable but synthetic phrase'), null);
   assert.equal(checkPasswordPolicy('scandinavian-winter-lantern-47'), null);
 });
+
+// D-10 (wskazanie 2026-10-02): całe hasło sprowadzone do jednego rdzenia (bez początkowych/końcowych
+// cyfr i znaków, po redukcji powtórzeń) nie może być wpisem listy 10k, także krótkim.
+test('rdzeń hasła z listy 10k (także krótki wpis) → password_common', () => {
+  for (const password of [
+    'qwertyqwerty', 'password2024!!', 'Password2024!!', '2024password!!!', 'Monkey2026!!!!', 'dragondragondragon',
+    'Dragon-Dragon-Dragon', 'aaaa11111111', 'abc123abc123', 'Mama2026!!!!!!', 'Dragon DRAGON 2026!!',
+  ]) {
+    assert.equal(checkPasswordPolicy(password), 'password_common', password);
+  }
+});
+
+test('rdzeń z listy 10k nie odrzuca fraz z kilku słów ani podciągów (brak fałszywych odrzuceń)', () => {
+  for (const password of [
+    'korale dla mamy 2026', 'korale dla mamy', 'mama i tata na spacerze', 'correct horse battery staple',
+    'Moja mama lubi dragon fruit 2026', 'monkeybusiness-lantern', 'dragonfly meadow 2026!',
+  ]) {
+    assert.equal(checkPasswordPolicy(password), null, password);
+  }
+  // Wpis krótszy niż minLength nadal kończy się błędem długości, nie listy.
+  assert.equal(checkPasswordPolicy('monkey2026'), 'password_too_short');
+});
