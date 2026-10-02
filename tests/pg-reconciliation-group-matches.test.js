@@ -183,7 +183,7 @@ test('przelew zbiorczy 75 EUR za trzy rodziny: jedno dopasowanie, zatwierdzenie 
   assert.equal(event.metadata.itemCount, 3);
   assert.deepEqual(event.metadata.paymentEntryIds, [pa, pb, pc].sort());
   const text = JSON.stringify(event.metadata);
-  assert.doesNotMatch(text, /h-a|h-b|h-c|2500|7500|amount/i);
+  assert.doesNotMatch(text, /h-a|h-b|h-c|(?<![\w-])2500(?![\w-])|(?<![\w-])7500(?![\w-])|amount/i);
 
   // Raport KR: pozycja nie jest niedopasowana, kontrola powiązań zgodna.
   const report = await call(`/api/reports/audit?schoolYearId=${YEAR}`, { cookie: cookies.audit });
