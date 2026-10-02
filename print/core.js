@@ -283,6 +283,18 @@ export function cardCountLabel(count) {
   return `${n} ${form}`;
 }
 
+// D-07 (wskazanie właściciela 2026-10-02): neutralna informacja o rodzinach
+// pominiętych z powodu ograniczenia przetwarzania — tylko liczba, bez nazw,
+// identyfikatorów i powodu; pusta, gdy liczba jest nieprawidłowa lub równa 0.
+export function skippedRestrictedMessage(count) {
+  const n = Number(count);
+  if (!Number.isSafeInteger(n) || n <= 0) return "";
+  const lastDigit = n % 10;
+  const lastTwo = n % 100;
+  const form = n === 1 ? "rodzinę" : lastDigit >= 2 && lastDigit <= 4 && !(lastTwo >= 12 && lastTwo <= 14) ? "rodziny" : "rodzin";
+  return `Pominięto ${n} ${form} z ograniczeniem przetwarzania (RODO).`;
+}
+
 // Nazwa klasy z serwera zwykle zaczyna się od „Klasa” („Klasa 0-A”), a z pliku
 // bywa samym oznaczeniem („1a”). Bez dublowania: „klasa Klasa 0-A” → „Klasa 0-A”.
 export function studentClassLabel(className) {

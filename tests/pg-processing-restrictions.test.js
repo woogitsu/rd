@@ -212,6 +212,55 @@ describe('ograniczenie przetwarzania (#100, art. 18)', () => {
     await lift(id);
   });
 
+  test('kartki: licznik pominiętych rodzin w zakresie wydruku, bez nazw i identyfikatorów (D-07)', async () => {
+    const url = (classId) => `/api/print/cards?schoolYearId=${YEAR}${classId ? `&classId=${classId}` : ''}`;
+    const get = async (cookie, classId) => {
+      const res = await call(url(classId), { cookie, method: 'GET' });
+      assert.equal(res.status, 200, res.text);
+      return res;
+    };
+    // Bez ograniczeń: 0 (pole jest zawsze liczbą) — zarząd i przedstawiciel.
+    for (const cookie of [cookies.board, cookies.rep]) {
+      const res = await get(cookie, 'c1');
+      assert.equal(res.json.skippedRestricted, 0);
+      assert.ok(res.json.rows.length > 0);
+    }
+    // Druga klasa z rodziną h-4, której ograniczenie nie może dotyczyć przedstawiciela c1.
+    await seedClass(db, { id: 'c2', schoolYearId: YEAR });
+    await db.query('INSERT INTO households (id) VALUES ($1)', ['h-4']);
+    await db.query("INSERT INTO students (id, household_id, first_name, last_name) VALUES ('s-4', 'h-4', 'Uczeń', 'Testowy')");
+    await db.query("INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-s-4', 's-4', 'c2', $1)", [YEAR]);
+    await db.query("INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES ('g-4', 'h-4', 'Opiekun', 'Testowy', 'g-4@example.invalid', true)");
+    await db.query('INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES (\'s-4\', \'g-4\', true, true)');
+    const other = await newRequest({ householdId: 'h-4' });
+    await restrict(other);
+    const own = await newRequest({ householdId: 'h-2' }); // rodzeństwo: jedna rodzina = 1 w liczniku
+    await restrict(own);
+
+    const repRes = await get(cookies.rep, 'c1');
+    assert.equal(repRes.json.skippedRestricted, 1, 'tylko własna klasa');
+    assert.ok(repRes.json.rows.length > 0);
+    assert.equal((await get(cookies.board, 'c1')).json.skippedRestricted, 1);
+    assert.equal((await get(cookies.board, 'c2')).json.skippedRestricted, 1);
+    assert.equal((await get(cookies.board)).json.skippedRestricted, 2, 'cały rok: obie rodziny');
+    assert.equal((await get(cookies.treasurer)).json.skippedRestricted, 2);
+    // Przedstawiciel nie dostaje zakresu spoza przydziału ani licznika.
+    const denied = await call(url('c2'), { cookie: cookies.rep, method: 'GET' });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.json.skippedRestricted, undefined);
+    // Tylko liczba: bez identyfikatorów, nazw, powodu i danych opiekunów.
+    for (const res of [repRes, await get(cookies.board)]) {
+      assert.doesNotMatch(res.text, /h-2|h-4|s-2a|s-2b|s-4|g-2|g-4|example\.invalid|processing_restrict|ograniczen/i);
+      assert.equal(typeof res.json.skippedRestricted, 'number');
+      const skippedKeys = Object.keys(res.json).filter((key) => /skip|restrict/i.test(key));
+      assert.deepEqual(skippedKeys, ['skippedRestricted']);
+    }
+    await lift(other);
+    await lift(own);
+    for (const cookie of [cookies.board, cookies.rep]) assert.equal((await get(cookie, 'c1')).json.skippedRestricted, 0);
+    assert.equal((await get(cookies.board)).json.skippedRestricted, 0);
+  });
+
   test('zdarzenia audytu bez danych osobowych', async () => {
     const events = await rows("SELECT action, entity_type, metadata_json::text AS metadata FROM audit_events WHERE action LIKE 'processing_restriction.%'");
     assert.ok(events.length >= 2);
