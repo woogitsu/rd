@@ -55,6 +55,8 @@ Wskazania właściciela prototypu, przekazane w sesji roboczej 02.10.2026. To **
 | Wiadomości poza kampaniami rodzin | D-16, D-17 | Szkice do zatwierdzenia | Kod generuje treść z szablonu opisanego w dokumentacji; wysyłka wymaga jawnego zatwierdzenia; nadawca wyłącznie z konfiguracji, bez domyślnego adresu. |
 | Zaproszeni na zebranie zarządu | D-21 | Zarząd, przedstawiciele klas, Komisja Rewizyjna i dyrekcja | Dyrekcja wymaga nowej roli/kont (dziś nie istnieje) — zakres D-08/D-09. |
 | Rola „dyrekcja” | D-08, D-09 | Zebrania + raporty zbiorcze | Nowa rola z kontem: zawiadomienia i odczyt zebrań, porządku, protokołów i uchwał oraz raport roczny i zestawienia zbiorcze (sumy); bez księgi szczegółowej, wpłat i danych rodzin. |
+| Lista obecności w szczegółach zebrania dla dyrekcji | D-09 | Jak dla Komisji Rewizyjnej | Dyrekcja widzi pseudonimowe identyfikatory uczestników (bez imion i e-maili) i powiązania kampanii, tak jak `audit`; ocena IOD. |
+| Zakres roku przydziału dyrekcji | D-08, D-09 | Wymusić rok szkolny | Przydział i zaproszenie `principal` bez roku → `422 school_year_required`; dostęp wygasa z kadencją. |
 
 ## Dane osobowe
 
