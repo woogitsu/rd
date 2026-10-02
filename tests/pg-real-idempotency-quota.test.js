@@ -22,6 +22,15 @@
 // trzeciego przebiegu po zakończeniu A — doba konta liczona po `recorded_at`
 // widziałaby wtedy rzeczywistą, a nie symulowaną datę. Wpisy „other” zasiewamy
 // z jawnym `recorded_at`, jak tests/pg-email-quota.test.js.
+//
+// Daty scenariuszy (#84) NIE są sztywne: tests/helpers/quota-dates.js wylicza
+// najbliższy dzień w czasie letnim (CEST, kwiecień–wrzesień) co najmniej 30 dni
+// po rzeczywistym „dziś”. Powód: kolejka powstaje w rzeczywistym czasie
+// (`email_outbox.next_attempt_at` = now() bazy), a `claim()` przejmuje tylko
+// wiersze z `next_attempt_at <= now` przebiegu. Wstrzyknięte `now` z przeszłości
+// (np. sztywne 2027-08-10T22:30Z po tej dacie) nie przejęłoby niczego i test
+// wisiałby na barierze. Rok szkolny jest seedowany tak, by obejmował „dziś”
+// i dzień scenariusza. Funkcję doboru dat sprawdza tests/email-quota-dates.test.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { emailConfig } from '../src/email/brevo.js';
@@ -29,6 +38,7 @@ import { QUOTA_LOCK_ID, remainingQuota, runEmailBatch } from '../src/email/worke
 import {
   createRealTestDb, seedClass, seedEnrolledHousehold, seedPublishedPrivacyNotice, seedSchoolYear, seedUserSession,
 } from './helpers/pg.js';
+import { quotaScenarioDates } from './helpers/quota-dates.js';
 import {
   barrierEnv, callApi, countRows, settledWithin, waitForLockWaitersWithQuery,
 } from './helpers/pg-barrier.js';
@@ -99,32 +109,35 @@ test('#6 (bariera): ten sam klucz idempotencji, dwie różne wpłaty — jedno 2
 const DAILY_LIMIT = 10;
 const FAMILIES = 20;
 const BODY = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. Jeśli wpłata została już wykonana, prosimy pominąć wiadomość.';
-// Lato 2027 (CEST = UTC+2) w obrębie roku szkolnego z seedSchoolYear; doba konta
-// w Brukseli zaczyna się o 22:00 UTC poprzedniego dnia kalendarzowego.
+// Doba konta w Brukseli zaczyna się o 22:00 UTC poprzedniego dnia kalendarzowego
+// (czas letni, UTC+2). D = najbliższy dzień w CEST co najmniej 30 dni po „dziś”,
+// D1 = następny dzień (patrz tests/helpers/quota-dates.js).
+const { day: D, nextDay: D1, schoolYear: SCENARIO_YEAR } = quotaScenarioDates(new Date());
 const SEEDS_BEFORE_MIDNIGHT = [
-  { id: 'q1', day: '2027-08-10', count: 4, at: '2027-08-10T20:00:00Z' }, // doba UTC 10 i doba konta 10
-  { id: 'q2', day: '2027-08-10', count: 3, at: '2027-08-10T22:10:00Z' }, // doba UTC 10, ale doba konta już 11
+  { id: 'q1', day: D, count: 4, at: `${D}T20:00:00Z` }, // doba UTC D i doba konta D
+  { id: 'q2', day: D, count: 3, at: `${D}T22:10:00Z` }, // doba UTC D, ale doba konta już D+1
 ];
 const CASES = [
   {
-    name: '22:30 UTC = 00:30 w Brukseli: doba UTC 10 sierpnia (zużyte 7), doba konta 11 sierpnia (zużyte 3) — pula z większego zużycia',
-    now: '2027-08-10T22:30:00Z', timezone: 'Europe/Brussels', seeds: SEEDS_BEFORE_MIDNIGHT, utcUsed: 7, accountUsed: 3, pool: 3,
+    name: '22:30 UTC = 00:30 w Brukseli: doba UTC D (zużyte 7), doba konta D+1 (zużyte 3) — pula z większego zużycia',
+    now: `${D}T22:30:00Z`, timezone: 'Europe/Brussels', seeds: SEEDS_BEFORE_MIDNIGHT, utcUsed: 7, accountUsed: 3, pool: 3,
   },
   {
-    name: '01:00 UTC 11 sierpnia: doba UTC zużyła 1, doba konta 4 (wpis z 22:10 UTC) — pula z doby konta',
-    now: '2027-08-11T01:00:00Z', timezone: 'Europe/Brussels',
-    seeds: [...SEEDS_BEFORE_MIDNIGHT, { id: 'q3', day: '2027-08-11', count: 1, at: '2027-08-11T00:30:00Z' }],
+    name: '01:00 UTC dnia D+1: doba UTC zużyła 1, doba konta 4 (wpis z 22:10 UTC) — pula z doby konta',
+    now: `${D1}T01:00:00Z`, timezone: 'Europe/Brussels',
+    seeds: [...SEEDS_BEFORE_MIDNIGHT, { id: 'q3', day: D1, count: 1, at: `${D1}T00:30:00Z` }],
     utcUsed: 1, accountUsed: 4, pool: 6,
   },
   {
     name: 'kontrola: te same wpisy, konto w UTC — doba konta = doba UTC, pula większa (bez okna Brukseli)',
-    now: '2027-08-11T01:00:00Z', timezone: 'UTC',
-    seeds: [...SEEDS_BEFORE_MIDNIGHT, { id: 'q3', day: '2027-08-11', count: 1, at: '2027-08-11T00:30:00Z' }],
+    now: `${D1}T01:00:00Z`, timezone: 'UTC',
+    seeds: [...SEEDS_BEFORE_MIDNIGHT, { id: 'q3', day: D1, count: 1, at: `${D1}T00:30:00Z` }],
     utcUsed: 1, accountUsed: 1, pool: 9,
   },
 ];
 
 async function quotaSetup(db, envExtra) {
+  await seedSchoolYear(db, YEAR, SCENARIO_YEAR);
   await seedPublishedPrivacyNotice(db);
   await seedClass(db, { id: 'c1', schoolYearId: YEAR });
   const cookies = {

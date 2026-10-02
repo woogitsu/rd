@@ -17,7 +17,7 @@ Macierz jest **założeniem technicznym do zatwierdzenia** przez zarząd i szko�
 | `class` | materiał jednej klasy | `admin`, `board` oraz `representative` wyłącznie przypisanej klasy | nie |
 | `council_shared` | regulamin, plan pracy, informacja o składce (#167) | przesyłanie, opis, zastąpienie, unieważnienie: `admin`, `board` bez ograniczenia do klasy; odczyt (lista, metadane, treść) także `representative` z przydziałem klasowym w roku dokumentu | nie |
 
-- Dyrekcja (`principal`) i Komisja Rewizyjna (`audit`) nie mają dostępu do czasu decyzji D-09.
+- Dyrekcja (`principal`) nie ma dostępu do czasu decyzji D-09. Komisja Rewizyjna (`audit`) domyślnie też nie; za flagą `AUDIT_LEDGER_READ=1` (D-09, wariant b, #137) czyta wyłącznie dowody `kind='financial'` roku przydziału (przydział bez klasy, MFA): listę, metadane i treść, tylko z kategorii bez danych płatników (faktura, umowa, uchwała, protokół, sprawozdanie rewizyjne) i niepowiązane z wpłatą — potwierdzenia przelewów, wyciągi, „inne”, dokumenty bez kategorii i dokumenty powiązane z wpłatą są dla niej niewidoczne (404). Wolny tekst opisu nie jest jej wydawany, zapisu nie ma żadnego. Ślad: `document.audit_read` (lista, metadane) oraz `document.downloaded`/`document.viewed` z `metadata.role = audit`.
 - Przydział ograniczony do klasy nie otwiera dokumentów `financial` ani `board`, także dla roli `board`.
 - Przydział z rokiem szkolnym działa tylko dla dokumentów tego roku. Wygasły lub cofnięty przydział traci dostęp od następnego żądania.
 - Autoryzacja jest liczona **dla każdego dokumentu** z jego rodzaju, roku i klasy zapisanych w bazie, nie z parametrów żądania.
@@ -144,7 +144,7 @@ Bucket nie może zawierać zdjęć archiwalnych ani wizerunku dzieci: publikacja
 
 Migracja `postgres/migrations/0006_documents.sql` rozszerza tabelę `documents` (szczegóły skutków: [postgres/README.md](../postgres/README.md)). Wpis dokumentu jest niezmienny: `UPDATE` i `DELETE` zwracają błąd. Pola `retention_policy` i `retain_until` czekają na decyzję D-04; wartość `NULL` znaczy „retencja nieustalona — nie usuwać”. Usuwanie po okresie retencji będzie osobnym, audytowanym mechanizmem z własną migracją.
 
-Zdarzenia w `audit_events`: `document.uploaded` (w tej samej transakcji co wpis), `document.downloaded` (przed wydaniem treści; błąd zapisu blokuje pobranie), `document.viewed` (podgląd inline, przed wydaniem treści), `document.preview_blocked` (podgląd odmówiony, bo plik nie przechodzi bieżącej kontroli struktury — bez wydania treści), `document.access_denied`.
+Zdarzenia w `audit_events`: `document.uploaded` (w tej samej transakcji co wpis), `document.downloaded` (przed wydaniem treści; błąd zapisu blokuje pobranie), `document.viewed` (podgląd: obraz inline albo bajty PDF z `purpose=preview`, przed wydaniem treści), `document.preview_blocked` (podgląd odmówiony, bo plik nie przechodzi bieżącej kontroli struktury — bez wydania treści), `document.access_denied`, `document.audit_read` (odczyt listy lub metadanych przez Komisję Rewizyjną za flagą `AUDIT_LEDGER_READ`).
 
 ## Konfiguracja
 

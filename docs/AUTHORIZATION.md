@@ -161,12 +161,12 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/documents?kind=board&schoolYearId=:year` | admin, zarząd — przydział bez klasy, rok 1 | nie | 403 | skarbnik, przedstawiciel: 403 |
 | `POST /api/documents?kind=council_shared&schoolYearId=:year` | admin, zarząd — przydział bez klasy, rok 1 | nie | 403 | #167: dokumenty Rady dla przedstawicieli; przedstawiciel i zarząd z przydziałem klasy: 403 |
 | `POST /api/documents?kind=class&schoolYearId=:year&classId=:class` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 403 | |
-| `GET /api/documents?schoolYearId=:year` | admin, zarząd — rok 1 (finansowe tylko z MFA); skarbnik — finansowe, z MFA; przedstawiciel i zarząd z przydziałem klasy — dokumenty własnej klasy; przedstawiciel dodatkowo dokumenty Rady (`council_shared`, #167) | skarbnik: tak | 403 | przydział klasowy roku 1 i rok 2: 403, nie pusta lista (DOC-01, naprawione) |
-| `GET /api/documents/:financialDocumentId` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu | tak | 404 | brak uprawnień lub MFA nieodróżnialny od braku dokumentu |
+| `GET /api/documents?schoolYearId=:year` | admin, zarząd — rok 1 (finansowe tylko z MFA); skarbnik — finansowe, z MFA; przedstawiciel i zarząd z przydziałem klasy — dokumenty własnej klasy; przedstawiciel dodatkowo dokumenty Rady (`council_shared`, #167); audit — tylko przy `AUDIT_LEDGER_READ=1` (D-09, wariant b), przydział bez klasy, rok przydziału, MFA — wyłącznie dowody finansowe z kategorii faktura, umowa, uchwała, protokół, sprawozdanie rewizyjne, niepowiązane z wpłatą | skarbnik, audit: tak | 403 | przydział klasowy roku 1 i rok 2: 403, nie pusta lista (DOC-01, naprawione); audit bez flagi lub z innego roku: 403; audit z flagą, ale bez MFA: `403 mfa_required`/`mfa_enrollment_required` (#161); odczyt audit zapisuje `document.audit_read` (D-09) |
+| `GET /api/documents/:financialDocumentId` | admin, zarząd, skarbnik — przydział bez klasy, rok dokumentu; audit — tylko przy `AUDIT_LEDGER_READ=1` (D-09, wariant b), przydział bez klasy, rok przydziału, MFA (dowód z dozwolonej kategorii, niepowiązany z wpłatą) | tak | 404 | brak uprawnień lub MFA nieodróżnialny od braku dokumentu; audit bez flagi, z innego roku, bez MFA, dla dokumentu z kategorii z danymi płatników (potwierdzenie przelewu, wyciąg, inne, bez kategorii) albo powiązanego z wpłatą: 404; audit nie dostaje wolnego tekstu opisu; ślad `document.audit_read` (D-09) |
 | `GET /api/documents/:boardDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | |
 | `GET /api/documents/:council_sharedDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu; przedstawiciel — przydział klasowy w roku dokumentu (dowolna klasa) | nie | 404 | #167: przydział z innego roku, zarząd z przydziałem klasy, dyrekcja, Komisja Rewizyjna — 404 jak brak dokumentu |
 | `GET /api/documents/:classDocumentId` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | |
-| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded`; `?disposition=inline` (podgląd PNG/JPEG, ta sama macierz; PDF inline = `400 pdf_inline_not_allowed`) i `?purpose=preview` (bajty PDF dla PDF.js, ta sama macierz) — `document.viewed` |
+| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego (w tym audit z flagą `AUDIT_LEDGER_READ=1`) | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded`; `?disposition=inline` (podgląd PNG/JPEG, ta sama macierz; PDF inline = `400 pdf_inline_not_allowed`) i `?purpose=preview` (bajty PDF dla PDF.js, ta sama macierz) — `document.viewed`; dla audit oba zdarzenia mają `metadata.role = audit` (D-09) |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
 | `GET /api/documents/:council_sharedDocumentId/content` | jak metadane dokumentu Rady | nie | 404 | #167 |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |
@@ -182,12 +182,12 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/documents/:boardDocumentId/description` | jak metadane dokumentu zarządu | nie | 404 | #76 |
 | `POST /api/documents/:council_sharedDocumentId/description` | jak zapis dokumentu Rady (admin, zarząd) | nie | 404 | #167 |
 | `POST /api/documents/:classDocumentId/description` | jak metadane dokumentu klasy | nie | 404 | #76 |
-| `GET /api/ledger?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | zarząd z przydziałem klasy: 403 (SR-01) |
-| `GET /api/ledger/categories?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
-| `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
+| `GET /api/ledger?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1; audit — tylko przy `AUDIT_LEDGER_READ=1` (D-09, wariant b), przydział bez klasy, rok przydziału, MFA | tak | 403 | zarząd z przydziałem klasy: 403 (SR-01); audit bez flagi lub z innego roku: 403; audit z flagą bez MFA: `403 mfa_required`/`mfa_enrollment_required` (#161); widok audit: wpis powiązany z wpłatą bez opisu, źródła i `paymentEntryId` (zamiast tego `paymentLinked: true`); ślad `ledger.audit_read` (D-09) |
+| `GET /api/ledger/categories?schoolYearId=:year` | jak wyżej (w tym audit z flagą `AUDIT_LEDGER_READ=1`) | tak | 403 | SR-01; ślad `ledger.audit_read` dla audit (D-09) |
+| `GET /api/ledger/summary?schoolYearId=:year` | jak wyżej (w tym audit z flagą `AUDIT_LEDGER_READ=1`) | tak | 403 | SR-01; ślad `ledger.audit_read` dla audit (D-09) |
 | `GET /api/ledger/budget?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
-| `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01 |
-| `GET /api/ledger/export.xlsx?schoolYearId=:year` | jak wyżej | tak | 403 | SR-01; te same dane co CSV (#121), zdarzenie `ledger.exported` z `format: xlsx` |
+| `GET /api/ledger/export.csv?schoolYearId=:year` | jak wyżej (w tym audit z flagą `AUDIT_LEDGER_READ=1`) | tak | 403 | SR-01; dla audit kolumna `id_wplaty` niesie znacznik `wplata`, opis, źródło i referencja uchwały wpisów powiązanych z wpłatą są zredagowane, zdarzenie `ledger.exported` ma `metadata.role = audit` (D-09) |
+| `GET /api/ledger/export.xlsx?schoolYearId=:year` | jak wyżej (w tym audit z flagą `AUDIT_LEDGER_READ=1`) | tak | 403 | SR-01; te same dane co CSV (#121), zdarzenie `ledger.exported` z `format: xlsx`; redakcja dla audit jak w CSV (D-09) |
 | `POST /api/ledger` | jak wyżej | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/corrections` | jak wyżej, rok wpisu | tak | 403 | SR-01 |
 | `POST /api/ledger/:ledgerEntryId/replacement` | jak wyżej, rok wpisu | tak | 403 | SR-01; przeksięgowanie (storno + wpis zastępczy) atomowo (#144); wpis powiązany z wpłatą przechodzi na wpis zastępczy (0142, kwota = netto wpłaty); szkic uzgodnienia z powiązaniem wpisu: 409 `active_bank_match`; wpis już zastąpiony: 409 `ledger_entry_already_replaced` |
@@ -413,32 +413,38 @@ Listy ról w panelach (`*/core.js`) porównuje ze stałymi serwera test `tests/r
 
 ## Zakres roli audit
 
-Zestawienie faktów dla decyzji D-09 (#137), wyprowadzone z macierzy `tests/helpers/route-matrix.js`; **nie jest** rozstrzygnięciem ani zatwierdzonym zakresem. Pilnuje go `tests/audit-role-route-inventory.test.js` (liczby w tabeli muszą zgadzać się z macierzą, zmiana zakresu `audit` wymaga świadomej zmiany testu i tej tabeli). Kolumny: liczba tras modułu w macierzy, ile z nich dopuszcza `audit` (200 przy rolze, roku bez klasy i MFA), ile nie dopuszcza `audit` (odmowa 403, a dla dokumentów poza zakresem 404; w tym trasy publiczne z podpisem, np. webhook Brevo w `email`, których rola nie dotyczy).
+Zestawienie zakresu roli `audit` wyprowadzone z macierzy `tests/helpers/route-matrix.js`. Wskazanie właściciela z 2026-10-02 (D-09, docs/DECISIONS.md, issue #137): wariant (b) — odczyt i eksport księgi oraz dokumentów finansowych roku, bez danych rodzin ponad sumy, bez żadnego zapisu, **za flagą konfiguracji `AUDIT_LEDGER_READ`** (domyślnie wyłączona). Zakres ma więc dwa stany: **flaga wyłączona** (domyślny, bez zmian — tylko raport KR i ścieżka kontroli) i **flaga włączona** (`AUDIT_LEDGER_READ=1` albo `true`, katalog w docs/RAILWAY_OPERATIONS.md). Pilnuje go `tests/audit-role-route-inventory.test.js` (liczby w tabeli muszą zgadzać się z macierzą, zmiana zakresu `audit` wymaga świadomej zmiany testu i tej tabeli). Kolumny (stan **flaga wyłączona**): liczba tras modułu w macierzy, ile z nich dopuszcza `audit` (200 przy rolze, roku bez klasy i MFA), ile nie dopuszcza `audit` (odmowa 403, a dla dokumentów poza zakresem 404; w tym trasy publiczne z podpisem, np. webhook Brevo w `email`, których rola nie dotyczy); ostatnia kolumna — ile tras dopuszcza `audit` po włączeniu flagi (`auditFlag` w macierzy; stan sprawdzany osobną bazą z `AUDIT_LEDGER_READ=1`, grupa `auditFlag` w `tests/pg-authz-matrix.test.js`).
 
-| Moduł | Tras | audit 200 | audit odmowa |
-| --- | --- | --- | --- |
-| `payments` | 11 | 0 | 11 |
-| `payment-references` | 3 | 0 | 3 |
-| `payment-instructions` | 2 | 0 | 2 |
-| `ledger` | 16 | 0 | 16 |
-| `ledger-budget` | 6 | 0 | 6 |
-| `ledger-cost-centers` | 4 | 0 | 4 |
-| `ledger-cash` | 5 | 0 | 5 |
-| `reconciliation` | 15 | 2 | 13 |
-| `financial-reports` | 6 | 0 | 6 |
-| `documents` | 25 | 0 | 25 |
-| `exports` | 2 | 0 | 2 |
-| `year-close` | 5 | 0 | 5 |
-| `audit-history` | 4 | 0 | 4 |
-| `import` | 3 | 0 | 3 |
-| `families` | 15 | 0 | 15 |
-| `email` | 30 | 0 | 30 |
-| `board` | 3 | 0 | 3 |
-| `audit-reviews` | 5 | 4 | 1 |
+| Moduł | Tras | audit 200 | audit odmowa | audit 200 z flagą |
+| --- | --- | --- | --- | --- |
+| `payments` | 11 | 0 | 11 | 0 |
+| `payment-references` | 3 | 0 | 3 | 0 |
+| `payment-instructions` | 2 | 0 | 2 | 0 |
+| `ledger` | 16 | 0 | 16 | 5 |
+| `ledger-budget` | 6 | 0 | 6 | 0 |
+| `ledger-cost-centers` | 4 | 0 | 4 | 0 |
+| `ledger-cash` | 5 | 0 | 5 | 0 |
+| `reconciliation` | 15 | 2 | 13 | 2 |
+| `financial-reports` | 6 | 0 | 6 | 0 |
+| `documents` | 25 | 0 | 25 | 3 |
+| `exports` | 2 | 0 | 2 | 0 |
+| `year-close` | 5 | 0 | 5 | 0 |
+| `audit-history` | 4 | 0 | 4 | 0 |
+| `import` | 3 | 0 | 3 | 0 |
+| `families` | 15 | 0 | 15 | 0 |
+| `email` | 30 | 0 | 30 | 0 |
+| `board` | 3 | 0 | 3 | 0 |
+| `audit-reviews` | 5 | 4 | 1 | 4 |
 
 Co `audit` dostaje dziś w modułach finansowych (200): `GET /api/reports/audit` (`format=json` i `xlsx`) oraz ścieżka kontroli — `GET /api/audit-reviews/:year`, `POST /api/audit-reviews/:year/notes`, `POST /api/audit-reviews/:year/notes/:id/closure`, `POST /api/audit-reviews/:year/conclusion`. Wszystkie wyłącznie dla przydziału bez klasy, w roku przydziału i z MFA. Jedyne trasy zapisu to niezmienne uwagi, zamknięcia i wniosek KR; żadnej trasy zapisu księgi, wpłat, uzgodnień, dokumentów, importu ani kampanii. Poza modułami finansowymi `audit` czyta zebrania, protokoły, uchwały i listę kontrolną zatwierdzenia (moduł `meetings`, bez MFA).
 
-Czego `audit` nie dostaje (403): `GET /api/ledger*` i eksporty księgi, wpłaty i eksport wpłat, uzgodnienia (lista i szczegóły), plan vs wykonanie, centra kosztów, dokumenty (także `kind='financial'` — lista, szczegół i pobranie), historia obiektu (`/api/audit/entity/*`), sprawozdanie roczne, przepływy, zamknięcie roku, dane rodzin. Skutek praktyczny do rozważenia w D-09: KR czyta zbiorczy raport i prowadzi uwagi, ale nie może otworzyć wpisu księgi ani faktury, do których uwaga się odnosi; punkt `audit_commission_report` zamknięcia roku potwierdza zarząd lub skarbnik, nie KR; w `DOCUMENT_POLICIES` nie ma rodzaju dokumentu, który KR mogłaby wgrać (protokół podpisany). Opcje do zatwierdzenia (bez wdrożenia): (a) stan obecny — raport i uwagi, bez księgi i dowodów; (b) wariant z PRODUCT.md — odczyt i eksport księgi oraz dokumentów finansowych roku, bez danych rodzin ponad sumy, za flagą konfiguracji; (c) dodatkowo rodzaj dokumentu „protokół KR” z zapisem dla `audit` i potwierdzaniem punktu zamknięcia roku przez KR. Wszystkie trzy wymagają decyzji zarządu.
+**Flaga włączona (`AUDIT_LEDGER_READ=1`, D-09 wariant b).** Do listy z flagą wyłączoną dochodzi, wyłącznie jako odczyt (GET): `GET /api/ledger` (lista), `GET /api/ledger/categories`, `GET /api/ledger/summary`, `GET /api/ledger/export.csv`, `GET /api/ledger/export.xlsx` oraz dokumenty `kind='financial'` — `GET /api/documents` (lista), `GET /api/documents/:financialDocumentId` (metadane), `GET /api/documents/:financialDocumentId/content` (pobranie i podgląd inline). Warunki bez zmian dla wszystkich tych tras: przydział `audit` bez klasy, rok przydziału (inny rok: 403/404), potwierdzone MFA (sam brak MFA daje na trasach księgi i liście dokumentów `403 mfa_required`/`mfa_enrollment_required`; na szczególe i treści dokumentu — 404 jak brak dokumentu, bez wyroczni istnienia). Zapis nadal wyłącznie własna ścieżka kontroli (uwagi, zamknięcia, wniosek KR) — żadnej trasy zapisu księgi, wpłat, uzgodnień, dokumentów, importu ani kampanii (`audit` dostaje 403/404 także dla `POST /api/ledger*` i `POST /api/documents*`).
+
+Dane rodzin przy fladze włączonej (decyzja „bez danych rodzin ponad sumy”): wpis księgi powiązany z wpłatą (`payment_entry_id`) pochodzi od gospodarstwa, a jego opis i źródło to wolny tekst skarbnika. Dla `audit` taki wpis zachowuje kwotę, datę, kategorię, kierunek, identyfikator wpisu i dokumenty-dowody, ale opis jest zastąpiony stałym tekstem „Wpłata rodziny (opis i źródło zredagowane)”, źródło i referencja uchwały (też wolny tekst) są puste, a identyfikator wpłaty (klucz do gospodarstwa) jest ukryty — odpowiedź ma `paymentLinked: true`; w eksporcie CSV/XLSX kolumna `id_wplaty` niesie znacznik `wplata`. Opisy wpisów niepowiązanych z wpłatą (wydatki, ręczne przychody) pozostają bez zmian — przechodzą bramkę danych osobowych przy zapisie (`src/pg/pii-gate.js`). Dokumenty: plik nie podlega redakcji, więc `audit` czyta wyłącznie dowody z kategorii bez danych płatników (faktura, umowa, uchwała, protokół, sprawozdanie rewizyjne; `AUDIT_READABLE_DOCUMENT_CATEGORIES` w `src/pg/audit-ledger-read.js`) i niepowiązane z wpłatą; potwierdzenia przelewów, wyciągi, „inne” i dokumenty bez kategorii są dla `audit` niewidoczne (404, na liście pominięte), a wolny tekst opisu dokumentu nie jest wydawany. Nie dostaje też: wpłat, kart gospodarstw, eksportu danych rodzin, historii obiektu (`/api/audit/entity/*`).
+
+Dziennik odczytu: każdy odczyt przez `audit` ma trwały ślad w `audit_events` z aktorem, czasem i obiektem, zapisany przed wydaniem danych (błąd zapisu = brak odczytu): `ledger.audit_read` (zasób `list`/`categories`/`summary`, rok, liczba wierszy), `ledger.exported` z `role: audit` (eksport), `document.audit_read` (lista i metadane dokumentów), `document.downloaded`/`document.viewed` z `role: audit` (treść). Odczyty nie trafiają do `data_access_log` (rodzaje wymagają migracji CHECK, a ta ścieżka nie zwraca danych dzieci i opiekunów).
+
+Czego `audit` nie dostaje (403; dotyczy stanu domyślnego — z flagą wyłączoną; z flagą włączoną wyjątki opisano wyżej): `GET /api/ledger*` i eksporty księgi, wpłaty i eksport wpłat, uzgodnienia (lista i szczegóły), plan vs wykonanie, centra kosztów, dokumenty (także `kind='financial'` — lista, szczegół i pobranie), historia obiektu (`/api/audit/entity/*`), sprawozdanie roczne, przepływy, zamknięcie roku, dane rodzin. Skutek praktyczny do rozważenia w D-09: KR czyta zbiorczy raport i prowadzi uwagi, ale nie może otworzyć wpisu księgi ani faktury, do których uwaga się odnosi; punkt `audit_commission_report` zamknięcia roku potwierdza zarząd lub skarbnik, nie KR; w `DOCUMENT_POLICIES` nie ma rodzaju dokumentu, który KR mogłaby wgrać (protokół podpisany). Opcje do zatwierdzenia (bez wdrożenia): (a) stan obecny — raport i uwagi, bez księgi i dowodów; (b) wariant z PRODUCT.md — odczyt i eksport księgi oraz dokumentów finansowych roku, bez danych rodzin ponad sumy, za flagą konfiguracji; (c) dodatkowo rodzaj dokumentu „protokół KR” z zapisem dla `audit` i potwierdzaniem punktu zamknięcia roku przez KR. Wskazanie właściciela z 2026-10-02: wybrano wariant (b); (a) pozostaje stanem domyślnym (flaga wyłączona), (c) nie jest wdrożony.
 
 ## Znane luki (przypadki `todo` w macierzy)
 

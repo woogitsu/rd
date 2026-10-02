@@ -103,6 +103,15 @@ const MEETING_MANAGE = { admin: Y1_ALL, board: Y1_ALL, boardA: ['A'] };
 const MEETING_READ = { admin: Y1_ALL, board: Y1_ALL, audit: Y1_ALL, boardA: ['A'] };
 
 const json = (body) => body;
+
+// D-09 (#137), wariant (b): trasy, które rola `audit` (Komisja Rewizyjna) czyta WYŁĄCZNIE przy włączonej fladze
+// AUDIT_LEDGER_READ (src/pg/audit-ledger-read.js). `allow` opisuje stan domyślny (flaga wyłączona — audit odmowa);
+// `auditFlag` = zakresy dozwolone dla audit po włączeniu flagi (przydział bez klasy, rok przydziału, MFA).
+// Macierz nie zna env, więc stan „flaga włączona” to pochodna: routeWithAuditFlag(route), wykonywana na osobnej
+// bazie z AUDIT_LEDGER_READ=1 (grupa 'auditFlag' w tests/pg-authz-matrix.test.js).
+export const AUDIT_LEDGER_READ_ENV = 'AUDIT_LEDGER_READ';
+const AUDIT_FLAG_SCOPES = Object.freeze(['W1']);
+const withAuditFlag = (route) => ({ ...route, auditFlag: AUDIT_FLAG_SCOPES });
 const withKey = (key) => ({ 'Idempotency-Key': key });
 const everyY1 = () => Y1_ALL;
 
@@ -422,6 +431,7 @@ export function documentKindsCheck(actor, mfa, json) {
   const ownClass = actor.ownClass ?? actor.classBoard;
   const allowed = (doc) => {
     // Przedstawiciel widzi też dokumenty Rady (#167); przydział zarządu ograniczony do klasy — nie.
+    if (actor.key === 'audit') return doc.kind === 'financial' && mfa; // D-09: tylko dowody finansowe, tylko z MFA
     if (actor.ownClass) return (doc.kind === 'class' && doc.classId === TARGETS[ownClass].classId) || doc.kind === 'council_shared';
     if (ownClass) return doc.kind === 'class' && doc.classId === TARGETS[ownClass].classId;
     if (doc.kind === 'financial') return FINANCIAL_ROLE_KEYS.includes(actor.key) && mfa;
@@ -431,7 +441,7 @@ export function documentKindsCheck(actor, mfa, json) {
   const wrong = documents.filter((doc) => !allowed(doc));
   const problems = wrong.length ? [`lista zawiera niedozwolone dokumenty: ${wrong.map((doc) => `${doc.kind}/${doc.classId}`).join(', ')}`] : [];
   // Oczekiwane rodzaje (klasa) muszą być na liście — pusta lista nie jest dowodem poprawnego zakresu.
-  const expected = ownClass ? [`class/${TARGETS[ownClass].classId}`, ...(actor.ownClass ? ['council_shared/null'] : [])]
+  const expected = actor.key === 'audit' ? ['financial/null'] : ownClass ? [`class/${TARGETS[ownClass].classId}`, ...(actor.ownClass ? ['council_shared/null'] : [])]
     : actor.key === 'treasurer' ? ['financial/null']
       : [`class/${TARGETS.A.classId}`, `class/${TARGETS.B.classId}`, 'board/null', 'council_shared/null', ...(mfa ? ['financial/null'] : [])];
   const seen = new Set(documents.map((doc) => `${doc.kind}/${doc.classId}`));
@@ -896,16 +906,16 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: YEAR_TARGETS,
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1, repA: SCHOOL_Y1, repB: SCHOOL_Y1, boardA: SCHOOL_Y1 },
     // Skarbnik widzi wyłącznie dowody finansowe, a te wymagają MFA.
-    mfa: (actor) => actor.key === 'treasurer', ok: 200, deny: 403, fixture: null,
+    mfa: (actor) => actor.key === 'treasurer', ok: 200, deny: 403, fixture: null, auditFlag: AUDIT_FLAG_SCOPES,
     needs: [['document', 'financial', YEAR_TARGETS], ['document', 'board', YEAR_TARGETS], ['document', 'council_shared', YEAR_TARGETS], ['document', 'class', ['A', 'B', 'Y2']]],
     build: ({ target }) => ({ path: `/api/documents?schoolYearId=${target.schoolYearId}` }),
     check: ({ actor, mfa, json }) => documentKindsCheck(actor, mfa, json),
   },
-  documentRead('documents.getFinancial', '/api/documents/:financialDocumentId', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, ''),
+  withAuditFlag(documentRead('documents.getFinancial', '/api/documents/:financialDocumentId', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '')),
   documentRead('documents.getBoard', '/api/documents/:boardDocumentId', 'board', YEAR_TARGETS, DOC_BOARD, false, ''),
   documentRead('documents.getCouncilShared', '/api/documents/:council_sharedDocumentId', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_READ, false, ''),
   documentRead('documents.getClass', '/api/documents/:classDocumentId', 'class', ['A', 'B', 'Y2'], DOC_CLASS, false, ''),
-  documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content'),
+  withAuditFlag(documentRead('documents.contentFinancial', '/api/documents/:financialDocumentId/content', 'financial', YEAR_TARGETS, DOC_FINANCIAL, true, '/content')),
   documentRead('documents.contentBoard', '/api/documents/:boardDocumentId/content', 'board', YEAR_TARGETS, DOC_BOARD, false, '/content'),
   // Dokument Rady jest ogólnoszkolny — jego treść (znacznik roku) czyta także przedstawiciel jednej klasy (#167).
   { ...documentRead('documents.contentCouncilShared', '/api/documents/:council_sharedDocumentId/content', 'council_shared', YEAR_TARGETS, DOC_COUNCIL_READ, false, '/content'), visible: () => ['W1', 'Y2'] },
@@ -930,12 +940,12 @@ export const ROUTE_MATRIX = Object.freeze([
 
   // ---------- ledger (#38) ----------
   // admin/zarząd/skarbnik z MFA, przydział bez klasy w roku wpisu (docs/LEDGER.md).
-  ledgerRead('ledger.list', '/api/ledger?schoolYearId=:year', '', ['W1']),
-  ledgerRead('ledger.categories', '/api/ledger/categories?schoolYearId=:year', '/categories', ['W1']),
-  ledgerRead('ledger.summary', '/api/ledger/summary?schoolYearId=:year', '/summary', []),
+  withAuditFlag(ledgerRead('ledger.list', '/api/ledger?schoolYearId=:year', '', ['W1'])),
+  withAuditFlag(ledgerRead('ledger.categories', '/api/ledger/categories?schoolYearId=:year', '/categories', ['W1'])),
+  withAuditFlag(ledgerRead('ledger.summary', '/api/ledger/summary?schoolYearId=:year', '/summary', [])),
   ledgerRead('ledger.budget', '/api/ledger/budget?schoolYearId=:year', '/budget', []),
-  ledgerRead('ledger.exportCsv', '/api/ledger/export.csv?schoolYearId=:year', '/export.csv', ['W1']),
-  ledgerRead('ledger.exportXlsx', '/api/ledger/export.xlsx?schoolYearId=:year', '/export.xlsx', []),
+  withAuditFlag(ledgerRead('ledger.exportCsv', '/api/ledger/export.csv?schoolYearId=:year', '/export.csv', ['W1'])),
+  withAuditFlag(ledgerRead('ledger.exportXlsx', '/api/ledger/export.xlsx?schoolYearId=:year', '/export.xlsx', [])),
   {
     id: 'ledger.create', module: 'ledger', method: 'POST', path: '/api/ledger', targets: YEAR_TARGETS,
     allow: FINANCIAL, mfa: true, ok: 201, deny: 403, fixture: null,
@@ -2172,6 +2182,23 @@ export const REFERENCE_CASES = Object.freeze([
     }),
   })),
 ]);
+
+// Trasy z odczytem audit za flagą oraz ich wariant „flaga włączona” (audit dopuszczony, MFA wymagane).
+export const AUDIT_FLAG_ROUTES = Object.freeze(ROUTE_MATRIX.filter((route) => route.auditFlag));
+export function routeWithAuditFlag(route) {
+  const baseMfa = route.mfa;
+  return {
+    ...route,
+    allow: { ...route.allow, audit: route.auditFlag },
+    mfa: (actor) => actor.key === 'audit' || (typeof baseMfa === 'function' ? Boolean(baseMfa(actor)) : Boolean(baseMfa)),
+    group: 'auditFlag',
+  };
+}
+// Zakresy audit na trasie przy danym stanie flagi (pusta lista = odmowa).
+export function auditScopes(route, flagOn) {
+  const base = typeof route.allow === 'object' ? (route.allow.audit ?? []) : [];
+  return flagOn ? [...new Set([...base, ...(route.auditFlag ?? [])])] : base;
+}
 
 export function requiresMfa(route, actor) {
   return typeof route.mfa === 'function' ? Boolean(route.mfa(actor)) : Boolean(route.mfa);

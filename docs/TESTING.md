@@ -58,6 +58,13 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 - Aktualności: wycofanie wygrywa z równoległym zatwierdzeniem i publikacją; blokują to
   trzy warstwy (sprawdzenie stanu w `transition()`, wyzwalacze w `0018_news.sql`
   i blokada wiersza), dlatego test mutacyjny jednej warstwy nie wystarcza do czerwonego wyniku.
+- Rola `audit` i flaga `AUDIT_LEDGER_READ` (D-09, wariant b, #137): macierz
+  `tests/pg-authz-matrix.test.js` sprawdza stan domyślny (flaga wyłączona) i grupę `auditFlag`
+  (osobna baza z flagą włączoną); `tests/pg-audit-ledger-read.test.js` pokrywa redakcję wpisów
+  powiązanych z wpłatą (opis, źródło, referencja uchwały, identyfikator wpłaty), kategorie dowodów,
+  inny rok, przydział klasowy, brak MFA, brak zapisów i ślad odczytu; liczby tras per moduł
+  pilnuje `tests/audit-role-route-inventory.test.js` (tabela „Zakres roli audit” w docs/AUTHORIZATION.md).
+  To założenie prototypu do formalnego potwierdzenia przez zarząd, nie decyzja.
 
 ## Rejestr dowodów
 
@@ -341,7 +348,12 @@ locie” A; razem wychodzi dokładnie tyle, ile wynosi pula z większego zużyci
 doba konta), bez drugiej wysyłki tej samej wiadomości. Kontrola: ten sam układ z kontem w
 UTC daje większą pulę. Zegar: `now` jest wstrzykiwany, ale `recorded_at` nowych wpisów
 dziennika pochodzi z zegara bazy, więc test nie robi przebiegu po zakończeniu A; wpisy
-„other” są zasiewane z jawnym `recorded_at`. Dane syntetyczne, atrapa transportu, brak sieci.
+„other” są zasiewane z jawnym `recorded_at`. Daty scenariuszy nie są sztywne:
+`tests/helpers/quota-dates.js` wybiera najbliższy dzień w czasie letnim (CEST, kwiecień–wrzesień)
+co najmniej 30 dni po rzeczywistym „dziś” (kolejka powstaje w czasie rzeczywistym, a `claim()`
+przejmuje wiersze z `next_attempt_at <= now`, więc `now` z przeszłości zawiesza barierę), a rok
+szkolny obejmuje „dziś” i ten dzień; dobór sprawdza `tests/email-quota-dates.test.js` (bez bazy).
+Dane syntetyczne, atrapa transportu, brak sieci.
 
 `tests/pg-real-brussels-day.test.js` (pomijany bez `RD_TEST_PG_URL`): daty dzienne wyliczane z czasu (`timestamptz` → data)
 liczymy w strefie szkoły `Europe/Brussels` (wskazanie właściciela 2026-10-02), nie w `TimeZone` sesji bazy. Jedyne

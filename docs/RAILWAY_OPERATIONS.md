@@ -113,6 +113,7 @@ słowem „sekret” oznacza zmienną ustawianą wyłącznie w Railway.
 | `LOGIN_QUEUE_MAX_PER_IP` | aplikacja | nie | `5` | limit kolejki obliczeń haseł na adres klienta |
 | `SESSION_IDLE_TIMEOUT_SECONDS` | aplikacja | nie | `1800` | wygaśnięcie sesji po bezczynności; `0` wyłącza (tylko lokalnie) |
 | `ALLOW_PENDING_ROLES` | aplikacja | nie | wyłączone | `true` zezwala na rolę `pending_decision` (D-09); domyślnie odrzucana |
+| `AUDIT_LEDGER_READ` | aplikacja | nie | wyłączone | `1` albo `true` włącza dla roli `audit` (Komisja Rewizyjna) odczyt i eksport księgi roku oraz dokumentów finansowych (D-09, wariant b, #137): tylko GET, przydział bez klasy, rok przydziału, MFA; wpisy powiązane z wpłatą bez opisu i identyfikatora wpłaty; każdy odczyt ma ślad w dzienniku zdarzeń. Każda inna wartość = wyłączone (sekcja „Zakres roli audit” w docs/AUTHORIZATION.md) |
 | `MEETINGS_CLASS_HOST` | aplikacja | nie | wyłączone | `representative` pozwala przedstawicielowi prowadzić zebranie klasy |
 | `ICAL_UID_DOMAIN` | aplikacja | nie | `rd.example.invalid` | domena w UID kalendarza do czasu D-20 |
 | `IMPORT_ENABLED` | aplikacja | nie | wyłączony poza lokalnymi | `true` odblokuje import na produkcji po decyzji szkoły (D-01–D-06) |

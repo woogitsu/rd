@@ -36,8 +36,12 @@
 import { createHash } from 'node:crypto';
 import { isSameOrigin } from '../../auth.js';
 import {
-  isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, withDeferredAccessDenied,
+  isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, mfaAwareForbiddenCode,
+  withDeferredAccessDenied,
 } from '../authorization.js';
+import {
+  AUDIT_LEDGER_READ_ROLES, REDACTED_PAYMENT_CELL, REDACTED_PAYMENT_DESCRIPTION, auditLedgerReadEnabled,
+} from '../audit-ledger-read.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { isoTimestamp } from '../auth.js';
@@ -241,6 +245,8 @@ function entryFromRow(row) {
   // przeksięgowania) ma dokładnie ten sam kształt odpowiedzi co przed #144
   // (kontrakt ze starym Workerem, tests/pg-ledger-api.test.js, bez zmian).
   if (row.replaces_entry_id) entry.replacesEntryId = row.replaces_entry_id;
+  // D-09 (#137): widok Komisji Rewizyjnej — wpis powiązany z wpłatą, bez identyfikatora wpłaty i opisu.
+  if (row.payment_linked) entry.paymentLinked = true;
   // #144: odwrotny kierunek łańcucha („zastąpiony przez”) — tylko na liście,
   // tylko dla wpisu już przeksięgowanego (unikalny ledger_entries_replaces_idx
   // gwarantuje co najwyżej jeden wpis zastępczy).
@@ -407,6 +413,42 @@ async function requireFinancialContext(request, env, schoolYearId) {
   return context;
 }
 
+// D-09 (#137), wariant (b), za flagą AUDIT_LEDGER_READ: odczyt księgi dla roli `audit` (przydział bez klasy,
+// rok danych, MFA). Tylko trasy GET (lista, kategorie, podsumowanie, eksport); zapisy nadal używają
+// requireFinancialContext. `auditView: true` oznacza widok zredagowany (bez opisu, źródła i identyfikatora
+// wpłaty wpisów powiązanych z wpłatą). Odmowa sama z powodu MFA niesie kod mfa_required /
+// mfa_enrollment_required (#161), jak raport KR; bez flagi — stan dotychczasowy (403 forbidden).
+async function requireLedgerReadContext(request, env, schoolYearId) {
+  const context = await loadAuthorizationContext(request, env);
+  if (!context) throw new RequestError('unauthenticated', 401);
+  if (hasFinancialAccess(context, schoolYearId)) return { context, auditView: false };
+  if (auditLedgerReadEnabled(env)) {
+    const rule = { roles: AUDIT_LEDGER_READ_ROLES, schoolYearId, requireMfa: true };
+    if (isAuthorizedScoped(context, rule)) return { context, auditView: true };
+    const code = await mfaAwareForbiddenCode(context, rule, env);
+    if (code !== 'forbidden') throw new RequestError(code, 403);
+  }
+  await logAccessDenied(env, context, { roles: FINANCIAL_ROLES }, request);
+  throw new RequestError('forbidden', 403);
+}
+
+// Ślad odczytu przez audit (kto, kiedy, jaki rok i zasób) — przed wydaniem danych; błąd zapisu = brak odczytu.
+async function recordAuditRead(executor, context, schoolYearId, resource, rowCount = null) {
+  await insertAuditEvent(executor, {
+    actorId: context.session.user.id, action: 'ledger.audit_read', entityType: 'school_year', entityId: schoolYearId,
+    metadata: { resource, schoolYearId, rowCount, role: 'audit' },
+  });
+}
+
+// Wiersz księgi w widoku audit: wpis powiązany z wpłatą nie ujawnia opisu, źródła, referencji uchwały (wolny
+// tekst skarbnika) ani id wpłaty.
+function redactForAudit(row) {
+  if (!row.payment_entry_id) return row;
+  return {
+    ...row, payment_entry_id: null, payment_linked: true, description: REDACTED_PAYMENT_DESCRIPTION, source: null, resolution_reference: null,
+  };
+}
+
 // #184: wywoływana WEWNĄTRZ transakcji zapisu (po odczycie wiersza), więc
 // logAccessDenied tu nie wolno (zdarzenie wycofałoby się razem z nią). Błąd
 // niesie kontekst odmowy (withDeferredAccessDenied), a ślad zapisuje catch
@@ -444,7 +486,7 @@ async function listEntries(request, env, url, json) {
   };
   const decodedCursor = decodeDateIdCursor(url.searchParams.get('cursor'), cursorScope, cursorError);
   const cursor = decodedCursor && { occurredOn: decodedCursor.date, id: decodedCursor.id };
-  await requireFinancialContext(request, env, schoolYearId);
+  const { context, auditView } = await requireLedgerReadContext(request, env, schoolYearId);
 
   const values = [schoolYearId];
   const conditions = ['entry.school_year_id = $1'];
@@ -495,9 +537,10 @@ async function listEntries(request, env, url, json) {
   // łańcucha zastąpień (src/pg/document-chain.js), ta sama co w raporcie KR
   // i ostrzeżeniu zamknięcia roku. Jedno zapytanie na stronę listy.
   const statuses = await documentStatuses(env.db, visibleRows.flatMap(attachmentIds));
+  if (auditView) await recordAuditRead(env.db, context, schoolYearId, 'list', visibleRows.length);
   return json({
     entries: visibleRows.map((row) => {
-      const entry = entryFromRow(row);
+      const entry = entryFromRow(auditView ? redactForAudit(row) : row);
       entry.attachments = entry.attachmentIds.map((id) => statuses.get(id) ?? { documentId: id, status: 'active', currentDocumentId: id });
       return entry;
     }),
@@ -517,7 +560,7 @@ function readOverviewFilters(url, { allowDirection = false } = {}) {
 
 async function listCategories(request, env, url, json) {
   const { schoolYearId, direction } = readOverviewFilters(url, { allowDirection: true });
-  await requireFinancialContext(request, env, schoolYearId);
+  const { context, auditView } = await requireLedgerReadContext(request, env, schoolYearId);
   const values = [schoolYearId];
   const conditions = ['school_year_id = $1', 'active'];
   if (direction) {
@@ -531,6 +574,7 @@ async function listCategories(request, env, url, json) {
       ORDER BY direction, name COLLATE "C", id COLLATE "C"`,
     values,
   );
+  if (auditView) await recordAuditRead(env.db, context, schoolYearId, 'categories', rows.length);
   return json({ categories: rows.map((row) => ({ id: row.id, direction: row.direction, name: row.name })) });
 }
 
@@ -727,7 +771,7 @@ async function copyCategories(request, env, json) {
 
 async function readSummary(request, env, url, json) {
   const { schoolYearId } = readOverviewFilters(url);
-  await requireFinancialContext(request, env, schoolYearId);
+  const { context, auditView } = await requireLedgerReadContext(request, env, schoolYearId);
   const { rows } = await env.db.query(
     `SELECT school_year_id, opening_balance_cents, income_cents, expense_cents, closing_balance_cents
        FROM ledger_year_summary
@@ -737,6 +781,7 @@ async function readSummary(request, env, url, json) {
   );
   const row = rows[0];
   if (!row) throw new RequestError('school_year_not_found', 404);
+  if (auditView) await recordAuditRead(env.db, context, schoolYearId, 'summary', 1);
   return json({ summary: {
     schoolYearId: row.school_year_id,
     openingBalanceCents: toSafeInteger(row.opening_balance_cents),
@@ -1620,7 +1665,7 @@ export function ledgerExportFilename(schoolYearId, format, now = new Date()) {
 
 async function exportLedger(request, env, url, format) {
   const { schoolYearId } = readOverviewFilters(url);
-  const context = await requireFinancialContext(request, env, schoolYearId);
+  const { context, auditView } = await requireLedgerReadContext(request, env, schoolYearId);
   const actorId = context.session.user.id;
   const rows = await env.db.transaction(async (tx) => {
     const year = await tx.query('SELECT id FROM school_years WHERE id = $1', [schoolYearId]);
@@ -1642,13 +1687,17 @@ async function exportLedger(request, env, url, format) {
     // Dziennik: kto i kiedy wyeksportował który rok; bez kwot i treści wpisów.
     await insertAuditEvent(tx, {
       actorId, action: 'ledger.exported', entityType: 'school_year', entityId: schoolYearId,
-      metadata: { format, rowCount: result.rows.length, schoolYearId },
+      metadata: { format, rowCount: result.rows.length, schoolYearId, ...(auditView ? { role: 'audit' } : {}) },
     });
     return result.rows;
   });
+  // D-09 (#137): eksport dla audit — kolumna id_wplaty niesie znacznik zamiast identyfikatora wpłaty.
+  const exportRows = auditView
+    ? rows.map((row) => { const out = redactForAudit(row); return out.payment_linked ? { ...out, payment_entry_id: REDACTED_PAYMENT_CELL } : out; })
+    : rows;
   const filename = ledgerExportFilename(schoolYearId, format);
-  if (format === 'xlsx') return xlsxResponse(toXlsx(LEDGER_CSV_COLUMNS, rows.map(ledgerCsvValues), { sheetName: `Księga ${schoolYearId}` }), filename);
-  return csvResponse(toCsv(LEDGER_CSV_COLUMNS, rows.map(ledgerCsvValues)), filename);
+  if (format === 'xlsx') return xlsxResponse(toXlsx(LEDGER_CSV_COLUMNS, exportRows.map(ledgerCsvValues), { sheetName: `Księga ${schoolYearId}` }), filename);
+  return csvResponse(toCsv(LEDGER_CSV_COLUMNS, exportRows.map(ledgerCsvValues)), filename);
 }
 
 export async function handle(request, env, url, json) {
