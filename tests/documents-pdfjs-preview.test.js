@@ -27,7 +27,8 @@ test('panel nie ma <iframe> ani linku „nowa karta” dla PDF; jest kontener PD
 
 test('panel renderuje PDF przez PDF.js z bajtów pobranych po autoryzacji (purpose=preview), nie przez disposition=inline', () => {
   assert.match(mainJs, /import\("\.\/pdf-preview\.js"\)/);
-  assert.match(mainJs, /fetch\(pdfPreviewUrl\(id\)/);
+  // Bajty przez wspólny klient (shared/api.js, binary) — bez bezpośredniego fetch (tests/shared-api.test.js).
+  assert.match(mainJs, /getJson\(pdfPreviewUrl\(id\), \{ binary: true/);
   assert.match(coreJs, /export function pdfPreviewUrl\(id\) \{\s*\n\s*return `\$\{contentUrl\(id\)\}\?purpose=preview`;/);
   assert.match(viewerJs, /from "pdfjs-dist\/legacy\/build\/pdf\.mjs"/);
   assert.match(viewerJs, /legacy\/build\/pdf\.worker\.min\.mjs\?url/);

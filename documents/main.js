@@ -484,14 +484,16 @@ const PREVIEW_FAILED = "Nie udało się wczytać podglądu. Sesja mogła wygasn�
 // document.viewed), render stron do canvas biblioteką dołączoną do panelu — bez ramki,
 // bez wbudowanego czytnika przeglądarki.
 async function showPdf(id, token) {
+  let blob;
   try {
-    const response = await fetch(pdfPreviewUrl(id), { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/pdf" } });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      if (token === previewToken) previewFailure(apiErrorText(response.status, body));
-      return;
-    }
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    // Wspólny klient (#99): 401/403 MFA → /login/, błędy JSON jak w reszcie panelu.
+    ({ blob } = await getJson(pdfPreviewUrl(id), { binary: true, cache: "no-store", headers: { Accept: "application/pdf" } }));
+  } catch (error) {
+    if (token === previewToken) previewFailure(error instanceof ApiError ? error.message : PREVIEW_FAILED);
+    return;
+  }
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
     if (token !== previewToken) return;
     previewPdf.hidden = false;
     const { mountPdfPreview } = await import("./pdf-preview.js");
