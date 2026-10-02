@@ -154,9 +154,9 @@ test('year without entries and without budget: valid report with empty sections'
   assert.equal(missing.status, 403, 'rok bez przydziału — brak wyroczni istnienia');
 });
 
-test('representative, audit, principal, technical admin and missing MFA get 403', async () => {
+test('representative, audit, technical admin and missing MFA get 403', async () => {
   const { db, cookies, call } = await setup();
-  for (const cookie of [cookies.rep, cookies.audit, cookies.principal, cookies.admin, cookies.boardNoMfa]) {
+  for (const cookie of [cookies.rep, cookies.audit, cookies.admin, cookies.boardNoMfa]) {
     for (const path of [`/api/reports/annual?schoolYearId=${YEAR}&format=html`, `/api/reports/cash-flow?schoolYearId=${YEAR}`]) {
       const response = await call(path, { cookie });
       assert.equal(response.status, 403, path);
@@ -165,4 +165,27 @@ test('representative, audit, principal, technical admin and missing MFA get 403'
   assert.equal((await call(`/api/reports/annual?schoolYearId=${YEAR}`)).status, 401);
   const { rows } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action LIKE 'report.%'");
   assert.equal(rows[0].n, 0);
+});
+
+test('dyrekcja (principal, 2026-10-02): sumy roku i przepływy 200 bez danych osobowych, audyt z aktorem; bez MFA lub bez przydziału roku 403; migawki 403', async () => {
+  const { db, cookies, call } = await setup();
+  const principalNoMfa = await seedUserSession(db, { userId: 'u-principal-nomfa', roles: [{ role: 'principal', schoolYearId: YEAR }], mfa: false });
+  for (const path of [
+    `/api/reports/annual?schoolYearId=${YEAR}&format=json`, `/api/reports/annual?schoolYearId=${YEAR}&format=html`,
+    `/api/reports/cash-flow?schoolYearId=${YEAR}`,
+  ]) {
+    const response = await call(path, { cookie: cookies.principal });
+    assert.equal(response.status, 200, path);
+    const text = await response.text();
+    for (const secret of [TRAP, 'Pułapka', 'u-treasurer', 'Skarbnik Testowy', 'le-bank', 'household', 'u-principal']) {
+      assert.ok(!text.includes(secret), `${path}: brak ${secret}`);
+    }
+    assert.equal((await call(path, { cookie: principalNoMfa })).status, 403, `${path}: bez MFA`);
+  }
+  const { rows } = await db.query("SELECT action, actor_id FROM audit_events WHERE action LIKE 'report.%' ORDER BY occurred_at");
+  assert.deepEqual(rows.map((r) => [r.action, r.actor_id]), [
+    ['report.annual.generated', 'u-principal'], ['report.annual.generated', 'u-principal'], ['report.cash_flow.generated', 'u-principal'],
+  ]);
+  assert.equal((await call(`/api/reports/annual/snapshots?schoolYearId=${YEAR}`, { cookie: cookies.principal })).status, 403);
+  assert.equal((await call(`/api/reports/annual?schoolYearId=y-other`, { cookie: cookies.principal })).status, 403, 'inny rok');
 });
