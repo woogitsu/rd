@@ -39,6 +39,7 @@ export function parseRoute(hash) {
   }
   if (path === "/overview") return { view: "overview" };
   if (path === "/guardian-updates") return { view: "guardianUpdates" };
+  if (path === "/guardian-verify-templates") return { view: "guardianVerifyTemplates" };
   return { view: "classes" };
 }
 
