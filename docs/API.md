@@ -142,6 +142,26 @@ przycisku „Pokaż więcej” nie ma.
 
 Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCursor`.
 
+## Monitoring kolejki kodów weryfikacyjnych (#140 pkt 5)
+
+Trasy się nie zmieniają (nowych ścieżek nie ma, więc `docs/openapi.json` jest bez zmian — generator
+opisuje ścieżki, role i statusy, nie schematy odpowiedzi). Zmieniły się kształty trzech odczytów
+techniczno-operacyjnych; wszystkie niosą wyłącznie liczby, znaczniki czasu i kody — bez adresów,
+kodów weryfikacyjnych, skrótów i identyfikatorów wniosków:
+
+| Odczyt | Nowe pola |
+|---|---|
+| `GET /health/jobs` (token) | nazwa progu `guardian_verify_queue_too_old` w `failedThresholds`; kod czekający w kolejce włącza też `email_worker_stale` (ten sam worker) |
+| `GET /api/admin/ops-status` (admin) | `guardianVerifyQueue`: `queued`, `sending`, `oldestPendingAt` (`created_at` najstarszego `queued`), `overdue`; `null`, gdy tabeli nie ma (baza sprzed 0184) |
+| `GET /api/email/worker-status?schoolYearId=` (zarząd, skarbnik) | `guardianVerifications`: `enabled`, `queued`, `sending`, `oldestQueuedAt` (`null`, gdy brak tabeli); alarm `guardian_verify_queue_stale` w `alarms`; czekający kod liczy się dla alarmów `worker_*` jak kampania do wysyłki |
+
+Próg: `GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS` (domyślnie 2 h, niepoprawna wartość = domyślna); alarm
+`worker-status` używa progu `EMAIL_WORKER_ALARM_HOURS`. Przy wyłączonej fladze
+`GUARDIAN_VERIFY_EMAIL_ENABLED` w procesie aplikacji liczby są widoczne, ale `overdue`/progi/alarmy
+nie włączają się (wiersze w kolejce czekają celowo). Liczby kolejki kodów są ogólnoszkolne (kolejka
+nie należy do roku szkolnego), jak przebiegi zadania w `worker-status`. Szczegóły: docs/EMAIL.md,
+docs/RAILWAY_OPERATIONS.md („Stan systemu”).
+
 ## Poza zakresem (nadal ograniczone)
 
 Cztery listy wymienione tu wcześniej jako ograniczone (lista wyłączeń e-mail,

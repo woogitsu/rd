@@ -94,6 +94,18 @@ export function buildOpsRows(status, now = new Date()) {
     });
   }
 
+  // #140 pkt 5: kolejka kodów weryfikacyjnych nowych adresów — tylko liczby i czas, bez adresów i kodów.
+  const gv = s.guardianVerifyQueue;
+  if (!gv) rows.push(noData("guardianVerifyQueue", "Brak tabeli kolejki kodów weryfikacyjnych."));
+  else {
+    rows.push({
+      key: "guardianVerifyQueue",
+      state: gv.overdue ? "attention" : "ok",
+      when: gv.oldestPendingAt,
+      detail: `W kolejce: ${gv.queued}, w wysyłce: ${gv.sending}.${gv.oldestPendingAt ? " Data dotyczy najstarszego oczekującego." : ""}${gv.overdue ? " Najstarszy czeka dłużej niż próg alarmu — sprawdź zadanie wysyłki." : ""}`,
+    });
+  }
+
   rows.push(backupRow("backup", s.backup, now));
   rows.push(backupRow("storageBackup", s.storageBackup, now));
   rows.push(backupRow("restoreDrill", s.restoreDrill, now));
@@ -125,6 +137,7 @@ export const OPS_LABELS = Object.freeze({
   migrations: "Migracje bazy",
   emailWorker: "Ostatni przebieg workera e-mail",
   emailQueue: "Kolejka e-mail",
+  guardianVerifyQueue: "Kolejka kodów weryfikacyjnych",
   backup: "Kopia zapasowa PostgreSQL",
   storageBackup: "Kopia Storage Bucket",
   restoreDrill: "Próba odtworzenia",

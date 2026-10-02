@@ -88,6 +88,9 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | rodziny | Podw. kliknięcie | tests/pg-guardian-update-verify.test.js | podwójne wysłanie formularza i ponowienie workera nie wysyłają drugiej |
 | rodziny | Ponowienie | tests/pg-guardian-update-verify.test.js | błąd dostawcy: 429 wraca do kolejki bez zużycia próby |
 | rodziny | Błędny e-mail | tests/pg-guardian-update-verify.test.js | adres na liście wyłączeń: brak wysyłki i stan failed z powodem |
+| rodziny | Błędny e-mail | tests/kontakt-core.test.js | wniosek: pusty formularz niczego nie wysyła, zgoda wymaga jawnego wyboru, adres jest normalizowany |
+| rodziny | Podw. kliknięcie | tests/families-guardian-verify-templates.test.js | widok korzysta z odpowiedzi prawdziwego API: szkic, zatwierdzenie przez inną osobę, odmowy |
+| rodziny | Ponowienie | tests/pg-guardian-verify-monitoring.test.js | po przebiegu workera kod wychodzi (transport-atrapa) i kolejka znika z progów; ponowienie nic nie dopisuje |
 | import | 2 opiekunów | tests/pg-import.test.js | 1200 synthetic rows from a BOM CSV: siblings, two guardians |
 | import | Rodzeństwo | tests/pg-import.test.js | commit is atomic, siblings share guardians |
 | import | Podw. kliknięcie | tests/pg-import.test.js | double-click and retry after a guardian conflict do not duplicate guardians |
@@ -152,6 +155,33 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | druk | Wpł. częściowe | tests/pg-print.test.js | kwoty netto tylko dla roli finansowej z MFA |
 | druk | Korekty | tests/pg-print.test.js | kwoty netto tylko dla roli finansowej z MFA |
 | eksport | Ponowienie | tests/pg-export-audit-year.test.js | ponowny eksport daje ten sam wynik |
+
+## Strona dla rodzica, widok szablonu i monitoring kodów weryfikacyjnych (#140 pkt 5)
+
+Żaden z tych testów nie wysyła poczty: worker dostaje transport-atrapę (prawdziwy transport Brevo
+odmawia pod `node --test`), a przeglądarkowy spec podstawia odpowiedzi API przez `page.route`.
+
+- `tests/kontakt-core.test.js` — czyste funkcje strony `kontakt/` (token tylko z części `#`, format kodu,
+  ciało wniosku, `emailVerification: requested` pokazuje pole kodu) i wymagania statyczne
+  (`kontakt/main.js` bez `fetch`, bez `localStorage`, bez powłoki panelu). Test „jedna treść dla każdej porażki”
+  przepuszcza przez wspólny klient `shared/api.js` odpowiedzi 400/404/409/429/503 i brak sieci i wymaga
+  niepustej listy wyników o tym samym tekście (`assertEvery`).
+- `tests/shared-api.test.js` — `kontakt/` jest poza listą paneli (`NON_PANEL_DIRS`, jak `login/` i `site/`:
+  bez powłoki i bez przekierowania na logowanie), ale osobny test pilnuje, że używa wspólnego klienta
+  i nie woła `fetch` bezpośrednio.
+- `tests/e2e/kontakt.spec.js` — przeglądarka (Chromium z `PLAYWRIGHT_BROWSERS_PATH`, bez `playwright install`):
+  wniosek z nowym adresem → pole kodu → ta sama treść dla złego kodu przy 400, 404 i 429 → sukces;
+  pole kodu tylko przy `emailVerification: requested`; link zużyty albo zły to jedna treść; potwierdzenie
+  nie niesie tokenu w adresie żądania (token jest w ciele).
+- `tests/families-guardian-verify-templates.test.js` — czyste funkcje widoku szablonu w `families/`,
+  zgodność granic z API i migracją 0184 oraz prawdziwe API na PGlite: szkic, odmowy `self_approval_forbidden`,
+  `forbidden` (admin), `mfa_stale` (sesja z MFA sprzed 20 minut), `verify_template_changed`, podwójne
+  kliknięcie zatwierdzenia i brak wierszy w `guardian_update_verifications` po zatwierdzeniu szablonu.
+- `tests/pg-guardian-verify-monitoring.test.js` — kolejka `guardian_update_verifications` w `GET /health/jobs`,
+  `GET /api/admin/ops-status` i `GET /api/email/worker-status`: stany `queued`/`sending`, najstarszy
+  oczekujący (zegar `now`, nie przestawianie niezmiennego `created_at`), progi i ich konfiguracja,
+  brak progów przy wyłączonej fladze, brak adresów i kodów w odpowiedziach, ponowienie zadania.
+  Liczby z `count(*)` są rzutowane `::int` w zapytaniach (w `pg` bez rzutowania wracają jako tekst).
 
 ## Jakość asercji i izolacji (#214)
 
