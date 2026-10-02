@@ -113,11 +113,17 @@ export async function createRealTestDb() {
   return handle;
 }
 
-export async function createTestDb() {
-  if (realBackend) return createRealTestDb();
+// Zawsze PGlite, także przy RD_TEST_PG_BACKEND=real — dla testów porównujących
+// oba backendy (tests/pg-real-type-parity.test.js).
+export async function createPgliteTestDb() {
   const db = new PGlite();
   for (const migration of await loadMigrations(migrationsDirectory)) await db.exec(migration.sql);
   return db;
+}
+
+export async function createTestDb() {
+  if (realBackend) return createRealTestDb();
+  return createPgliteTestDb();
 }
 
 // Rok szkolny o podanym id (idempotentnie). Etykieta pochodzi z id, by nie kolidować.
