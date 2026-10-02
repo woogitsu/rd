@@ -65,6 +65,12 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
   inny rok, przydział klasowy, brak MFA, brak zapisów i ślad odczytu; liczby tras per moduł
   pilnuje `tests/audit-role-route-inventory.test.js` (tabela „Zakres roli audit” w docs/AUTHORIZATION.md).
   To założenie prototypu do formalnego potwierdzenia przez zarząd, nie decyzja.
+- Dyrekcja bez roku (przydział i zaproszenie `principal` sprzed wymogu roku, wskazanie 2026-10-02):
+  `tests/pg-access-review.test.js` (aktywny przydział bez roku oznaczony `revoke` / `year_scope_required`
+  w przeglądzie każdego roku; z rokiem, cofnięty, wygasły i `audit` bez roku — nie; przegląd nie zmienia
+  `role_grants`, odebranie jawną trasą), `tests/pg-auth.test.js` i `tests/pg-login.test.js` (przyjęcie
+  zaproszenia `principal` bez roku: `school_year_required`, bez konta, przydziału i zużycia zaproszenia)
+  oraz `tests/admin-core.test.js` (etykiety powodów w panelu).
 
 ## Rejestr dowodów
 
@@ -77,6 +83,8 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | sesja | Błędny e-mail | tests/pg-auth.test.js | invitation is one-time, expires, can be revoked and must match the account email |
 | admin | Ponowienie | tests/pg-admin.test.js | invitations return the token once, block duplicates |
 | admin | Korekty | tests/pg-admin.test.js | revoking grants keeps history |
+| admin | Korekty | tests/pg-access-review.test.js | przegląd niczego nie odbiera; odebranie to jawna trasa POST /api/admin/grants/{id}/revoke i znika z propozycji |
+| sesja | Błędny e-mail | tests/pg-auth.test.js | acceptInvitation: zaproszenie principal bez roku jest blokowane kodem school_year_required |
 | rodziny | 2 opiekunów | tests/pg-primary-household.test.js | opieka naprzemienna: dwa obowiązujące gospodarstwa |
 | rodziny | Rodzeństwo | tests/pg-families.test.js | zarząd widzi wszystkie klasy i rodzeństwo |
 | rodziny | Wpł. częściowe | tests/pg-families.test.js | sumy wpłat netto tylko dla ról finansowych z MFA |
