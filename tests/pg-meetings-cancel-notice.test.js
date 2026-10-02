@@ -652,16 +652,20 @@ test('zebranie klasowe: lista odbiorców tylko z klasy zebrania, rodzeństwo i d
   } finally { await t.close(); }
 });
 
-test('zebranie zarządu nie ma jeszcze szkicu kampanii (lista zaproszonych kont poza zakresem)', async () => {
+test('zebranie zarządu: szkic kampanii do kont zaproszonych (meeting_invitees), wyłącznie szkic (0183; pełne testy w pg-meeting-board-notice)', async () => {
   const t = await setup();
   try {
     const meeting = await t.create({ kind: 'board', title: 'Posiedzenie zarządu' });
     await t.addItem(meeting, 'Punkt');
     const notice = await t.approvedNotice(meeting);
     const res = await t.call(t.cookies.board, 'POST', `/api/meetings/${meeting.id}/notices/${notice.id}/campaign-draft`, {});
-    assert.equal(res.status, 409);
-    assert.equal(res.body.error, 'notice_campaign_audience_unsupported');
-    assert.equal(await t.count('SELECT count(*) AS n FROM email_campaigns'), 0);
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(res.body.campaign.audience, 'meeting_invitees');
+    assert.equal(res.body.campaign.classId, null);
+    assert.equal(res.body.sent, false);
+    assert.equal(await t.count('SELECT count(*) AS n FROM email_campaigns'), 1);
+    assert.equal(await t.count('SELECT count(*) AS n FROM email_campaign_recipients'), 0);
+    assert.equal(await t.count('SELECT count(*) AS n FROM email_outbox'), 0);
   } finally { await t.close(); }
 });
 

@@ -21,7 +21,9 @@ import { actorContext, authorizedClassIds, hasAnyMatchingGrant, isAuthorizedScop
 import { detectPossiblePersonalData } from './pii-check.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
 import { insertAuditEvent } from './audit.js';
-import { ContentError, contentHash as emailContentHash, parseCampaignContent } from '../email/content.js';
+import {
+  AUDIENCES as EMAIL_AUDIENCES, ContentError, contentHash as emailContentHash, MEETING_AUDIENCES, parseCampaignContent,
+} from '../email/content.js';
 import { createJsonReader } from './input.js';
 import { afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from './list-cursor.js';
 import { buildCalendar, icalUidDomain } from '../ical.js';
@@ -1984,11 +1986,35 @@ function noticeEmailContent(notice, agenda) {
   };
 }
 
+// #113: czy kampania powiązana z zawiadomieniem nadal odpowiada zebraniu. Treść
+// kampanii jest kopią wersji zawiadomienia z chwili utworzenia szkicu, więc zmiana
+// porządku obrad (także kolejności), terminu, miejsca albo tytułu po zatwierdzeniu
+// kampanii — albo nowsza wersja zawiadomienia (np. szkic zmiany terminu) — musi
+// zatrzymać jej zatwierdzenie, zakolejkowanie, wznowienie i wysyłkę. Zwraca null
+// (aktualna) albo kod: 'notice_outdated'. Bez zapisu; używa tych samych reguł co
+// assertNoticeCurrent. Kampania bez zawiadomienia: null.
+export async function meetingNoticeCampaignStale(executor, campaign) {
+  const noticeId = campaign?.meeting_notice_id;
+  if (!noticeId) return null;
+  const notice = await one(executor, 'SELECT * FROM meeting_notices WHERE id = $1', [noticeId]);
+  const meeting = notice ? await one(executor, 'SELECT * FROM meetings WHERE id = $1', [notice.meeting_id]) : null;
+  if (!notice || !meeting || notice.status !== 'approved') return 'notice_outdated';
+  try {
+    await assertNoticeCurrent(executor, notice, meeting);
+  } catch (error) {
+    if (error instanceof MeetingError) return 'notice_outdated';
+    throw error;
+  }
+  return null;
+}
+
 // Szkic kampanii e-mail z zatwierdzonego zawiadomienia. WYŁĄCZNIE szkic: brak migawki
 // odbiorców, brak zatwierdzenia i brak kolejki — treść i listę zatwierdza osoba w
-// module kampanii (cztery oczy, dzienny limit, idempotentny klucz kampania + rodzina).
-// Zebranie ogólne -> wszystkie rodziny roku; klasowe -> rodziny dzieci tej klasy;
-// zebranie zarządu (konta użytkowników) nie ma jeszcze kampanii (poza zakresem).
+// module kampanii (cztery oczy, dzienny limit, idempotentny klucz kampania + rodzina
+// albo kampania + konto). Zebranie ogólne -> wszystkie rodziny roku; klasowe ->
+// rodziny dzieci tej klasy; zarządu -> konta zaproszonych (meeting_invitees, 0183:
+// aktywny przydział board/representative/audit/principal w roku; listę buduje moduł
+// kampanii przy migawce, nie ten szkic).
 export async function createNoticeCampaignDraft(db, actor, input = {}) {
   const meeting = await meetingForManage(db, actor, input.meetingId);
   const result = await mutate(db, async tx => {
@@ -1998,18 +2024,17 @@ export async function createNoticeCampaignDraft(db, actor, input = {}) {
       'SELECT id, status, audience, class_id FROM email_campaigns WHERE meeting_notice_id = $1', [notice.id]);
     if (existing) return { campaign: existing, replayed: true };
     if (notice.status !== 'approved') throw new MeetingError('notice_not_approved', 409);
-    if (locked.kind === 'board') throw new MeetingError('notice_campaign_audience_unsupported', 409);
     await assertNoticeCurrent(tx, notice, locked);
     const agendaVersion = notice.agenda_version_id
       ? await one(tx, 'SELECT * FROM meeting_agenda_versions WHERE id = $1', [notice.agenda_version_id]) : null;
-    const audience = locked.kind === 'class' ? 'class_households' : 'all_households';
+    const audience = locked.kind === 'class' ? 'class_households' : locked.kind === 'board' ? 'meeting_invitees' : 'all_households';
     const { subject, bodyText } = noticeEmailContent(notice, agendaVersion?.snapshot ?? []);
     let content;
     try {
       content = parseCampaignContent({
         title: `Zawiadomienie o zebraniu (wersja ${notice.version}): ${notice.title}`.slice(0, 200),
-        subject, bodyText, audience: 'all_households', category: 'organizational',
-      });
+        subject, bodyText, audience, category: 'organizational',
+      }, { audiences: [...EMAIL_AUDIENCES, ...MEETING_AUDIENCES] });
     } catch (error) {
       if (error instanceof ContentError) throw new MeetingError('invalid_notice_content', 409, { field: error.code });
       throw error;

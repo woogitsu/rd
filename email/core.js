@@ -24,6 +24,7 @@ export const AUDIENCE_LABELS = Object.freeze({
   all_households: 'Wszystkie rodziny roku',
   no_payment_record: 'Rodziny bez odnotowanej wpłaty',
   class_households: 'Rodziny dzieci jednej klasy (zebranie klasowe)',
+  meeting_invitees: 'Konta zaproszonych na zebranie zarządu (zarząd, przedstawiciele, KR, dyrekcja)',
 });
 
 // Kody z computeSnapshot w src/pg/routes/email.js.
@@ -35,6 +36,7 @@ export const EXCLUSION_REASON_LABELS = Object.freeze({
   duplicate_address: 'adres już użyty w innej rodzinie tej kampanii',
   no_payment_reference: 'brak aktywnej komunikacji strukturalnej w roku (treść zawiera {komunikat})',
   processing_restricted: 'ograniczenie przetwarzania danych (art. 18 RODO)',
+  account_disabled: 'konto wyłączone',
 });
 
 export function isValidId(value) {
