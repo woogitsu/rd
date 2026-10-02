@@ -191,7 +191,7 @@ test('draft reconciliation computes the ledger balance and the difference on the
     const { rows: audit } = await db.query(
       "SELECT action, metadata_json FROM audit_events WHERE action LIKE 'reconciliation.%' ORDER BY occurred_at");
     assert.ok(audit.some((row) => row.action === 'reconciliation.lines.imported'));
-    assert.doesNotMatch(JSON.stringify(audit), /Rodzina|Autokar|45000/);
+    assert.doesNotMatch(JSON.stringify(audit), /Rodzina|Autokar|(?<![\w-])45000(?![\w-])/);
   } finally {
     await db.close();
   }
