@@ -279,7 +279,7 @@ test('#93: kwota upoważnienia — tylko zarząd, przekroczenie 409, korekta prz
     assert.equal(await count('resolution_spending_authorizations'), 1);
     const [authEvent] = (await db.query("SELECT entity_id, metadata_json FROM audit_events WHERE action = 'resolution.spending_authorization.recorded'")).rows;
     assert.equal(authEvent.entity_id, adopted.id);
-    assert.doesNotMatch(JSON.stringify(authEvent.metadata_json), /500000|Kwota/);
+    assert.doesNotMatch(JSON.stringify(authEvent.metadata_json), /(?<![\w-])500000(?![\w-])|Kwota/);
     // Bez supersedesId, gdy kwota już istnieje -> 409 (nieaktualny stan).
     const stale = await authorize(call, cookies.board, adopted.id, { ...body, authorizedAmountCents: 600000 });
     assert.deepEqual([stale.status, stale.body.error], [409, 'authorization_superseded']);

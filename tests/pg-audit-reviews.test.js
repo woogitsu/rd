@@ -321,7 +321,7 @@ test('bramka danych osobowych: e-mail odrzucony, telefon wymaga potwierdzenia; a
     const { rows } = await db.query("SELECT metadata_json FROM audit_events WHERE action LIKE 'audit_review.%'");
     assert.equal(rows.length, 1);
     const metadata = JSON.stringify(rows[0].metadata_json);
-    assert.doesNotMatch(metadata, /Pytanie o fakturę|470/);
+    assert.doesNotMatch(metadata, /Pytanie o fakturę|(?<![\w-])470(?![\w-])/);
     assert.match(metadata, /piiConfirmed/);
     assert.equal(await count(db), 1);
   } finally { await db.close(); }

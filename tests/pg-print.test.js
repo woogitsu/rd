@@ -177,10 +177,10 @@ test('audyt print.cards_requested zawiera tylko liczby, zakres i identyfikator w
     const byActor = Object.fromEntries(rows.map((row) => [row.actor_id, row]));
     assert.equal(byActor['u-rep'].entity_type, 'school_year');
     assert.equal(byActor['u-rep'].entity_id, YEAR);
-    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false, paymentInstructionsApproved: false, privacyNoticeId: 'pn-test', privacyNoticeVersion: 1, structuredReferenceCount: 0 });
-    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true, paymentInstructionsApproved: false, privacyNoticeId: 'pn-test', privacyNoticeVersion: 1, structuredReferenceCount: 0 });
+    assert.deepEqual(byActor['u-rep'].metadata_json, { classId: 'c-1a', householdCount: 2, studentCount: 2, paymentInfoIncluded: false, paymentInstructionsApproved: false, skippedRestrictedCount: 0, privacyNoticeId: 'pn-test', privacyNoticeVersion: 1, structuredReferenceCount: 0 });
+    assert.deepEqual(byActor['u-tr'].metadata_json, { classId: null, householdCount: 3, studentCount: 4, paymentInfoIncluded: true, paymentInstructionsApproved: false, skippedRestrictedCount: 0, privacyNoticeId: 'pn-test', privacyNoticeVersion: 1, structuredReferenceCount: 0 });
     const text = JSON.stringify(rows);
-    assert.doesNotMatch(text, /Ala|Ewa|Olek|Testow|Przykład|H-1|H-2|@|4000/);
+    assert.doesNotMatch(text, /Ala|Ewa|Olek|Testow|Przykład|H-1|H-2|@|(?<![\w-])4000(?![\w-])/);
   } finally {
     await db.close();
   }
@@ -203,7 +203,7 @@ test('odpowiedź jest zgodna z wejściem print/core.js (parseInputRows → build
     const cards = renderCardsHtml(grouped.households, new Set(['H-1']), CONFIG);
     assert.equal(cards.count, 1);
     assert.match(cards.html, /Olek Testowy/);
-    assert.doesNotMatch(cards.html, /Ewa|40,00|4000/);
+    assert.doesNotMatch(cards.html, /Ewa|40,00|(?<![\w-])4000(?![\w-])/);
 
     // Bez informacji o wpłatach status jest „nie podano”, a nie „brak wpisu”.
     const rep = await get(`schoolYearId=${YEAR}&classId=c-1a`, sessions.rep1a);

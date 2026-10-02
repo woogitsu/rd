@@ -31,6 +31,11 @@
 // ani statusem rodziny; brak wpisu może być nieaktualny.
 // privacyNotice (#145, D-06): { id, version, url } opublikowanej informacji o
 // przetwarzaniu danych; brak opublikowanej wersji => 409 privacy_notice_missing.
+// skippedRestricted (D-07, wskazanie właściciela 2026-10-02): liczba rodzin
+// pominiętych na wydruku z powodu aktywnego ograniczenia przetwarzania (art. 18
+// RODO), liczona w TYM SAMYM zakresie co wiersze (rok/klasa, rola) — widzi ją
+// także przedstawiciel klasy, ale tylko dla swojej klasy. To wyłącznie liczba:
+// bez nazw, identyfikatorów i powodu.
 // Odpowiedź nigdy nie zawiera danych opiekunów (e-maili, imion, zgód).
 
 import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
@@ -77,16 +82,12 @@ export function cardDay(year, today) {
   return today;
 }
 
-// Rodzina ucznia = główne gospodarstwo obowiązujące w dniu `on` (domyślnie
-// rd_today(), Bruksela), a nie kolumna students.household_id (#194). Przy
-// opiece naprzemiennej kartka powstaje tylko dla głównego gospodarstwa
-// (założenie do D-11); uczeń bez obowiązującego głównego członkostwa nie ma kartki.
-async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = null }) {
-  const values = [schoolYearId, on];
-  const primary = 'student_primary_household_on(COALESCE($2::date, rd_today()))';
-  // #100 (art. 18 RODO): gospodarstwo z ograniczonym przetwarzaniem nie dostaje kartki.
-  const conditions = ['e.school_year_id = $1', 'h.archived_at IS NULL',
-    'NOT EXISTS (SELECT 1 FROM processing_restricted_subjects rs WHERE rs.household_id = p.household_id)'];
+// Wspólny zakres wierszy i licznika pominiętych: te same warunki, różni je tylko
+// to, czy rodzina ma aktywne ograniczenie przetwarzania.
+const RESTRICTED = 'EXISTS (SELECT 1 FROM processing_restricted_subjects rs WHERE rs.household_id = p.household_id)';
+
+function scopeConditions({ classId, full }, values, primary) {
+  const conditions = ['e.school_year_id = $1', 'h.archived_at IS NULL'];
   if (classId) {
     values.push(classId);
     if (full) {
@@ -97,6 +98,35 @@ async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = nul
       conditions.push('e.class_id = $3');
     }
   }
+  return conditions;
+}
+
+// D-07: liczba rodzin pominiętych z powodu ograniczenia przetwarzania w tym samym
+// zakresie co wydruk (przedstawiciel: tylko wiersze własnej klasy).
+async function countSkippedRestricted(db, { schoolYearId, classId, full, on = null }) {
+  const values = [schoolYearId, on];
+  const primary = 'student_primary_household_on(COALESCE($2::date, rd_today()))';
+  const conditions = scopeConditions({ classId, full }, values, primary);
+  const { rows } = await db.query(
+    `SELECT COUNT(DISTINCT p.household_id)::int AS n
+       FROM enrollments_current e
+       JOIN ${primary} p ON p.student_id = e.student_id
+       JOIN households h ON h.id = p.household_id
+      WHERE ${conditions.join(' AND ')} AND ${RESTRICTED}`,
+    values,
+  );
+  return rows[0]?.n ?? 0;
+}
+
+// Rodzina ucznia = główne gospodarstwo obowiązujące w dniu `on` (domyślnie
+// rd_today(), Bruksela), a nie kolumna students.household_id (#194). Przy
+// opiece naprzemiennej kartka powstaje tylko dla głównego gospodarstwa
+// (założenie do D-11); uczeń bez obowiązującego głównego członkostwa nie ma kartki.
+async function loadRows(db, { schoolYearId, classId, full, paymentInfo, on = null }) {
+  const values = [schoolYearId, on];
+  const primary = 'student_primary_household_on(COALESCE($2::date, rd_today()))';
+  // #100 (art. 18 RODO): gospodarstwo z ograniczonym przetwarzaniem nie dostaje kartki.
+  const conditions = [...scopeConditions({ classId, full }, values, primary), `NOT ${RESTRICTED}`];
   values.push(MAX_PRINT_ROWS + 1);
   const paymentColumn = paymentInfo ? ', COALESCE(t.net_amount_cents, 0) AS net_amount_cents' : '';
   const paymentJoin = paymentInfo
@@ -196,6 +226,7 @@ export async function handle(request, env, url, json) {
   const rows = await loadRows(env.db, { schoolYearId, classId, ...scope, on });
   if (rows.length > MAX_PRINT_ROWS) return json({ error: 'too_many_rows' }, 413);
 
+  const skippedRestricted = await countSkippedRestricted(env.db, { schoolYearId, classId, ...scope, on });
   const households = new Set(rows.map((row) => row.household_id));
   const paymentInstructions = await loadPaymentInstructions(env.db, schoolYearId);
   // Wyłącznie liczby i identyfikatory zakresu — bez identyfikatorów rodzin i danych osobowych.
@@ -210,6 +241,7 @@ export async function handle(request, env, url, json) {
       studentCount: rows.length,
       paymentInfoIncluded: scope.paymentInfo,
       paymentInstructionsApproved: Boolean(paymentInstructions),
+      skippedRestrictedCount: skippedRestricted,
       privacyNoticeId: privacyNotice.id,
       privacyNoticeVersion: privacyNotice.version,
       // Liczba rodzin z komunikacją strukturalną — nigdy same referencje (#83).
@@ -226,6 +258,7 @@ export async function handle(request, env, url, json) {
     paymentInfoIncluded: scope.paymentInfo,
     paymentInstructions,
     privacyNotice: noticeReference(privacyNotice, env.PUBLIC_BASE_URL),
+    skippedRestricted,
     rows: rows.map((row) => rowOut(row, scope.paymentInfo)),
   });
 }
