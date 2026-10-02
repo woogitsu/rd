@@ -56,7 +56,12 @@ import {
 } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { campaignPaymentInstructions } from '../pg/routes/payment-instructions.js';
-import { campaignPrivacyNotice } from '../pg/routes/privacy-notice.js';
+import { campaignPrivacyNotice, loadNoticeById, noticeReference } from '../pg/routes/privacy-notice.js';
+import { emailHash, normalizeEmail } from './content.js';
+import {
+  GUARDIAN_RESTRICTED_SQL, generateVerificationCode, hashVerificationCode, newCodeSalt, renderVerifyMessage,
+  VERIFY_CODE_TTL_MS,
+} from './guardian-verify.js';
 import { meetingNoticeCampaignStale } from '../pg/meetings.js';
 import { brusselsDay } from '../pg/today.js';
 
@@ -117,6 +122,11 @@ export async function recordOtherSends(executor, { day, count }) {
 const IN_FLIGHT = `SELECT COUNT(*)::int FROM email_outbox o
    WHERE o.state = 'sending'
      AND NOT EXISTS (SELECT 1 FROM email_send_ledger l WHERE l.outbox_id = o.id AND l.attempt = o.attempts)`;
+// 0184 (#140 pkt 5): kody weryfikacyjne w locie — ta sama reguła dla kolejki
+// guardian_update_verifications (wpis dziennika z source = 'verification').
+const VERIFY_IN_FLIGHT = `SELECT COUNT(*)::int FROM guardian_update_verifications v
+   WHERE v.state = 'sending'
+     AND NOT EXISTS (SELECT 1 FROM email_send_ledger l WHERE l.verification_id = v.id AND l.attempt = v.attempts)`;
 
 // Pula pozostała liczona ostrożnie (#84): dziennik `email_send_ledger.day` jest
 // zawsze dobą UTC, ale konto Brevo może resetować limit w swojej strefie
@@ -134,7 +144,7 @@ export async function remainingQuota(executor, now, config) {
         (SELECT COALESCE(SUM(message_count), 0)::int FROM email_send_ledger
            WHERE (recorded_at AT TIME ZONE $3) >= $2::date
              AND (recorded_at AT TIME ZONE $3) < $2::date + 1)
-     ) + (${IN_FLIGHT}) AS used`,
+     ) + (${IN_FLIGHT}) + (${VERIFY_IN_FLIGHT}) AS used`,
     [utc, account, config.quotaTimezone],
   );
   return Math.max(0, config.dailyLimit - config.dailyReserved - Number(rows[0].used));
@@ -162,7 +172,8 @@ async function dayUsage(executor, kind, day, timezone) {
       [day, timezone]);
   const by = Object.fromEntries(rows.map((row) => [row.source, Number(row.n)]));
   const campaign = by.campaign ?? 0;
-  const other = by.other ?? 0;
+  // 0184: kody weryfikacyjne (source = 'verification') liczą się jako „inne”.
+  const other = (by.other ?? 0) + (by.verification ?? 0);
   return { day, campaign, other, total: campaign + other };
 }
 
@@ -184,10 +195,11 @@ export async function quotaOverview(executor, now, config) {
     },
   };
   const { rows } = await executor.query(IN_FLIGHT);
+  const { rows: verifyRows } = await executor.query(VERIFY_IN_FLIGHT);
   return {
     dailyLimit: config.dailyLimit,
     dailyReserved: config.dailyReserved,
-    inFlight: Number(rows[0].count),
+    inFlight: Number(rows[0].count) + Number(verifyRows[0].count),
     remaining: await remainingQuota(executor, now, config),
     windows,
     generatedAt: now.toISOString(),
@@ -902,6 +914,313 @@ async function recordIntegrityMismatch(tx, campaign, observedContentHash) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Kody weryfikacyjne nowego adresu z wniosku rodzica (#140 pkt 5, migracja 0184)
+//
+// Kolejka guardian_update_verifications (jeden wiersz na wniosek, klucz
+// verify:{requestId}). Ten sam przebieg, limit dnia (remainingQuota, blokada
+// QUOTA_LOCK_ID), okno wysyłki, pauza konta, lista adresów testowych
+// (recipientRefusal) i transport co kampanie. Różnice:
+//   * odbiorca = guardian_update_requests.proposed_email TEGO wniosku (kolumna
+//     niezmienna — trigger 0087); innego adresu nie da się podstawić;
+//   * kod (8 cyfr) powstaje dopiero przy przejęciu do wysyłki; w bazie zostaje
+//     wyłącznie skrót z solą i termin ważności (VERIFY_CODE_TTL_MS od przejęcia);
+//     kod jawny istnieje tylko w pamięci przebiegu i w wiadomości;
+//   * przed wysyłką: flaga GUARDIAN_VERIFY_EMAIL_ENABLED, wniosek nadal
+//     „pending”, adres nie na liście wyłączeń, brak ograniczenia przetwarzania;
+//   * wynik niepewny (5xx, timeout) = failed/delivery_unknown bez ponawiania —
+//     najwyżej jedna wiadomość, która mogła wyjść, na wniosek.
+// Zdarzenia audytu: entity guardian_update_request (identyfikator wniosku),
+// metadane bez adresu i bez kodu (pomocnik `audit` — skan słownika zdarzeń,
+// tests/audit-actions-catalog.test.js).
+
+async function audit(tx, action, row, metadata = {}) {
+  await insertAuditEvent(tx, {
+    action, entityType: 'guardian_update_request', entityId: row.request_id,
+    metadata: { verificationId: row.id, ...metadata },
+  });
+}
+
+async function recordVerificationLedger(tx, { day, verificationId, attempt }) {
+  await tx.query(
+    `INSERT INTO email_send_ledger (id, day, source, verification_id, attempt, message_count)
+     VALUES ($1, $2, 'verification', $3, $4, 1)
+     ON CONFLICT (verification_id, attempt) DO NOTHING`,
+    [crypto.randomUUID(), day, verificationId, attempt],
+  );
+}
+
+// Werdykt „nie wysyłać” albo null. Wspólny dla przejęcia i potwierdzenia przed wysyłką.
+async function verificationRefusal(tx, row, config) {
+  if (row.request_status !== 'pending') return { state: 'cancelled', error: 'request_decided' };
+  const email = normalizeEmail(row.email);
+  if (!email || email !== row.email) return { state: 'failed', error: 'no_valid_email' };
+  const suppressed = await tx.query('SELECT 1 FROM email_active_suppressions WHERE email_hash = $1', [emailHash(email)]);
+  if (suppressed.rows[0]) return { state: 'failed', error: 'address_suppressed' };
+  if ((await tx.query(GUARDIAN_RESTRICTED_SQL, [row.guardian_id])).rows[0]) return { state: 'cancelled', error: 'processing_restricted' };
+  const refusal = recipientRefusal(config, email);
+  if (refusal) return { state: 'failed', error: refusal };
+  return null;
+}
+
+const VERIFY_ROW_SQL = `SELECT v.id, v.request_id, v.state, v.attempts, v.idempotency_key, v.template_id, v.privacy_notice_id,
+            r.status AS request_status, r.guardian_id, r.proposed_email AS email,
+            t.subject, t.body_text, t.status AS template_status
+       FROM guardian_update_verifications v
+       JOIN guardian_update_requests r ON r.id = v.request_id
+       JOIN guardian_verify_templates t ON t.id = v.template_id`;
+
+async function closeVerification(tx, row, verdict, now) {
+  await tx.query(
+    `UPDATE guardian_update_verifications SET state = $2, last_error = $3, updated_at = $4 WHERE id = $1`,
+    [row.id, verdict.state, verdict.error, now.toISOString()],
+  );
+  if (verdict.state === 'cancelled') await audit(tx, 'guardian_update_request.verification_cancelled', row, { reason: verdict.error });
+  else await audit(tx, 'guardian_update_request.verification_failed', row, { reason: verdict.error });
+}
+
+// Dzierżawa wygasła (przebieg przerwany): wysyłka nierozpoczęta → z powrotem do
+// kolejki; rozpoczęta → failed/delivery_unknown (mogła wyjść — bez ponawiania).
+async function recoverStaleVerifications(db, now) {
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `UPDATE guardian_update_verifications
+          SET state = CASE WHEN send_started_at IS NULL THEN 'queued' ELSE 'failed' END,
+              attempts = CASE WHEN send_started_at IS NULL THEN GREATEST(0, attempts - 1) ELSE attempts END,
+              last_error = CASE WHEN send_started_at IS NULL THEN 'lease_expired' ELSE 'delivery_unknown' END,
+              next_attempt_at = CASE WHEN send_started_at IS NULL THEN $1::timestamptz ELSE next_attempt_at END,
+              claim_token = CASE WHEN send_started_at IS NULL THEN NULL ELSE claim_token END,
+              updated_at = $1
+        WHERE state = 'sending' AND claimed_at < $1::timestamptz - make_interval(mins => $2)
+        RETURNING id, request_id, state, attempts,
+                  to_char(COALESCE(send_started_at, claimed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
+      [now.toISOString(), LEASE_MINUTES],
+    );
+    for (const row of rows) {
+      if (row.state === 'failed') await recordVerificationLedger(tx, { day: row.day, verificationId: row.id, attempt: row.attempts });
+      if (row.state === 'queued') await audit(tx, 'guardian_update_request.verification_requeued', row, { reason: 'lease_expired' });
+      else await audit(tx, 'guardian_update_request.verification_failed', row, { reason: 'delivery_unknown' });
+    }
+  });
+}
+
+async function claimVerifications(db, { config, now, day, dryRun, run, runToken }) {
+  return db.transaction(async (tx) => {
+    await tx.query('SELECT pg_advisory_xact_lock($1)', [QUOTA_LOCK_ID]);
+    let remaining = await remainingQuota(tx, now, config);
+    run.remainingQuota = remaining;
+    const { rows } = await tx.query(
+      `${VERIFY_ROW_SQL}
+        WHERE v.state = 'queued' AND v.next_attempt_at <= $1::timestamptz
+        ORDER BY v.created_at, v.id
+        LIMIT $2
+        FOR UPDATE OF v SKIP LOCKED`,
+      [now.toISOString(), config.batchSize],
+    );
+    const claimed = [];
+    for (const row of rows) {
+      if (remaining <= 0) { run.stoppedReason ??= 'daily_quota_reached'; break; }
+      const verdict = row.template_status !== 'approved'
+        ? { state: 'failed', error: 'template_not_approved' }
+        : await verificationRefusal(tx, row, config);
+      if (verdict) {
+        run[verdict.state === 'cancelled' ? 'skipped' : 'failed'] += 1;
+        if (!dryRun) await closeVerification(tx, row, verdict, now);
+        continue;
+      }
+      const notice = noticeReference(await loadNoticeById(tx, row.privacy_notice_id), config.publicBaseUrl);
+      run.planned += 1;
+      remaining -= 1;
+      if (dryRun) {
+        if (!run.sample) run.sample = { verificationId: row.id, subject: row.subject };
+        continue;
+      }
+      const code = generateVerificationCode();
+      const salt = newCodeSalt();
+      const expiresAt = new Date(now.getTime() + VERIFY_CODE_TTL_MS).toISOString();
+      await tx.query(
+        `UPDATE guardian_update_verifications
+            SET state = 'sending', attempts = attempts + 1, claim_token = $2, claimed_at = $3, updated_at = $3,
+                send_started_at = NULL, code_salt = $4, code_hash = $5, code_expires_at = $6
+          WHERE id = $1 AND state = 'queued'`,
+        [row.id, runToken, now.toISOString(), salt, hashVerificationCode(salt, code), expiresAt],
+      );
+      claimed.push({
+        id: row.id, request_id: row.request_id, guardian_id: row.guardian_id, email: row.email, day,
+        attempts: row.attempts + 1, idempotency_key: row.idempotency_key,
+        message: renderVerifyMessage(row, { code, privacyNotice: notice }),
+      });
+    }
+    return claimed;
+  });
+}
+
+// Atomowe potwierdzenie tuż przed wysyłką: nadal „sending” z tokenem przebiegu,
+// wniosek nadal oczekuje, adres nie zablokowany, brak ograniczenia. Zwraca null
+// (wysyłaj) albo werdykt.
+async function confirmVerificationSend(db, item, { runToken, config, sendAt }) {
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `${VERIFY_ROW_SQL} WHERE v.id = $1 FOR UPDATE OF v`,
+      [item.id],
+    );
+    const row = rows[0];
+    const { rows: own } = await tx.query(
+      `SELECT 1 FROM guardian_update_verifications WHERE id = $1 AND claim_token = $2 AND state = 'sending' AND send_started_at IS NULL`,
+      [item.id, runToken],
+    );
+    if (!row || !own[0]) return { state: null, error: 'lease_lost' };
+    const verdict = await verificationRefusal(tx, row, config);
+    if (verdict) {
+      await closeVerification(tx, row, verdict, sendAt);
+      return verdict;
+    }
+    await tx.query(
+      `UPDATE guardian_update_verifications SET send_started_at = $2, claimed_at = $2, updated_at = $2 WHERE id = $1`,
+      [item.id, sendAt.toISOString()],
+    );
+    return null;
+  });
+}
+
+async function releaseVerificationClaims(db, { runToken, now, reason }) {
+  return db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `UPDATE guardian_update_verifications
+          SET state = 'queued', last_error = $3, updated_at = $2, next_attempt_at = $2::timestamptz,
+              attempts = GREATEST(0, attempts - 1), claim_token = NULL
+        WHERE claim_token = $1 AND state = 'sending' AND send_started_at IS NULL
+        RETURNING id, request_id`,
+      [runToken, now.toISOString(), reason],
+    );
+    for (const row of rows) await audit(tx, 'guardian_update_request.verification_requeued', row, { reason, stage: 'run_stopped' });
+    return rows.length;
+  });
+}
+
+async function recordVerificationPause(tx, { code, runToken }) {
+  const { rows } = await tx.query(
+    `INSERT INTO email_provider_pauses (id, reason, error_code, campaign_id, run_id)
+     VALUES ($1, 'account_rejected', $2, NULL, $3)
+     ON CONFLICT (reason) WHERE lifted_at IS NULL DO NOTHING
+     RETURNING id`,
+    [crypto.randomUUID(), code, runToken],
+  );
+  if (!rows[0]) return;
+  await insertAuditEvent(tx, {
+    action: 'guardian_verify.provider_paused', entityType: 'email_provider_pause', entityId: rows[0].id,
+    metadata: { reason: 'account_rejected', errorCode: code, runId: runToken },
+  });
+}
+
+// Wynik transportu dla kodu. Zwraca { outcome, stop }.
+async function recordVerificationResult(db, item, { error = null, messageId = null, config, now, runToken }) {
+  return db.transaction(async (tx) => {
+    const owned = 'WHERE id = $1 AND state = \'sending\' AND claim_token = $2';
+    if (!error) {
+      const { rows } = await tx.query(
+        `UPDATE guardian_update_verifications SET state = 'sent', sent_at = $3, provider_message_id = $4, last_error = NULL, updated_at = $3
+          ${owned} RETURNING id`,
+        [item.id, runToken, now.toISOString(), messageId],
+      );
+      await recordVerificationLedger(tx, { day: item.day, verificationId: item.id, attempt: item.attempts });
+      if (!rows[0]) {
+        await audit(tx, 'guardian_update_request.verification_sent_after_lease_lost', item, { runId: runToken });
+        return { outcome: null };
+      }
+      await audit(tx, 'guardian_update_request.verification_sent', item, { attempt: item.attempts });
+      return { outcome: 'sent' };
+    }
+    const known = error instanceof EmailTransportError;
+    const code = known && /^[a-z0-9_]{1,60}$/.test(error.code) ? error.code : 'transport_error';
+    // Wiadomość na pewno nie wyszła: z powrotem do kolejki bez zużycia próby i limitu.
+    const notSent = known && (error.accountLevel || error.notSent || error.code === 'provider_rate_limited');
+    if (notSent) {
+      const delaySeconds = error.accountLevel ? 0 : (error.retryAfterSeconds ?? BACKOFF_BASE_MINUTES * 60);
+      await tx.query(
+        `UPDATE guardian_update_verifications SET state = 'queued', last_error = $3, updated_at = $4, send_started_at = NULL,
+                claim_token = NULL, attempts = GREATEST(0, attempts - 1), next_attempt_at = $4::timestamptz + make_interval(secs => $5)
+          ${owned}`,
+        [item.id, runToken, code, now.toISOString(), delaySeconds],
+      );
+      await audit(tx, 'guardian_update_request.verification_requeued', item, { reason: code });
+      if (error.accountLevel) await recordVerificationPause(tx, { code, runToken });
+      const stop = error.accountLevel ? 'provider_account_rejected' : error.notSent ? 'provider_unreachable' : 'provider_rate_limited';
+      return { outcome: error.accountLevel ? null : 'retried', stop };
+    }
+    const retry = known && error.retryable && item.attempts < config.maxAttempts;
+    const mayHaveLeft = !known || error.uncertain;
+    if (mayHaveLeft) await recordVerificationLedger(tx, { day: item.day, verificationId: item.id, attempt: item.attempts });
+    if (retry) {
+      await tx.query(
+        `UPDATE guardian_update_verifications SET state = 'queued', last_error = $3, updated_at = $4, send_started_at = NULL,
+                claim_token = NULL, next_attempt_at = $4::timestamptz + make_interval(mins => $5)
+          ${owned}`,
+        [item.id, runToken, code, now.toISOString(), backoffMinutes(item.attempts)],
+      );
+      await audit(tx, 'guardian_update_request.verification_requeued', item, { reason: code });
+      return { outcome: 'retried' };
+    }
+    await tx.query(
+      `UPDATE guardian_update_verifications SET state = 'failed', last_error = $3, updated_at = $4 ${owned}`,
+      [item.id, runToken, code, now.toISOString()],
+    );
+    await audit(tx, 'guardian_update_request.verification_failed', item, { reason: code });
+    return { outcome: 'failed' };
+  });
+}
+
+// Faza kodów weryfikacyjnych w przebiegu workera. Zwraca kod zatrzymania
+// przebiegu (dostawca/SIGTERM) albo null. Wyłączona flaga = brak przejęć
+// (wiersze zostają „queued” do włączenia flagi albo rozstrzygnięcia wniosku).
+export async function processGuardianVerifications(db, { config, now, day, dryRun, run, runToken, transport, signal }) {
+  if (!config.guardianVerifyEnabled) return null;
+  if (!dryRun) await recoverStaleVerifications(db, now);
+  const claimed = await claimVerifications(db, { config, now, day, dryRun, run, runToken });
+  if (dryRun || !claimed.length) return null;
+  const startedMs = Date.now();
+  const clock = () => new Date(now.getTime() + (Date.now() - startedMs));
+  let stop = null;
+  try {
+    for (const item of claimed) {
+      if (signal?.aborted) { stop = 'shutdown'; break; }
+      const verdict = await confirmVerificationSend(db, item, { runToken, config, sendAt: clock() });
+      if (verdict) {
+        if (verdict.state === 'cancelled') run.skipped += 1;
+        else if (verdict.state === 'failed') run.failed += 1;
+        continue;
+      }
+      let sent = null;
+      let transportError = null;
+      try {
+        sent = await transport.send({
+          to: item.email,
+          sender: config.sender,
+          replyTo: config.replyTo,
+          subject: item.message.subject,
+          text: item.message.text,
+          unsubscribeUrl: null,
+          outboxId: item.id,
+          idempotencyKey: item.idempotency_key,
+        });
+      } catch (error) {
+        transportError = error;
+      }
+      // Zapis wyniku poza try transportu: błąd bazy po przyjęciu wiadomości nie
+      // jest błędem transportu (#172) — wiersz zostaje w „sending” z rozpoczętą
+      // wysyłką i rozstrzyga go recoverStaleVerifications (delivery_unknown).
+      const result = transportError
+        ? await recordVerificationResult(db, item, { error: transportError, config, now: clock(), runToken })
+        : await recordVerificationResult(db, item, { messageId: sent?.messageId ?? null, config, now: clock(), runToken });
+      if (result.outcome) run[result.outcome] += 1;
+      if (result.stop) { stop = result.stop; break; }
+    }
+  } finally {
+    run.requeued += await releaseVerificationClaims(db, { runToken, now: clock(), reason: stop ?? 'run_ended' });
+  }
+  return stop;
+}
+
 // signal: AbortSignal — po przerwaniu (SIGTERM w scripts/email-worker.js)
 // przebieg kończy bieżącą wiadomość, nie zaczyna następnej, zwraca resztę
 // przejętych wierszy do kolejki i zapisuje stopped_reason = 'shutdown'.
@@ -946,6 +1265,16 @@ export async function runEmailBatch(env, {
   }
   // Token własności dzierżawy: tylko ten przebieg może wysłać przejęte wiersze.
   const runToken = crypto.randomUUID();
+  // 0184 (#140 pkt 5): kody weryfikacyjne nowych adresów przed kampaniami (krótki
+  // termin ważności), w tym samym limicie dnia i pod tą samą blokadą limitu.
+  // Zatrzymanie po stronie dostawcy (odmowa konta, 429, brak połączenia,
+  // SIGTERM) kończy cały przebieg — kampanie dostałyby to samo.
+  const verifyStop = await processGuardianVerifications(db, { config, now, day, dryRun, run, runToken, transport, signal });
+  if (verifyStop) {
+    run.stoppedReason = verifyStop;
+    await recordRun(db, run);
+    return run;
+  }
   const claimed = await claim(db, { config, now, day, dryRun, run, runToken });
   // Zegar przebiegu: wstrzyknięte „now” + rzeczywisty upływ czasu, aby dzierżawa
   // liczyła się od chwili wysyłki danej wiadomości, a nie od startu przebiegu.

@@ -149,6 +149,7 @@ słowem „sekret” oznacza zmienną ustawianą wyłącznie w Railway.
 | `BREVO_WEBHOOK_ALLOWED_CIDRS` | aplikacja | nie | brak | lista CIDR adresów Brevo (sprawdzana przy `TRUST_PROXY`) |
 | `EMAIL_UNSUBSCRIBE_SECRET` | aplikacja, worker | tak (wysyłka) | brak | sekret podpisu linku wypisania; brak = brak stopki |
 | `EMAIL_SENDING_ENABLED` | worker | nie | wyłączone | wysyłka tylko przy dokładnie `true` |
+| `GUARDIAN_VERIFY_EMAIL_ENABLED` | aplikacja, worker | nie | wyłączone | dokładnie `true` włącza kod weryfikacyjny na nowy adres z wniosku rodzica o aktualizację kontaktu (#140 pkt 5, migracja 0184): aplikacja zleca kod przy złożeniu wniosku, worker go wysyła (w limicie Brevo, nadawca wyłącznie z `BREVO_FROM_EMAIL`). Wymaga też szablonu zatwierdzonego przez zarząd i opublikowanej informacji o przetwarzaniu danych; bez nich i przy każdej innej wartości — nic nie wychodzi (docs/EMAIL.md, „Kod weryfikacyjny nowego adresu”). Ustawić w obu usługach tak samo |
 | `EMAIL_TEST_ALLOWLIST` | worker, `email-preflight` | nie | brak | poza produkcją jedyni dozwoleni odbiorcy, np. `*@example.invalid` |
 | `EMAIL_PREVIEW_RECIPIENTS` | worker, `email-preflight` | nie | brak | adresy techniczne dla wiadomości testowej kampanii |
 | `EMAIL_PREVIEW_REQUIRED_BEFORE_APPROVAL` | aplikacja | nie | wyłączone | `true` wymaga testu przed zatwierdzeniem (D-16) |

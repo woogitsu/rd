@@ -422,5 +422,9 @@
   {
     "name": "0183_email_account_recipients.sql",
     "sha256": "37e9ad84db24b12c1ef489a9264e4e28c247b4881266b3ce8213a033a6748b3d"
+  },
+  {
+    "name": "0184_guardian_update_verification.sql",
+    "sha256": "a1b0ab360131b6d473ec850b8625cad4a20ea9269b4b7aa5f8f95809156a95fc"
   }
 ]

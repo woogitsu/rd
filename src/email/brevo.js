@@ -157,6 +157,10 @@ export function emailConfig(env = {}) {
     // Adres odpowiedzi (#148) — puste pole na produkcji jest odmową (rodzic bez odpowiedzi).
     replyTo: env.BREVO_REPLY_TO || null,
     sendWindow: sendWindowFrom(env),
+    // #140 pkt 5 (0184): kod weryfikacyjny nowego adresu z wniosku rodzica.
+    // Wyłącznie dokładnie "true" (jak EMAIL_SENDING_ENABLED); wyłączona flaga
+    // zostawia zlecone kody w kolejce, nic nie wychodzi.
+    guardianVerifyEnabled: env.GUARDIAN_VERIFY_EMAIL_ENABLED === 'true',
   };
 }
 

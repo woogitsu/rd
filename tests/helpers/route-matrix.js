@@ -208,6 +208,12 @@ export function pngBytes() {
   return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
 }
 
+// #140 pkt 5: szablon wiadomości z kodem weryfikacyjnym (syntetyczny, do macierzy).
+export const GUARDIAN_VERIFY_TEMPLATE = Object.freeze({
+  subject: 'Potwierdzenie adresu e-mail (syntetyczne)',
+  bodyText: 'Kod potwierdzający nowy adres: {kod}. Kod jest ważny {waznosc} godzin (wiadomość syntetyczna).',
+});
+
 export const CAMPAIGN_TEXT = 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. '
   + 'Jeśli wpłata została już wykonana, prosimy pominąć wiadomość.';
 export function campaignBody(target) {
@@ -1997,6 +2003,33 @@ export const ROUTE_MATRIX = Object.freeze([
     allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: 'fresh', object: { kind: 'guardianUpdateRequest' },
     build: ({ obj }) => ({ path: `/api/admin/guardian-update-requests/${obj.requestId}/reject`, body: {} }),
+  },
+  // #140 pkt 5 (0184): kod weryfikacyjny nowego adresu. Potwierdzenie publiczne —
+  // uwierzytelnia je posiadanie jednorazowego tokenu wniosku i kodu z wiadomości
+  // (fixture 'guardianVerification': wniosek z nowym adresem + przebieg workera
+  // z transportem-atrapą), ten sam wynik dla każdego wywołującego.
+  {
+    id: 'guardianUpdates.verifyPublic', module: 'guardian-updates', method: 'POST', path: '/api/public/guardian-update/verify',
+    targets: ['W1'], allow: 'public', mfa: false, ok: 200, deny: 200, fixture: 'fresh', object: { kind: 'guardianVerification' },
+    build: ({ obj }) => ({ path: '/api/public/guardian-update/verify', body: { token: obj.token, code: obj.code } }),
+  },
+  // Szablon wiadomości z kodem: odczyt i szkic — admin/zarząd bez przydziału klasowego;
+  // zatwierdzenie — wyłącznie zarząd, inna osoba niż autor (fixture: autor board2), świeże MFA.
+  {
+    id: 'guardianUpdates.templatesList', module: 'guardian-updates', method: 'GET', path: '/api/admin/guardian-verify-templates',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: null,
+    build: () => ({ path: '/api/admin/guardian-verify-templates' }),
+  },
+  {
+    id: 'guardianUpdates.templateCreate', module: 'guardian-updates', method: 'POST', path: '/api/admin/guardian-verify-templates',
+    targets: ['-'], allow: { admin: ['-'], board: ['-'] }, mfa: true, ok: 201, deny: 403, fixture: null,
+    build: () => ({ path: '/api/admin/guardian-verify-templates', body: GUARDIAN_VERIFY_TEMPLATE }),
+  },
+  {
+    id: 'guardianUpdates.templateApprove', module: 'guardian-updates', method: 'POST',
+    path: '/api/admin/guardian-verify-templates/:templateId/approve', targets: ['-'],
+    allow: { board: ['-'] }, mfa: true, ok: 200, deny: 403, fixture: 'fresh', object: { kind: 'guardianVerifyTemplate' },
+    build: ({ obj }) => ({ path: `/api/admin/guardian-verify-templates/${obj.templateId}/approve`, body: {} }),
   },
 
   // ---------- board (#131) ----------

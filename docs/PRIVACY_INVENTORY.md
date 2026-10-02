@@ -111,6 +111,11 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`guardian_update_requests`|`guardian_id`|Opiekun|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`guardian_update_requests`|`note`|Opiekun|direct|wolny tekst|uzasadnienie wniosku o zmianę kontaktu|guardian_contact|tak|nie|
 |`guardian_update_requests`|`proposed_email`|Opiekun|direct|kontakt|wniosek o zmianę adresu kontaktowego|guardian_contact|nie|nie|
+|`guardian_update_verifications`|`confirmed_at`|Opiekun|pseudonymous|kontakt|potwierdzenie przez opiekuna, że nowy adres należy do niego (#140 pkt 5)|guardian_contact|nie|nie|
+|`guardian_update_verifications`|`idempotency_key`|Opiekun|pseudonymous|identyfikacja|klucz idempotencji verify:<id wniosku> (jedna wiadomość na wniosek)|guardian_contact|nie|nie|
+|`guardian_update_verifications`|`request_id`|Opiekun|pseudonymous|identyfikacja|powiązanie kodu weryfikacyjnego z wnioskiem opiekuna (adres tylko we wniosku)|guardian_contact|nie|nie|
+|`guardian_verify_templates`|`approved_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie zatwierdzenia z osobą (zasada czterech oczu)|nieustalona (D-04)|nie|nie|
+|`guardian_verify_templates`|`created_by`|Członek Rady|pseudonymous|identyfikacja|powiązanie rekordu z osobą|nieustalona (D-04)|nie|nie|
 |`guardians`|`contact_allowed`|Opiekun|pseudonymous|zgoda|zgoda na kontakt|nieustalona (D-04)|nie|tak|
 |`guardians`|`email`|Opiekun|direct|kontakt|kontakt z opiekunem|guardian_contact|nie|tak|
 |`guardians`|`first_name`|Opiekun|direct|identyfikacja|identyfikacja opiekuna|guardian_contact|nie|tak|
@@ -249,7 +254,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 |`users`|`display_name`|Członek Rady|direct|identyfikacja|wyświetlanie nazwiska członka Rady|guardian_contact|nie|nie|
 |`users`|`email`|Członek Rady|direct|kontakt|logowanie i kontakt z członkiem Rady|guardian_contact|nie|nie|
 
-Łącznie kolumn z danymi osobowymi: **236**, w tym wolnego tekstu: **67** (patrz #152).
+Łącznie kolumn z danymi osobowymi: **241**, w tym wolnego tekstu: **67** (patrz #152).
 
 ## Wszystkie tabele i kolumny (pełny spis)
 
@@ -726,6 +731,7 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `reason_code` | none | — | tak |
 | `recorded_at` | none | — | nie |
 | `source` | none | — | nie |
+| `verification_id` | none | — | nie |
 
 ### `email_suppression_release_requests`
 
@@ -1009,6 +1015,47 @@ Zobacz też: [`docs/PROCESSORS.md`](./PROCESSORS.md), [`docs/DPIA_CHECKLIST.md`]
 | `proposed_email` | direct | guardian | nie |
 | `proposed_email_set` | none | — | nie |
 | `status` | none | — | nie |
+
+### `guardian_update_verifications`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `attempts` | none | — | nie |
+| `claim_token` | none | — | nie |
+| `claimed_at` | none | — | nie |
+| `code_expires_at` | none | — | nie |
+| `code_hash` | none | — | nie |
+| `code_salt` | none | — | nie |
+| `confirmed_at` | pseudonymous | guardian | nie |
+| `created_at` | none | — | nie |
+| `failed_attempts` | none | — | nie |
+| `id` | none | — | nie |
+| `idempotency_key` | pseudonymous | guardian | nie |
+| `last_error` | none | — | nie |
+| `next_attempt_at` | none | — | nie |
+| `privacy_notice_id` | none | — | nie |
+| `provider_message_id` | none | — | nie |
+| `request_id` | pseudonymous | guardian | nie |
+| `send_started_at` | none | — | nie |
+| `sent_at` | none | — | nie |
+| `state` | none | — | nie |
+| `template_id` | none | — | nie |
+| `updated_at` | none | — | nie |
+
+### `guardian_verify_templates`
+
+| Kolumna | Dane osobowe | Podmiot | Eksport roczny |
+|---|---|---|---|
+| `approved_at` | none | — | nie |
+| `approved_by` | pseudonymous | board_member | nie |
+| `body_text` | none | — | nie |
+| `content_hash` | none | — | nie |
+| `created_at` | none | — | nie |
+| `created_by` | pseudonymous | board_member | nie |
+| `id` | none | — | nie |
+| `status` | none | — | nie |
+| `subject` | none | — | nie |
+| `version` | none | — | nie |
 
 ### `guardians`
 

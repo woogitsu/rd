@@ -84,6 +84,10 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | rodziny | Ponowienie | tests/pg-primary-household.test.js | podwójne kliknięcie zmiany: ponowienie nie tworzy drugiego członkostwa |
 | rodziny | Błędny e-mail | tests/pg-families.test.js | zmiana kontaktu opiekuna: tylko zarząd/admin |
 | rodziny | Korekty | tests/pg-families.test.js | zmiana kontaktu opiekuna: tylko zarząd/admin, historia i audyt |
+| rodziny | 2 opiekunów | tests/pg-guardian-update-verify.test.js | dwoje opiekunów jednego dziecka: kod opiekuna A nie potwierdza wniosku opiekuna B |
+| rodziny | Podw. kliknięcie | tests/pg-guardian-update-verify.test.js | podwójne wysłanie formularza i ponowienie workera nie wysyłają drugiej |
+| rodziny | Ponowienie | tests/pg-guardian-update-verify.test.js | błąd dostawcy: 429 wraca do kolejki bez zużycia próby |
+| rodziny | Błędny e-mail | tests/pg-guardian-update-verify.test.js | adres na liście wyłączeń: brak wysyłki i stan failed z powodem |
 | import | 2 opiekunów | tests/pg-import.test.js | 1200 synthetic rows from a BOM CSV: siblings, two guardians |
 | import | Rodzeństwo | tests/pg-import.test.js | commit is atomic, siblings share guardians |
 | import | Podw. kliknięcie | tests/pg-import.test.js | double-click and retry after a guardian conflict do not duplicate guardians |
@@ -166,7 +170,9 @@ Każda reguła ma kontrolę pozytywną (kod, który reguła musi wykryć):
   usunięcie jednego wymaga obniżenia limitu — lista może tylko maleć (#214). `pg-bootstrap-admin` używa
   opcji `now` funkcji `bootstrapAdmin` (zegar kontroli ważnego admina i
   zaproszenia; domyślnie `now()` bazy); `pg-guardian-updates` używa
-  `env.now` przy wygasaniu linków opiekunów (#140).
+  `env.now` przy wygasaniu linków opiekunów (#140), a `pg-guardian-update-verify`
+  — przy wygasaniu kodu weryfikacyjnego nowego adresu (#140 pkt 5; worker dostaje
+  ten sam zegar przez opcję `now` przebiegu).
 - Negatywna asercja na krótkim podciągu cyfr (`!meta.includes('470')`) jest
   zakazana. Taki podciąg losowo trafia w UUID lub skrót w metadanych (#548).
   Szukaj całej wartości (`SYNTHETIC_PHONE_IN_TEXT`) albo liczby jako osobnego

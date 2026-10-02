@@ -52,10 +52,12 @@ import { base32Decode, totp } from '../src/pg/mfa.js';
 import { hashPassword } from '../src/pg/password.js';
 import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
+import { emailConfig } from '../src/email/brevo.js';
+import { processGuardianVerifications } from '../src/email/worker.js';
 import { createTestDb, request, seedClass, seedDocument, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
   ACTOR_KEYS, ACTORS, AUDIT_FLAG_ROUTES, MARKERS, MFA_GATE_EXEMPT_REASONS, REFERENCE_CASES, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
-  campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaOnlyDenial, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
+  campaignBody, denyStatus, expectedStatus, GUARDIAN_VERIFY_TEMPLATE, importPayload, ledgerCategory, marker, mfaOnlyDenial, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
   pngBytes, routeWithAuditFlag, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 import { assertEvery } from './helpers/assertions.js';
@@ -111,6 +113,7 @@ export const AUDIT_EXEMPT_ROUTES = new Map([
 export const AUDIT_ACTORLESS_ROUTES = new Map([
   ['email.preferences.post', 'publiczny link z podpisanym tokenem rodzica; zdarzenie email.preference.* bez konta'],
   ['guardianUpdates.submitPublic', 'publiczny formularz aktualizacji danych opiekuna; zdarzenie guardian_update_request.created bez konta'],
+  ['guardianUpdates.verifyPublic', 'publiczne potwierdzenie kodu weryfikacyjnego (#140 pkt 5); zdarzenie guardian_update_request.verification_confirmed bez konta'],
 ]);
 const auditStats = new Map();
 const withKey = (key) => ({ 'Idempotency-Key': key });
@@ -451,6 +454,38 @@ async function makePrivacyNotice(ctx, _target, stage) {
   if (stage === 'approved') return { noticeId };
   await api(ctx, ctx.fxCookies.admin, 'POST', `/api/admin/privacy-notices/${noticeId}/publish`, {});
   return { noticeId };
+}
+
+// Zatwierdzony szablon (raz na bazę): autor board2, zatwierdza zarząd fixture.
+async function ensureVerifyTemplate(ctx) {
+  if (!ctx.verifyTemplate) {
+    ctx.verifyTemplate = (async () => {
+      const { json } = await api(ctx, ctx.fxCookies.board2, 'POST', '/api/admin/guardian-verify-templates', GUARDIAN_VERIFY_TEMPLATE);
+      await api(ctx, ctx.fxCookies.board, 'POST', `/api/admin/guardian-verify-templates/${json.template.id}/approve`, {});
+      return json.template.id;
+    })();
+  }
+  return ctx.verifyTemplate;
+}
+
+async function makeGuardianVerification(ctx) {
+  await ensureVerifyTemplate(ctx);
+  const { guardianId } = await makeHousehold(ctx.db, TARGETS.A, nextKey('fx-guv'));
+  const { json: link } = await api(ctx, ctx.fxCookies.admin, 'POST', '/api/admin/guardian-links', { guardianId });
+  const email = `fx-${safeKey(nextKey('guv')).toLowerCase()}@example.invalid`;
+  await api(ctx, null, 'POST', '/api/public/guardian-update', { token: link.token, email });
+  const sent = [];
+  const transport = { send: async (message) => { sent.push(message); return { messageId: `fx-verify-${sent.length}` }; } };
+  const now = new Date();
+  const config = emailConfig({
+    APP_ENV: 'test', EMAIL_SENDING_ENABLED: 'true', BREVO_FROM_EMAIL: 'rada@rada.example.invalid',
+    EMAIL_TEST_ALLOWLIST: '*@example.invalid', GUARDIAN_VERIFY_EMAIL_ENABLED: 'true',
+  });
+  const run = { planned: 0, sent: 0, retried: 0, failed: 0, skipped: 0, suppressed: 0, requeued: 0, remainingQuota: 0, stoppedReason: null, sample: null };
+  await processGuardianVerifications(ctx.db, { config, now, day: now.toISOString().slice(0, 10), dryRun: false, run, runToken: randomUUID(), transport, signal: null });
+  const message = sent.find((item) => item.to === email);
+  if (!message) throw new Error('fixture guardianVerification: brak wiadomości z kodem');
+  return { token: link.token, code: /\b(\d{8})\b/.exec(message.text)[1], guardianId };
 }
 
 async function makeCampaign(ctx, target, stage) {
@@ -929,6 +964,14 @@ const MAKERS = {
       { token: link.token, contactAllowed: true });
     return { requestId: submitted.requestId, guardianId };
   },
+  // #140 pkt 5: szkic szablonu wiadomości z kodem (autor board2 — zatwierdza inna osoba).
+  guardianVerifyTemplate: async (ctx) => {
+    const { json } = await api(ctx, ctx.fxCookies.board2, 'POST', '/api/admin/guardian-verify-templates', GUARDIAN_VERIFY_TEMPLATE);
+    return { templateId: json.template.id };
+  },
+  // Wniosek z nowym adresem i kod wysłany przez fazę workera z transportem-atrapą
+  // (bez kampanii — processGuardianVerifications, nie cały przebieg).
+  guardianVerification: async (ctx) => makeGuardianVerification(ctx),
   adminTarget: (ctx, _target, stage) => makeAdminTarget(ctx, stage),
   importPlan: async (ctx, target) => {
     const payload = importPayload(target, nextKey('fximp'));
@@ -1084,6 +1127,9 @@ async function matrixContext(group = 'main') {
         // (nigdy nie łączy się z siecią), adres z listy technicznej Rady.
         EMAIL_SENDING_ENABLED: 'true', EMAIL_PREVIEW_RECIPIENTS: 'fx-preview@rada.example.invalid',
         emailTransport: { send: async () => ({ messageId: 'fx-preview-message' }) },
+        // #140 pkt 5 (0184): kod weryfikacyjny nowego adresu z wniosku — trasy formularza bez nowego
+        // adresu (submitPublic, guardianUpdateRequest) nie tworzą przez to wiersza weryfikacji.
+        GUARDIAN_VERIFY_EMAIL_ENABLED: 'true',
         // D-09 (#137): grupa 'auditFlag' uruchamia serwer z włączonym odczytem księgi i dokumentów przez audit.
         ...(group === 'auditFlag' ? { AUDIT_LEDGER_READ: '1' } : {}),
       };

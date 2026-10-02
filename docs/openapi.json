@@ -1633,6 +1633,178 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/admin/guardian-verify-templates": {
+      "get": {
+        "operationId": "guardianUpdates_templatesList",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "guardianUpdates.templatesList",
+        "tags": [
+          "guardian-updates"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ],
+          "board": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "guardianUpdates.templatesList"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      },
+      "post": {
+        "operationId": "guardianUpdates_templateCreate",
+        "responses": {
+          "201": {
+            "description": "Utworzono."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "guardianUpdates.templateCreate",
+        "tags": [
+          "guardian-updates"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "admin": [
+            "-"
+          ],
+          "board": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "guardianUpdates.templateCreate"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          201
+        ],
+        "x-rd-roles": [
+          "admin",
+          "board"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
+    "/api/admin/guardian-verify-templates/{templateId}/approve": {
+      "post": {
+        "operationId": "guardianUpdates_templateApprove",
+        "parameters": [
+          {
+            "name": "templateId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "guardianUpdates.templateApprove",
+        "tags": [
+          "guardian-updates"
+        ],
+        "x-rd-access": "role",
+        "x-rd-actor-scopes": {
+          "board": [
+            "-"
+          ]
+        },
+        "x-rd-deny-status": [
+          403
+        ],
+        "x-rd-matrix-ids": [
+          "guardianUpdates.templateApprove"
+        ],
+        "x-rd-mfa": true,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [
+          "board"
+        ],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/admin/invitation-batches/apply": {
       "post": {
         "operationId": "admin_invitationBatchApply",
@@ -16738,6 +16910,33 @@
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
     },
+    "/api/public/guardian-update/verify": {
+      "post": {
+        "operationId": "guardianUpdates_verifyPublic",
+        "responses": {
+          "200": {
+            "description": "Sukces."
+          }
+        },
+        "security": [],
+        "summary": "guardianUpdates.verifyPublic",
+        "tags": [
+          "guardian-updates"
+        ],
+        "x-rd-access": "public",
+        "x-rd-actor-scopes": {},
+        "x-rd-deny-status": [],
+        "x-rd-matrix-ids": [
+          "guardianUpdates.verifyPublic"
+        ],
+        "x-rd-mfa": false,
+        "x-rd-ok-status": [
+          200
+        ],
+        "x-rd-roles": [],
+        "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
+      }
+    },
     "/api/public/news": {
       "get": {
         "operationId": "news_public",
@@ -19507,6 +19706,7 @@
           "followup_no_households",
           "followup_source_not_eligible",
           "forbidden",
+          "forbidden_wording",
           "four_eyes_required",
           "grant_four_eyes_required",
           "grant_not_found",
@@ -19610,6 +19810,7 @@
           "invalid_ogm_base",
           "invalid_ogm_reference",
           "invalid_options",
+          "invalid_or_expired_code",
           "invalid_or_expired_link",
           "invalid_organizer",
           "invalid_origin",
@@ -19666,6 +19867,7 @@
           "invalid_transition",
           "invalid_ttl",
           "invalid_user_id",
+          "invalid_verify_template",
           "invalid_window",
           "invalid_year_end_confirmation",
           "invalid_year_order",
@@ -19876,6 +20078,10 @@
           "use_reschedule_endpoint",
           "user_disabled",
           "user_not_found",
+          "verify_code_placeholder_required",
+          "verify_template_changed",
+          "verify_template_not_draft",
+          "verify_template_not_found",
           "vote_record_required",
           "webhook_not_configured",
           "year_close_already_started",
@@ -20400,6 +20606,11 @@
         "retry": "Nie — zależy od sesji/uprawnień, nie od ponowienia."
       },
       {
+        "code": "forbidden_wording",
+        "meaning": "Treść zawiera sformułowanie niedozwolone dla dobrowolnej składki (np. „dług”). Zmień treść.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "four_eyes_required",
         "meaning": "Tę operację musi zatwierdzić inna osoba niż autor.",
         "retry": "Nie — popraw dane żądania."
@@ -20915,6 +21126,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_or_expired_code",
+        "meaning": "Kod jest nieprawidłowy albo już nieaktywny. Sprawdź kod z wiadomości; po kilku błędnych próbach albo po upływie ważności poproś Radę o nowy link.",
+        "retry": "Nie — sprawdź kod; po wyczerpaniu prób poproś o nowy link."
+      },
+      {
         "code": "invalid_or_expired_link",
         "meaning": "Ten link jest nieprawidłowy albo już nieaktywny.",
         "retry": "Nie — poproś o nowy link."
@@ -21192,6 +21408,11 @@
       {
         "code": "invalid_user_id",
         "meaning": "Niepoprawny identyfikator konta.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_verify_template",
+        "meaning": "Temat (3–200 znaków, bez nawiasów klamrowych) albo treść szablonu (20–4000 znaków, wyłącznie {kod} i {waznosc}) są niepoprawne.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -22242,6 +22463,26 @@
       {
         "code": "user_not_found",
         "meaning": "Nie znaleziono konta.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "verify_code_placeholder_required",
+        "meaning": "Treść szablonu musi zawierać miejsce na kod: {kod}.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "verify_template_changed",
+        "meaning": "Treść szablonu różni się od wersji, którą zatwierdzasz. Odśwież widok.",
+        "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "verify_template_not_draft",
+        "meaning": "Ten szablon jest już zatwierdzony. Nową treść zapisz jako nową wersję.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "verify_template_not_found",
+        "meaning": "Nie znaleziono szablonu wiadomości z kodem.",
         "retry": "Nie — popraw dane żądania."
       },
       {

@@ -1519,3 +1519,34 @@ Wycofanie: na bazie bez wierszy z `user_id` — DROP triggera i funkcji
 przywrócenie klucza głównego wykluczeń, CHECK audience (z 0139) i powodów
 wykluczeń (z 0178) oraz funkcji z 0139 i 0156; z wierszami kont — tylko po
 anulowaniu takich kampanii i kopii zapasowej (wierszy kolejki się nie usuwa).
+
+`0184_guardian_update_verification.sql` (#140 pkt 5; wskazania właściciela
+2026-10-02 — weryfikacja opcjonalna z ostrzeżeniem, kod wychodzi automatycznie po
+złożeniu wniosku) dodaje kod weryfikacyjny na NOWY adres z wniosku rodzica o
+aktualizację kontaktu: tabelę `guardian_verify_templates` (wersjonowany szablon
+wiadomości z obowiązkowym `{kod}`, `draft -> approved`, zatwierdza inna osoba niż
+autor — CHECK `guardian_verify_template_four_eyes`, świeże MFA sprawdza trasa;
+zatwierdzona wersja niezmienna, strażnik `guardian_verify_template_guard`),
+tabelę `guardian_update_verifications` (jeden wiersz na wniosek z nowym adresem,
+UNIQUE `request_id`, klucz `verify:<request_id>`, stan kolejki
+`skipped`/`queued`/`sending`/`sent`/`failed`/`cancelled` z kodem powodu,
+dzierżawa przebiegu workera, skrót kodu z solą, termin ważności, licznik błędnych
+prób 0–5, chwila potwierdzenia; bez adresu — worker czyta niezmienny
+`guardian_update_requests.proposed_email`; strażnik
+`guardian_update_verification_guard`: bez DELETE, powiązania niezmienne,
+dozwolone przejścia stanów, potwierdzenie raz, licznik tylko rośnie, nowy kod
+tylko przy przejęciu do wysyłki), BEFORE TRUNCATE na obu tabelach oraz źródło
+`verification` w `email_send_ledger` (kolumna `verification_id`, UNIQUE
+(`verification_id`, `attempt`), redefinicja CHECK `email_send_ledger_source_check`,
+`email_ledger_campaign_row` i `email_ledger_other_manual` — gałęzie
+`campaign`/`preview`/`other` bez zmian). Skutki dla danych: dwie nowe, puste
+tabele i kolumna NULL w dzienniku limitu (ADD COLUMN bez DEFAULT nie przepisuje
+tabeli); istniejące wiersze dziennika spełniają nowe CHECK (`verification_id`
+NULL), istniejące wnioski zostają bez zmian i bez wiersza weryfikacji (API:
+`verification: none`). Nowe tabele nie zawierają adresów ani kodu jawnego.
+Wycofanie: na bazie bez wierszy weryfikacji — DROP triggerów i funkcji obu
+strażników, DROP TABLE `guardian_update_verifications` i
+`guardian_verify_templates`, DROP SEQUENCE `guardian_verify_template_version_seq`,
+przywrócenie CHECK dziennika z 0056/0177 i DROP COLUMN `verification_id`; z
+wierszami — tylko po kopii zapasowej (wpisy dziennika limitu są tylko do
+dopisywania i wskazują wiersze weryfikacji).

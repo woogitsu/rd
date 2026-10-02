@@ -123,7 +123,9 @@ const EXEMPT_GROUPS = [
     reason: 'agregaty i liczniki (bez imion, e-maili i identyfikatorów rodzin) albo konfiguracja',
     routes: ['families.classes', 'board.overview', 'board.overviewExportCsv', 'board.overviewExportXlsx', 'representative.overview',
       'admin.classCoverage', 'admin.retentionPreview', 'admin.opsStatus', 'yearClose.status', 'import.options',
-      'email.list', 'email.status', 'email.report', 'email.providerPause.get', 'email.workerStatus.get', 'email.quota.get'],
+      'email.list', 'email.status', 'email.report', 'email.providerPause.get', 'email.workerStatus.get', 'email.quota.get',
+      // #140 pkt 5: wersje szablonu wiadomości z kodem (treść zarządu, bez danych rodzin).
+      'guardianUpdates.templatesList'],
   },
   {
     reason: 'ewidencja wiadomości spoza kolejki (#84): liczby, kody powodu, doba i identyfikator aktora z Rady; bez adresów i treści wiadomości',

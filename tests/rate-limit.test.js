@@ -145,6 +145,9 @@ test('serwer Node: po przekroczeniu progu 429 z Retry-After i BEZ wywołania han
     assert.equal(delegated, 2, 'odrzucone żądanie nie dotarło do handlera');
     const post = await fetch(`${baseUrl}/api/public/guardian-update`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
     assert.equal(post.status, 429);
+    // #140 pkt 5: potwierdzenie kodu weryfikacyjnego — ta sama klasa public po adresie.
+    const verify = await fetch(`${baseUrl}/api/public/guardian-update/verify`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
+    assert.equal(verify.status, 429);
     assert.equal(delegated, 2);
     for (let i = 0; i < 5; i += 1) assert.equal((await fetch(`${baseUrl}/health/ready`)).status, 200);
     assert.equal((await fetch(`${baseUrl}/`, { redirect: 'manual' })).status, 308);

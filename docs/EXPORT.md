@@ -293,6 +293,12 @@ wersję (`rd-eksport-<rok>-v2.json`).
   `guardian_update_requests` (wniosek rodzica o zmianę kontaktu, z proponowanym
   e-mailem) są poza paczką roku — wariant zachowawczy do czasu decyzji zarządu
   o retencji wniosków (D-04), jak `guardian_contact_changes` (D-03).
+- 0184 (#140 pkt 5): `guardian_update_verifications` (stan kodu weryfikacyjnego
+  nowego adresu: kolejka, skrót kodu z solą, potwierdzenie — bez adresu) jest
+  poza paczką jak sam wniosek (D-04); `guardian_verify_templates` (szablon
+  wiadomości z kodem zatwierdzany przez zarząd) — jak `privacy_notices`,
+  konfiguracja organizacji, nie dane roku. Eksport danych jednej rodziny
+  (docs/DATA_REQUESTS.md) obejmuje stan weryfikacji (bez skrótu i soli kodu).
 
 ## Ryzyka i ograniczenia
 

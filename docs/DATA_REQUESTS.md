@@ -13,6 +13,7 @@
 | Ograniczenie przetwarzania (art. 18): oznaczenie gospodarstwa/opiekuna, wykluczenie z kampanii i kartek, zdjęcie jako nowy zapis | `processing_restrictions` (migracja 0178), `POST …/{id}/restrict`, `POST …/{id}/lift-restriction`, `GET …/{id}/restrictions` | zrobione (#100, ten zakres) |
 | Anonimizacja gospodarstwa na żądanie usunięcia (`erasure`) | `POST /api/admin/anonymizations` (`reasonCode: data_subject_request`), `src/pg/anonymization.js`, migracja 0174 | zrobione jako mechanizm (prototyp, dane syntetyczne); zakres i procedura — [RETENTION.md](RETENTION.md); fizyczne usunięcie nie istnieje |
 | Raport „kto oglądał dane rodziny” (z `data_access_log`) w odpowiedzi dla rodzica | — | nie zrobione: D-07 (czy i w jakim zakresie to ujawniać) |
+| Kod weryfikacyjny nowego adresu z prośby opiekuna o aktualizację kontaktu (zwykła aktualizacja, nie żądanie RODO) | `guardian_update_verifications` (migracja 0184), `POST /api/public/guardian-update/verify`, docs/EMAIL.md „Kod weryfikacyjny nowego adresu” | zrobione (prototyp, wskazania 2026-10-02); eksport rodziny zawiera sekcję `guardian_update_verifications` (stan wysyłki, powód, czasy wysłania i potwierdzenia — bez adresu, skrótu i soli kodu); anonimizacja nie musi nic zmieniać (tabela bez adresu i bez wolnego tekstu — adres jest w `guardian_update_requests.proposed_email`, czyszczonym jak dotąd) |
 
 ## Ekran w panelu
 
