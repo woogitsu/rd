@@ -135,6 +135,7 @@ wpisów).
 | `followup_no_households` | Brak rodzin do kampanii uzupełniającej: żadne potwierdzenie „wiadomość nie wyszła” nie jest jeszcze zatwierdzone przez drugą osobę z zarządu albo rodziny są już w innym uzupełnieniu. | Zależy od kontekstu (patrz moduł trasy). |
 | `followup_source_not_eligible` | Kampanię uzupełniającą można utworzyć tylko dla kampanii, która trafiła do kolejki wysyłki. | Nie — popraw dane żądania. |
 | `forbidden` | Brak uprawnień do tej operacji w Twoim zakresie. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
+| `forbidden_wording` | Treść zawiera sformułowanie niedozwolone dla dobrowolnej składki (np. „dług”). Zmień treść. | Nie — popraw dane żądania. |
 | `four_eyes_required` | Tę operację musi zatwierdzić inna osoba niż autor. | Nie — popraw dane żądania. |
 | `grant_four_eyes_required` | Nadanie roli zarządu, skarbnika albo administratora zatwierdza inny administrator niż wnioskodawca i osoba, która ma otrzymać rolę. | Nie — zatwierdza inny administrator. |
 | `grant_not_found` | Nie znaleziono przydziału. | Nie — popraw dane żądania. |
@@ -238,6 +239,7 @@ wpisów).
 | `invalid_ogm_base` | Niepoprawna baza referencji płatności. | Nie — popraw dane żądania. |
 | `invalid_ogm_reference` | Niepoprawna referencja płatności (oczekiwano 12 cyfr). | Nie — popraw dane żądania. |
 | `invalid_options` | Niepoprawne ustawienia importu. | Nie — popraw dane żądania. |
+| `invalid_or_expired_code` | Kod jest nieprawidłowy albo już nieaktywny. Sprawdź kod z wiadomości; po kilku błędnych próbach albo po upływie ważności poproś Radę o nowy link. | Nie — sprawdź kod; po wyczerpaniu prób poproś o nowy link. |
 | `invalid_or_expired_link` | Ten link jest nieprawidłowy albo już nieaktywny. | Nie — poproś o nowy link. |
 | `invalid_organizer` | Organizator może mieć najwyżej 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_origin` | Żądanie odrzucone: niezgodne pochodzenie strony. Otwórz panel z adresu aplikacji. | Nie — popraw dane żądania. |
@@ -294,6 +296,7 @@ wpisów).
 | `invalid_transition` | Tego kroku nie można wykonać w obecnym stanie. Odśwież widok. | Nie — popraw dane żądania. |
 | `invalid_ttl` | Ważność zaproszenia: od 1 do 336 godzin. | Nie — popraw dane żądania. |
 | `invalid_user_id` | Niepoprawny identyfikator konta. | Nie — popraw dane żądania. |
+| `invalid_verify_template` | Temat (3–200 znaków, bez nawiasów klamrowych) albo treść szablonu (20–4000 znaków, wyłącznie {kod} i {waznosc}) są niepoprawne. | Nie — popraw dane żądania. |
 | `invalid_window` | Niepoprawny zakres dat. | Nie — popraw dane żądania. |
 | `invalid_year_end_confirmation` | Potwierdzenie rozbieżności wymaga jednego z dozwolonych powodów i widzianych różnic w centach. | Nie — popraw dane żądania. |
 | `invalid_year_order` | Rok docelowy musi zaczynać się później niż rok źródłowy. | Nie — popraw dane żądania. |
@@ -503,6 +506,10 @@ wpisów).
 | `use_reschedule_endpoint` | Po zatwierdzeniu zawiadomienia zmień termin przez „Zmień termin” — wymaga to powodu. | Nie — popraw dane żądania. |
 | `user_disabled` | Konto jest wyłączone. | Zależy od kontekstu (patrz moduł trasy). |
 | `user_not_found` | Nie znaleziono konta. | Nie — popraw dane żądania. |
+| `verify_code_placeholder_required` | Treść szablonu musi zawierać miejsce na kod: {kod}. | Nie — popraw dane żądania. |
+| `verify_template_changed` | Treść szablonu różni się od wersji, którą zatwierdzasz. Odśwież widok. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `verify_template_not_draft` | Ten szablon jest już zatwierdzony. Nową treść zapisz jako nową wersję. | Nie — popraw dane żądania. |
+| `verify_template_not_found` | Nie znaleziono szablonu wiadomości z kodem. | Nie — popraw dane żądania. |
 | `vote_record_required` | Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum. | Nie — popraw dane żądania. |
 | `webhook_not_configured` | Powiadomienia zwrotne nie są skonfigurowane na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_already_started` | Zamknięcie roku zostało już rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |

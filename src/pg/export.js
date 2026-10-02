@@ -427,6 +427,11 @@ export const EXPORT_EXCLUDED_TABLES = Object.freeze({
   guardian_update_links: 'jednorazowy token linku do aktualizacji kontaktu (token_hash) — sekret, nigdy w paczce',
   guardian_update_requests: 'wniosek niesie proponowany e-mail rodzica — jak guardian_contact_changes (D-03) dane '
     + 'przed decyzją zarządu o zakresie retencji; wariant zachowawczy do czasu decyzji (D-04)',
+  // 0184: kod weryfikacyjny nowego adresu z wniosku (#140 pkt 5).
+  guardian_update_verifications: 'stan kodu weryfikacyjnego nowego adresu z wniosku (skrót kodu z solą, kolejka wysyłki) — '
+    + 'jak guardian_update_requests poza paczką do decyzji o retencji (D-04); kod jawny nigdy nie jest zapisywany',
+  guardian_verify_templates: 'szablon wiadomości z kodem weryfikacyjnym zatwierdzany przez zarząd (D-16) — konfiguracja '
+    + 'organizacji jak privacy_notices, nie dane roku do odtworzenia',
 });
 
 // ---------------------------------------------------------------------------

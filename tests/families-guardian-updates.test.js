@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   PAGE_LIMIT, buildListUrl, canDecide, confirmationText, decisionUrl, describeConsentChange,
-  describeEmailChange, mergePage, pageState, resultMessage, suppressionWarning, summaryText, toRow,
+  describeEmailChange, describeVerification, mergePage, pageState, resultMessage, suppressionWarning, summaryText, toRow,
 } from '../families/guardian-updates-core.js';
 import { parseRoute } from '../families/core.js';
 
@@ -41,6 +41,25 @@ test('ostrzeżenie o liście wyłączeń (#94) tylko przy aktywnej blokadzie, be
   assert.match(text, /skarga/);
   assert.match(text, /nie zdejmuje blokady/);
   assert.match(suppressionWarning(request({ proposedEmailSuppression: 'inny_kod' })), /aktywna blokada/);
+});
+
+test('weryfikacja nowego adresu (#140 pkt 5): stan i powód po polsku; zatwierdzenie bez potwierdzenia ostrzega', () => {
+  assert.equal(describeVerification(request({ proposedEmail: undefined })), null, 'bez nowego adresu nie ma czego weryfikować');
+  assert.equal(describeVerification(request({ proposedEmail: null })), null);
+  assert.deepEqual(describeVerification(request({ verification: 'confirmed', verificationReason: null })),
+    { status: 'confirmed', confirmed: true, text: 'adres potwierdzony kodem' });
+  const failed = describeVerification(request({ verification: 'failed', verificationReason: 'address_suppressed' }));
+  assert.equal(failed.confirmed, false);
+  assert.match(failed.text, /nieudane \(adres na liście wyłączeń\)/);
+  assert.match(describeVerification(request({ verification: 'none', verificationReason: 'template_missing' })).text, /szablonu/);
+  assert.match(describeVerification(request({ verification: 'nieznany' })).text, /nie wysłano kodu/);
+  const unverified = toRow(request({ verification: 'sent', verificationReason: null }));
+  assert.match(confirmationText('approve', unverified), /NIE jest potwierdzony kodem/);
+  assert.match(confirmationText('approve', unverified), /dzienniku zdarzeń/);
+  const confirmed = toRow(request({ verification: 'confirmed' }));
+  assert.doesNotMatch(confirmationText('approve', confirmed), /NIE jest potwierdzony/);
+  const consentOnly = toRow(request({ proposedEmail: undefined, verification: 'none', verificationReason: 'no_new_email' }));
+  assert.doesNotMatch(confirmationText('approve', consentOnly), /potwierdzony/);
 });
 
 test('wiersz: klasy po przecinku, brak klas i imienia to „—”, data w formacie panelu', () => {

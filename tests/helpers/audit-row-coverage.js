@@ -64,6 +64,10 @@ export const AUDIT_ROW_PARENTS = new Map([
     keys: (row) => [row.campaign_id],
     why: 'wypisanie z publicznego linku (hash adresu, bez adresu); email.preference.opt_out wskazuje kampanię z tokenu',
   }],
+  ['guardian_update_verifications', {
+    keys: (row) => [row.request_id],
+    why: 'kod weryfikacyjny nowego adresu z wniosku (#140 pkt 5, 0184); guardian_update_request.created wskazuje wniosek (verificationId w metadanych)',
+  }],
   ['guardian_contact_changes', {
     keys: (row) => [row.guardian_id],
     why: 'historia zmian kontaktu opiekuna (trigger, powód tylko w tabeli); guardian.contact.updated wskazuje opiekuna',

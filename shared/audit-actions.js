@@ -178,6 +178,9 @@ const CATALOG = {
   'email.suppression.release_requested': ['email', 'Prośba o zwolnienie adresu'],
   'email.suppression.released': ['email', 'Zwolnienie adresu z listy wstrzymanych'],
   'email.provider.paused': ['email', 'Wstrzymanie wysyłki — błąd konta u dostawcy'],
+  'guardian_verify.provider_paused': ['email', 'Wstrzymanie wysyłki — błąd konta u dostawcy przy kodzie weryfikacyjnym'],
+  'guardian_verify_template.created': ['email', 'Utworzenie wersji szablonu wiadomości z kodem weryfikacyjnym'],
+  'guardian_verify_template.approved': ['email', 'Zatwierdzenie szablonu wiadomości z kodem weryfikacyjnym'],
   'email.provider.pause_lifted': ['email', 'Zdjęcie wstrzymania wysyłki po naprawie konta'],
   'email.quota.other_recorded': ['email', 'Ewidencja wiadomości wysłanych poza kolejką (limit dzienny)'],
   'email.quota.other_corrected': ['email', 'Korekta ewidencji wiadomości spoza kolejki (limit dzienny)'],
@@ -222,6 +225,14 @@ const CATALOG = {
   'guardian_update_request.approved': ['families', 'Zatwierdzenie aktualizacji danych opiekuna'],
   'guardian_update_request.rejected': ['families', 'Odrzucenie aktualizacji danych opiekuna'],
   'guardian_update_request.list_viewed': ['families', 'Odczyt listy próśb o aktualizację danych opiekunów'],
+  // #140 pkt 5 (0184): kod weryfikacyjny nowego adresu — bez adresu i bez kodu w metadanych.
+  'guardian_update_request.verification_sent': ['families', 'Wysłanie kodu weryfikacyjnego na nowy adres opiekuna'],
+  'guardian_update_request.verification_sent_after_lease_lost': ['families', 'Kod weryfikacyjny przyjęty przez dostawcę po utracie dzierżawy przebiegu'],
+  'guardian_update_request.verification_failed': ['families', 'Nieudana wysyłka kodu weryfikacyjnego'],
+  'guardian_update_request.verification_requeued': ['families', 'Kod weryfikacyjny wrócił do kolejki wysyłki'],
+  'guardian_update_request.verification_cancelled': ['families', 'Anulowanie wysyłki kodu weryfikacyjnego'],
+  'guardian_update_request.verification_confirmed': ['families', 'Potwierdzenie nowego adresu kodem przez opiekuna'],
+  'guardian_update_request.verification_attempt_failed': ['families', 'Błędny kod weryfikacyjny wpisany przez opiekuna'],
 
   // --- privacy ---
   'audit.viewed': ['privacy', 'Odczyt dziennika zdarzeń'],

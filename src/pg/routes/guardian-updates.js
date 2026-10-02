@@ -9,6 +9,10 @@
 //   GET  /api/admin/guardian-update-requests            admin, zarząd — kolejka (status=pending)
 //   POST /api/admin/guardian-update-requests/{id}/approve
 //   POST /api/admin/guardian-update-requests/{id}/reject
+//   POST /api/public/guardian-update/verify            publiczne potwierdzenie kodu (#140 pkt 5)
+//   GET  /api/admin/guardian-verify-templates           admin, zarząd — wersje szablonu wiadomości z kodem
+//   POST /api/admin/guardian-verify-templates           admin, zarząd — nowy szkic szablonu
+//   POST /api/admin/guardian-verify-templates/{id}/approve  zarząd, inna osoba niż autor, świeże MFA
 //
 // Rodzic nie ma konta (role w role_grants obejmują wyłącznie Radę) — token
 // jest jedynym mechanizmem uwierzytelnienia, dlatego jednorazowy, krótkotrwały
@@ -22,20 +26,41 @@
 // Wariant zachowawczy do czasu decyzji zarządu/administratora danych (patrz
 // migracja 0087): każdy wniosek — także wycofanie zgody — czeka na
 // zatwierdzenie człowieka; kolejkę widzą wyłącznie admin i zarząd bez
-// przydziału klasowego (SR-01, jak board.js/#131); brak weryfikacji nowego
-// e-maila kodem (poza zakresem tego PR).
+// przydziału klasowego (SR-01, jak board.js/#131).
+//
+// Kod weryfikacyjny na nowy adres (#140 pkt 5, migracja 0184; wskazania
+// właściciela 2026-10-02): weryfikacja OPCJONALNA — zarząd może zatwierdzić
+// wniosek z niepotwierdzonym adresem, ale kolejka pokazuje stan
+// (`verification: none|sent|confirmed|expired|failed`), a zatwierdzenie zapisuje
+// go w audycie. Kod jest zlecany automatycznie przy złożeniu wniosku z nowym
+// adresem, ale wyłącznie gdy: flaga GUARDIAN_VERIFY_EMAIL_ENABLED=true, istnieje
+// szablon zatwierdzony przez zarząd (cztery oczy, MFA) i opublikowana informacja
+// o przetwarzaniu danych (D-06). Trasa publiczna NIE woła dostawcy — zapisuje
+// wiersz kolejki `guardian_update_verifications` (klucz `verify:{requestId}`),
+// który wysyła worker (src/email/worker.js) w limicie Brevo. Odbiorca = wyłącznie
+// adres z tego wniosku. Kod jawny nie trafia do bazy ani do audytu.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied } from '../authorization.js';
+import {
+  freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, MFA_STEP_UP_MAX_AGE_SECONDS,
+} from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
 import { createJsonReader } from '../input.js';
-import { emailHash, normalizeEmail } from '../../email/content.js';
+import { emailHash, findForbiddenWording, normalizeEmail } from '../../email/content.js';
+import {
+  codeMatches, GUARDIAN_RESTRICTED_SQL, guardianVerifyEnabled, VERIFY_BODY_PLACEHOLDERS, VERIFY_CODE_PATTERN,
+  VERIFY_MAX_FAILED_ATTEMPTS, verificationStatus, verifyTemplateHash,
+} from '../../email/guardian-verify.js';
+import { loadPublishedNotice } from './privacy-notice.js';
 import { afterTupleAscSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from '../list-cursor.js';
 
 export const name = 'guardian-updates';
 
 const EDIT_ROLES = ['admin', 'board'];
+// Szablon wiadomości z kodem: szkic — admin/zarząd; zatwierdzenie — wyłącznie
+// zarząd (D-16: treść wiadomości do rodziców zatwierdza Rada), inna osoba niż autor.
+const TEMPLATE_APPROVE_ROLES = ['board'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TOKEN_PATTERN = /^[0-9a-f]{32,128}$/;
@@ -78,12 +103,12 @@ const readJson = createJsonReader({
 
 // Admin/zarząd BEZ przydziału klasowego — ten sam wzorzec SR-01 co pulpit
 // zarządu (board.js, #131): przedstawiciel klasy nie widzi kolejki wniosków.
-async function requireBoardContext(request, env) {
+async function requireBoardContext(request, env, roles = EDIT_ROLES) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorizedScoped(context, { roles: EDIT_ROLES })) {
+  if (!isAuthorizedScoped(context, { roles })) {
     // #184: ślad odmowy 403 (przed transakcją żądania).
-    await logAccessDenied(env, context, { roles: EDIT_ROLES }, request);
+    await logAccessDenied(env, context, { roles }, request);
     throw new RequestError('forbidden', 403);
   }
   return context;
@@ -226,13 +251,67 @@ async function submitUpdate(request, env, json) {
         Object.hasOwn(input, 'contactAllowed') ? input.contactAllowed : null, Object.hasOwn(input, 'contactAllowed'),
         input.note ?? null],
     );
+    // #140 pkt 5: wiersz weryfikacji tylko dla NOWEGO adresu (nie dla samej zgody
+    // ani usunięcia adresu). W tej samej transakcji co wniosek — jeden wniosek,
+    // jeden wiersz, klucz verify:{requestId}; podwójne wysłanie formularza kończy
+    // się wyżej (409 link_used) bez drugiego wiersza.
+    const verification = input.email
+      ? await planVerification(tx, env, { requestId, guardianId: link.guardian_id, email: input.email })
+      : null;
     await insertAuditEvent(tx, {
       actorId: null, action: 'guardian_update_request.created', entityType: 'guardian_update_request', entityId: requestId,
-      metadata: { guardianId: link.guardian_id, ...piiAuditMetadata(gate) },
+      metadata: {
+        guardianId: link.guardian_id, ...piiAuditMetadata(gate),
+        ...(verification ? {
+          verificationId: verification.id, verification: verification.state,
+          verificationReason: verification.reason, templateVersion: verification.templateVersion,
+        } : {}),
+      },
     });
-    return { requestId };
+    return { requestId, verification };
   });
-  return json({ requestId: result.requestId, status: 'pending' }, 201);
+  // Odpowiedź publiczna nie rozróżnia „zlecono” od „adres zablokowany”
+  // (brak wyroczni listy wyłączeń, #94): `requested` = powstał wiersz weryfikacji
+  // do wysyłki (stan widzi tylko zarząd w kolejce), `none` = kodu nie będzie.
+  const requested = result.verification && ['queued', 'failed'].includes(result.verification.state);
+  return json({ requestId: result.requestId, status: 'pending', emailVerification: requested ? 'requested' : 'none' }, 201);
+}
+
+// Plan weryfikacji nowego adresu przy złożeniu wniosku. Kolejność bramek:
+// flaga → zatwierdzony szablon → opublikowana informacja o przetwarzaniu (D-06)
+// → ograniczenie przetwarzania (#100) → lista wyłączeń (#94). Wynik zapisany
+// jako wiersz (także `skipped` z powodem — API pokazuje wtedy `none` i powód).
+async function planVerification(tx, env, { requestId, guardianId, email }) {
+  const id = crypto.randomUUID();
+  let state = 'queued';
+  let reason = null;
+  let template = null;
+  let notice = null;
+  if (!guardianVerifyEnabled(env)) {
+    state = 'skipped';
+    reason = 'verification_disabled';
+  } else {
+    const { rows } = await tx.query(
+      "SELECT id, version FROM guardian_verify_templates WHERE status = 'approved' ORDER BY version DESC LIMIT 1",
+    );
+    template = rows[0] ?? null;
+    notice = template ? await loadPublishedNotice(tx) : null;
+    if (!template) { state = 'skipped'; reason = 'template_missing'; }
+    else if (!notice) { state = 'skipped'; reason = 'privacy_notice_missing'; }
+    else if ((await tx.query(GUARDIAN_RESTRICTED_SQL, [guardianId])).rows[0]) {
+      state = 'skipped';
+      reason = 'processing_restricted';
+    } else {
+      const suppressed = await tx.query('SELECT 1 FROM email_active_suppressions WHERE email_hash = $1', [emailHash(email)]);
+      if (suppressed.rows[0]) { state = 'failed'; reason = 'address_suppressed'; }
+    }
+  }
+  await tx.query(
+    `INSERT INTO guardian_update_verifications (id, request_id, idempotency_key, template_id, privacy_notice_id, state, last_error)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, requestId, `verify:${requestId}`, template?.id ?? null, notice?.id ?? null, state, reason],
+  );
+  return { id, state, reason, templateVersion: template?.version ?? null };
 }
 
 // ---------- GET /api/admin/guardian-update-requests ----------
@@ -283,9 +362,14 @@ async function listRequests(request, env, url, json) {
   const suppressed = await suppressionsByEmail(env, rows
     .filter((row) => row.proposed_email_set && row.proposed_email)
     .map((row) => row.proposed_email));
+  const verifications = await verificationsByRequest(env.db, rows.map((row) => row.id));
+  const now = clock(env);
   const requests = [];
   for (const row of rows) {
     const preview = await guardianPreview(env, row.guardian_id);
+    const verification = verificationStatus(verifications.get(row.id) ?? null, now, {
+      hasNewEmail: Boolean(row.proposed_email_set && row.proposed_email),
+    });
     requests.push({
       id: row.id,
       guardianFirstName: preview?.guardianFirstName ?? null,
@@ -296,6 +380,11 @@ async function listRequests(request, env, url, json) {
       proposedEmailSuppression: row.proposed_email_set && row.proposed_email
         ? suppressed.get(row.proposed_email) ?? null
         : null,
+      // #140 pkt 5: stan kodu weryfikacyjnego nowego adresu (bez adresu i kodu).
+      verification: verification.status,
+      verificationReason: verification.reason,
+      verificationDelivery: verification.delivery,
+      verificationExpiresAt: verification.expiresAt,
       note: row.note,
       createdAt: row.created_at,
     });
@@ -307,6 +396,18 @@ async function listRequests(request, env, url, json) {
     entityType: 'guardian_update_request', entityId: status, metadata: { status, count: requests.length },
   });
   return json({ requests, nextCursor: page.nextCursor, truncated: page.truncated, limit });
+}
+
+async function verificationsByRequest(executor, requestIds, { lock = false } = {}) {
+  const map = new Map();
+  if (!requestIds.length) return map;
+  const { rows } = await executor.query(
+    `SELECT id, request_id, state, last_error, code_expires_at, failed_attempts, confirmed_at, send_started_at
+       FROM guardian_update_verifications WHERE request_id = ANY($1::text[])${lock ? ' FOR UPDATE' : ''}`,
+    [requestIds],
+  );
+  for (const row of rows) map.set(row.request_id, row);
+  return map;
 }
 
 // ---------- POST /api/admin/guardian-update-requests/{id}/(approve|reject) ----------
@@ -328,6 +429,13 @@ async function decideRequest(request, env, requestId, decision, json) {
     // Idempotentne: podwójne kliknięcie na już rozstrzygniętym wniosku nie
     // jest błędem — zwraca ten sam stan, bez drugiego zdarzenia audytu.
     if (current.status !== 'pending') return { status: current.status, changed: false };
+
+    // #140 pkt 5: stan weryfikacji nowego adresu W CHWILI decyzji (do audytu
+    // i odpowiedzi). Zatwierdzenie z niepotwierdzonym adresem jest dozwolone
+    // (wskazanie 2026-10-02), ale zostawia w audycie pole `unverifiedContactChange`.
+    const hasNewEmail = Boolean(current.proposed_email_set && current.proposed_email);
+    const verificationRow = (await verificationsByRequest(tx, [requestId], { lock: true })).get(requestId) ?? null;
+    const verification = verificationStatus(verificationRow, clock(env), { hasNewEmail });
 
     let changed = false;
     if (decision === 'approve') {
@@ -354,11 +462,199 @@ async function decideRequest(request, env, requestId, decision, json) {
     );
     await insertAuditEvent(tx, {
       actorId, action: `guardian_update_request.${status}`, entityType: 'guardian_update_request', entityId: requestId,
-      metadata: { guardianId: current.guardian_id },
+      metadata: {
+        guardianId: current.guardian_id,
+        ...(hasNewEmail ? {
+          verification: verification.status,
+          ...(decision === 'approve' && verification.status !== 'confirmed' ? { unverifiedContactChange: true } : {}),
+        } : {}),
+      },
     });
-    return { status, changed };
+    // Rozstrzygnięty wniosek: kod jeszcze niewysłany już nie wyjdzie (wiersz
+    // w kolejce → cancelled). Wiersz w trakcie wysyłki zatrzyma worker
+    // (potwierdzenie sprawdza, czy wniosek nadal oczekuje).
+    if (verificationRow?.state === 'queued') {
+      await tx.query(
+        `UPDATE guardian_update_verifications SET state = 'cancelled', last_error = 'request_decided', updated_at = now()
+          WHERE id = $1 AND state = 'queued'`,
+        [verificationRow.id],
+      );
+      await insertAuditEvent(tx, {
+        actorId, action: 'guardian_update_request.verification_cancelled', entityType: 'guardian_update_request', entityId: requestId,
+        metadata: { verificationId: verificationRow.id, reason: 'request_decided' },
+      });
+    }
+    return { status, changed, verification: hasNewEmail ? verification.status : null };
   });
-  return json({ requestId, status: result.status, changed: result.changed });
+  return json({
+    requestId, status: result.status, changed: result.changed,
+    ...(result.verification ? { verification: result.verification } : {}),
+  });
+}
+
+// ---------- POST /api/public/guardian-update/verify ----------
+
+// Jedna odpowiedź dla złego tokenu, złego kodu, kodu wygasłego, wyczerpanego
+// limitu prób, wniosku rozstrzygniętego i wniosku bez kodu (bez wyroczni).
+const VERIFY_FAILED = Object.freeze({ error: 'invalid_or_expired_code' });
+
+async function confirmCode(request, env, json) {
+  const data = await readJson(request);
+  if (typeof data.token !== 'string' || !TOKEN_PATTERN.test(data.token)
+      || typeof data.code !== 'string' || !VERIFY_CODE_PATTERN.test(data.code)) {
+    return json(VERIFY_FAILED, 400);
+  }
+  const now = clock(env);
+  const outcome = await env.db.transaction(async (tx) => {
+    // Ten sam jednorazowy token co formularz (już zużyty przez wniosek): wskazuje
+    // DOKŁADNIE jeden wniosek i jego wiersz weryfikacji — kod innego wniosku
+    // (np. drugiego opiekuna tego samego dziecka) nie pasuje do tej soli/skrótu.
+    const { rows } = await tx.query(
+      `SELECT v.id, v.request_id, v.code_salt, v.code_hash, v.code_expires_at, v.failed_attempts,
+              v.confirmed_at, v.send_started_at, r.status AS request_status
+         FROM guardian_update_links l
+         JOIN guardian_update_requests r ON r.link_id = l.id
+         JOIN guardian_update_verifications v ON v.request_id = r.id
+        WHERE l.token_hash = $1
+        FOR UPDATE OF v`,
+      [hashToken(data.token)],
+    );
+    const row = rows[0];
+    if (!row || row.request_status !== 'pending' || !row.code_hash || !row.send_started_at) return { ok: false };
+    // Ponowienie po zgubionej odpowiedzi (podwójne kliknięcie): ten sam poprawny
+    // kod po potwierdzeniu — ta sama odpowiedź, bez drugiego zdarzenia.
+    if (row.confirmed_at) return { ok: codeMatches(row, data.code), replay: true };
+    if (row.failed_attempts >= VERIFY_MAX_FAILED_ATTEMPTS || new Date(row.code_expires_at) <= now) return { ok: false };
+    if (!codeMatches(row, data.code)) {
+      const { rows: updated } = await tx.query(
+        `UPDATE guardian_update_verifications SET failed_attempts = failed_attempts + 1, updated_at = now()
+          WHERE id = $1 RETURNING failed_attempts`,
+        [row.id],
+      );
+      await insertAuditEvent(tx, {
+        actorId: null, action: 'guardian_update_request.verification_attempt_failed', entityType: 'guardian_update_request',
+        entityId: row.request_id, metadata: { verificationId: row.id, failedAttempts: updated[0].failed_attempts },
+      });
+      return { ok: false };
+    }
+    await tx.query('UPDATE guardian_update_verifications SET confirmed_at = now(), updated_at = now() WHERE id = $1', [row.id]);
+    await insertAuditEvent(tx, {
+      actorId: null, action: 'guardian_update_request.verification_confirmed', entityType: 'guardian_update_request',
+      entityId: row.request_id, metadata: { verificationId: row.id, failedAttempts: row.failed_attempts },
+    });
+    return { ok: true };
+  });
+  if (!outcome.ok) return json(VERIFY_FAILED, 400);
+  return json({ verification: 'confirmed' });
+}
+
+// ---------- /api/admin/guardian-verify-templates ----------
+
+const SUBJECT_MAX = 200;
+const BODY_MAX = 4000;
+const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+const PLACEHOLDER = /\{([^{}]*)\}/g;
+
+// Treść szablonu wpisuje zarząd — kod nie dostarcza wartości domyślnej (D-16).
+function parseTemplate(data) {
+  const subject = typeof data.subject === 'string' ? data.subject.trim() : '';
+  const bodyText = typeof data.bodyText === 'string' ? data.bodyText.replace(/\r\n/g, '\n').trim() : '';
+  if (subject.length < 3 || subject.length > SUBJECT_MAX || /[\n{}]/.test(subject) || CONTROL.test(subject)) {
+    throw new RequestError('invalid_verify_template');
+  }
+  if (bodyText.length < 20 || bodyText.length > BODY_MAX || CONTROL.test(bodyText)) {
+    throw new RequestError('invalid_verify_template');
+  }
+  const found = [...bodyText.matchAll(PLACEHOLDER)].map((match) => match[1]);
+  const braces = (bodyText.match(/[{}]/g) ?? []).length;
+  if (braces !== found.length * 2 || found.some((name) => !VERIFY_BODY_PLACEHOLDERS.includes(name))) {
+    throw new RequestError('invalid_verify_template');
+  }
+  if (!found.includes('kod')) throw new RequestError('verify_code_placeholder_required');
+  if (findForbiddenWording(subject) || findForbiddenWording(bodyText)) throw new RequestError('forbidden_wording');
+  return { subject, bodyText };
+}
+
+function templateView(row) {
+  return {
+    id: row.id,
+    version: row.version,
+    subject: row.subject,
+    bodyText: row.body_text,
+    contentHash: row.content_hash,
+    status: row.status,
+    createdBy: row.created_by,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    approvedBy: row.approved_by ?? null,
+    approvedAt: row.approved_at ? new Date(row.approved_at).toISOString() : null,
+  };
+}
+
+async function listTemplates(request, env, json) {
+  await requireBoardContext(request, env);
+  const { rows } = await env.db.query('SELECT * FROM guardian_verify_templates ORDER BY version DESC LIMIT 100');
+  // Obowiązuje najnowsza zatwierdzona wersja (tę zapisuje wniosek przy złożeniu).
+  const current = rows.find((row) => row.status === 'approved') ?? null;
+  return json({
+    templates: rows.map(templateView),
+    currentTemplateId: current?.id ?? null,
+    enabled: guardianVerifyEnabled(env),
+  });
+}
+
+async function createTemplate(request, env, json) {
+  const context = await requireBoardContext(request, env);
+  const actorId = context.session.user.id;
+  const { subject, bodyText } = parseTemplate(await readJson(request));
+  const id = crypto.randomUUID();
+  return env.db.transaction(async (tx) => {
+    const { rows } = await tx.query(
+      `INSERT INTO guardian_verify_templates (id, subject, body_text, content_hash, created_by)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [id, subject, bodyText, verifyTemplateHash({ subject, bodyText }), actorId],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'guardian_verify_template.created', entityType: 'guardian_verify_template', entityId: id,
+      metadata: { version: rows[0].version, contentHash: rows[0].content_hash },
+    });
+    return json({ template: templateView(rows[0]) }, 201);
+  });
+}
+
+async function approveTemplate(request, env, id, json) {
+  if (!validId(id)) throw new RequestError('invalid_request');
+  const context = await requireBoardContext(request, env, TEMPLATE_APPROVE_ROLES);
+  // #150 (SR-10, krok w górę): zatwierdzenie otwiera automatyczną wysyłkę do
+  // rodziców — MFA musi być potwierdzone od niedawna (po sprawdzeniu roli).
+  const staleCode = freshMfaForbiddenCode(context, MFA_STEP_UP_MAX_AGE_SECONDS);
+  if (staleCode) throw new RequestError(staleCode, 403);
+  const actorId = context.session.user.id;
+  const data = await readJson(request);
+  return env.db.transaction(async (tx) => {
+    const { rows } = await tx.query('SELECT * FROM guardian_verify_templates WHERE id = $1 FOR UPDATE', [id]);
+    const template = rows[0];
+    if (!template) throw new RequestError('verify_template_not_found', 404);
+    if (template.status === 'approved') {
+      // Ponowienie (podwójne kliknięcie) — ten sam stan, bez drugiego zdarzenia.
+      if (template.approved_by === actorId) return json({ template: templateView(template) }, 200, { 'Idempotency-Replayed': 'true' });
+      throw new RequestError('verify_template_not_draft', 409);
+    }
+    if (template.created_by === actorId) throw new RequestError('self_approval_forbidden', 403);
+    // Zatwierdzający potwierdza wersję treści, którą widział (jak skrót kampanii).
+    if (data.contentHash !== undefined && data.contentHash !== template.content_hash) {
+      throw new RequestError('verify_template_changed', 409);
+    }
+    const { rows: updated } = await tx.query(
+      `UPDATE guardian_verify_templates SET status = 'approved', approved_by = $2, approved_at = now()
+        WHERE id = $1 RETURNING *`,
+      [id, actorId],
+    );
+    await insertAuditEvent(tx, {
+      actorId, action: 'guardian_verify_template.approved', entityType: 'guardian_verify_template', entityId: id,
+      metadata: { version: template.version, contentHash: template.content_hash },
+    });
+    return json({ template: templateView(updated[0]) });
+  });
 }
 
 export async function handle(request, env, url, json) {
@@ -367,13 +663,24 @@ export async function handle(request, env, url, json) {
   const isPreview = request.method === 'GET' && url.pathname === '/api/public/guardian-update';
   const isSubmit = request.method === 'POST' && url.pathname === '/api/public/guardian-update';
   const isList = request.method === 'GET' && url.pathname === '/api/admin/guardian-update-requests';
-  if (!decideMatch && !isIssueLink && !isPreview && !isSubmit && !isList) return null;
+  const isVerify = request.method === 'POST' && url.pathname === '/api/public/guardian-update/verify';
+  const isTemplates = url.pathname === '/api/admin/guardian-verify-templates' && ['GET', 'POST'].includes(request.method);
+  const templateApproveMatch = request.method === 'POST'
+    && url.pathname.match(/^\/api\/admin\/guardian-verify-templates\/([^/]+)\/approve$/);
+  if (!decideMatch && !isIssueLink && !isPreview && !isSubmit && !isList && !isVerify && !isTemplates && !templateApproveMatch) return null;
 
   try {
     if (isIssueLink) return await issueLink(request, env, json);
     if (isPreview) return await previewLink(request, env, url, json);
     if (isSubmit) return await submitUpdate(request, env, json);
     if (isList) return await listRequests(request, env, url, json);
+    if (isVerify) return await confirmCode(request, env, json);
+    if (isTemplates) return request.method === 'GET' ? await listTemplates(request, env, json) : await createTemplate(request, env, json);
+    if (templateApproveMatch) {
+      let id;
+      try { id = decodeURIComponent(templateApproveMatch[1]); } catch { throw new RequestError('invalid_request'); }
+      return await approveTemplate(request, env, id, json);
+    }
     return await decideRequest(request, env, decodeURIComponent(decideMatch[1]), decideMatch[2], json);
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);

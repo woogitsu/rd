@@ -27,6 +27,13 @@ function renderRows() {
       line.textContent = `${label}: ${part.text}`;
       change.append(line);
     }
+    if (row.verification) {
+      // #140 pkt 5: stan kodu weryfikacyjnego nowego adresu; niepotwierdzony — wyróżniony.
+      const line = document.createElement(row.verification.confirmed ? "div" : "p");
+      if (!row.verification.confirmed) line.className = "form-error";
+      line.textContent = `Weryfikacja adresu: ${row.verification.text}`;
+      change.append(line);
+    }
     if (row.warning) {
       const warn = document.createElement("p");
       warn.className = "form-error";

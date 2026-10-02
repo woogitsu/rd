@@ -76,6 +76,48 @@ export function describeConsentChange(request) {
     : { kind: "withdraw", text: "wycofanie zgody na kontakt" };
 }
 
+// #140 pkt 5 (0184): stan kodu weryfikacyjnego nowego adresu z API
+// (`verification`, `verificationReason`). Weryfikacja jest opcjonalna
+// (wskazanie 2026-10-02): zatwierdzenie bez potwierdzenia jest dozwolone, ale
+// widok mówi to wprost, a serwer zapisuje w dzienniku zdarzeń.
+export const VERIFICATION_LABELS = Object.freeze({
+  none: "nie wysłano kodu",
+  sent: "kod wysłany, czeka na potwierdzenie",
+  confirmed: "adres potwierdzony kodem",
+  expired: "kod wygasł bez potwierdzenia",
+  failed: "wysyłka lub potwierdzenie nieudane",
+});
+
+const VERIFICATION_REASON_LABELS = Object.freeze({
+  no_new_email: "wniosek bez nowego adresu",
+  not_requested: "kod nie był zlecony",
+  verification_disabled: "weryfikacja wyłączona w konfiguracji",
+  template_missing: "brak zatwierdzonego szablonu wiadomości z kodem",
+  privacy_notice_missing: "brak opublikowanej informacji o przetwarzaniu danych",
+  processing_restricted: "ograniczenie przetwarzania danych",
+  request_decided: "wniosek rozstrzygnięty przed wysyłką",
+  address_suppressed: "adres na liście wyłączeń",
+  attempts_exhausted: "wyczerpany limit prób wpisania kodu",
+  delivery_unknown: "nieznany wynik doręczenia",
+  recipient_not_allowlisted: "adres spoza listy adresów testowych",
+  template_not_approved: "szablon niezatwierdzony",
+  no_valid_email: "niepoprawny adres",
+});
+
+// null, gdy wniosek nie zmienia adresu na nowy (brak czego weryfikować).
+export function describeVerification(request) {
+  if (describeEmailChange(request).kind !== "set") return null;
+  const status = Object.hasOwn(VERIFICATION_LABELS, request.verification) ? request.verification : "none";
+  const reason = request.verificationReason
+    ? VERIFICATION_REASON_LABELS[request.verificationReason] ?? "inny powód"
+    : null;
+  return {
+    status,
+    confirmed: status === "confirmed",
+    text: reason ? `${VERIFICATION_LABELS[status]} (${reason})` : VERIFICATION_LABELS[status],
+  };
+}
+
 export function suppressionWarning(request) {
   const reason = request.proposedEmailSuppression;
   if (!reason) return null;
@@ -95,6 +137,7 @@ export function toRow(request) {
     email,
     consent,
     warning: suppressionWarning(request),
+    verification: describeVerification(request),
     note: request.note || "",
     createdAt: formatCreatedAt(request.createdAt),
   };
@@ -127,7 +170,11 @@ export function canDecide(status) {
 export function confirmationText(decision, row) {
   const who = `opiekuna ${row.guardian} (klasa: ${row.classes})`;
   if (decision === "approve") {
-    return `Zatwierdzenie zapisze proponowany kontakt ${who} w danych rodziny i w historii zmian. Zmiany: e-mail — ${row.email.text}; zgoda — ${row.consent.text}.`;
+    const base = `Zatwierdzenie zapisze proponowany kontakt ${who} w danych rodziny i w historii zmian. Zmiany: e-mail — ${row.email.text}; zgoda — ${row.consent.text}.`;
+    if (row.verification && !row.verification.confirmed) {
+      return `${base} Uwaga: nowy adres NIE jest potwierdzony kodem (${row.verification.text}). Zatwierdzenie bez potwierdzenia zostanie odnotowane w dzienniku zdarzeń.`;
+    }
+    return base;
   }
   return `Odrzucenie nie zmieni danych ${who}. Link wniosku pozostanie zużyty. Trasa nie zapisuje powodu odrzucenia.`;
 }

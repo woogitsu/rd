@@ -91,6 +91,7 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
   guardian: "Opiekun",
   guardian_update_link: "Link aktualizacji danych opiekuna",
   guardian_update_request: "Prośba o aktualizację danych opiekuna",
+  guardian_verify_template: "Szablon wiadomości z kodem weryfikacyjnym",
   household: "Gospodarstwo",
   import_batch: "Import uczniów",
   invitation: "Zaproszenie",
@@ -137,6 +138,18 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
 
 export const REASON_LABELS = Object.freeze({
   account_disabled: "konto wyłączone",
+  // #140 pkt 5 (0184): kod weryfikacyjny nowego adresu opiekuna.
+  address_suppressed: "adres na liście wyłączeń",
+  attempts_exhausted: "wyczerpany limit prób wpisania kodu",
+  confirmed_by_recipient: "potwierdzone kodem przez odbiorcę",
+  delivery_unknown: "nieznany wynik doręczenia",
+  lease_expired: "przerwany przebieg wysyłki",
+  privacy_notice_missing: "brak opublikowanej informacji o przetwarzaniu danych",
+  recipient_not_allowlisted: "adres spoza listy adresów testowych",
+  request_decided: "wniosek rozstrzygnięty przed wysyłką kodu",
+  template_missing: "brak zatwierdzonego szablonu wiadomości z kodem",
+  template_not_approved: "szablon wiadomości niezatwierdzony",
+  verification_disabled: "weryfikacja adresu wyłączona w konfiguracji",
   admin: "wycofanie przez administratora",
   change: "zmiana",
   duplicate_address: "powtórzony adres",

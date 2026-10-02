@@ -167,6 +167,17 @@ const FAMILY_TABLES = Object.freeze([
             FROM guardian_update_requests WHERE guardian_id = ANY($G) ORDER BY created_at, id COLLATE "C"`,
   },
   {
+    // #140 pkt 5 (0184): stan kodu weryfikacyjnego nowego adresu z prośby opiekuna — bez adresu
+    // (jest tylko we wniosku), bez skrótu kodu i soli.
+    key: 'guardian_update_verifications', label: 'Weryfikacja nowego adresu kodem',
+    columns: [['id', 'Identyfikator', T], ['request_id', 'Prośba', T], ['state', 'Stan wysyłki', T],
+      ['last_error', 'Powód', T], ['sent_at', 'Wysłano', T], ['confirmed_at', 'Potwierdzono', T], ['created_at', 'Zlecono', T]],
+    sql: `SELECT v.id, v.request_id, v.state, v.last_error, ${TS('v.sent_at')} AS sent_at,
+                 ${TS('v.confirmed_at')} AS confirmed_at, ${TS('v.created_at')} AS created_at
+            FROM guardian_update_verifications v JOIN guardian_update_requests r ON r.id = v.request_id
+           WHERE r.guardian_id = ANY($G) ORDER BY v.created_at, v.id COLLATE "C"`,
+  },
+  {
     key: 'payment_entries', label: 'Wpłaty',
     columns: [['id', 'Identyfikator wpłaty', T], ['household_id', 'Gospodarstwo', T], ['school_year_id', 'Rok szkolny', T],
       ['amount_cents', 'Kwota (EUR)', A], ['received_on', 'Data wpływu', T], ['method', 'Sposób', T], ['status', 'Stan', T]],
