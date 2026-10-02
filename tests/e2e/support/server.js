@@ -352,6 +352,54 @@ async function seedDocs89(db, storage, userId) {
   }
 }
 
+// D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej (flaga AUDIT_LEDGER_READ=1 w env serwera niżej).
+// Osobny rok i osobne konto audit, żeby nie zmieniać list widzianych przez inne testy. Księga: wydatek
+// niepowiązany z wpłatą (opis widoczny) i wpis powiązany z wpłatą rodziny (opis, źródło i uchwała — wolny
+// tekst skarbnika — mają zostać zredagowane). Dokumenty: faktura (widoczna) oraz potwierdzenie przelewu
+// i dokument powiązany z wpłatą (niewidoczne dla audit). Dane syntetyczne; znaczniki MRK-* nie mogą trafić do panelu.
+const AUDIT_YEAR_ID = 'e2e-y-auditro';
+const AUDIT_DOCS = [
+  { id: '00000000-0000-4000-8000-0000000e9a01', title: 'Faktura za wynajem sali (syntetyczna)', category: 'faktura', linked: null },
+  { id: '00000000-0000-4000-8000-0000000e9a02', title: 'Potwierdzenie przelewu MRK-NIEWIDOCZNE-PRZELEW', category: 'potwierdzenie_przelewu', linked: null },
+  { id: '00000000-0000-4000-8000-0000000e9a03', title: 'Faktura powiązana z wpłatą MRK-NIEWIDOCZNE-WPLATA', category: 'faktura', linked: 'e2e-audit-pay-1' },
+];
+async function seedAuditRead(db, storage, userId) {
+  await db.query(
+    `INSERT INTO ledger_categories (id, school_year_id, direction, name, created_by) VALUES
+       ('e2e-audit-cat-in', $1, 'income', 'Składki dobrowolne (e2e)', $2),
+       ('e2e-audit-cat-out', $1, 'expense', 'Wydarzenia (e2e)', $2)`,
+    [AUDIT_YEAR_ID, userId],
+  );
+  await db.query(`INSERT INTO households (id) VALUES ('e2e-audit-hh-1')`);
+  await db.query(
+    `INSERT INTO payment_entries (id, household_id, school_year_id, amount_cents, received_on, method, reference, status, created_by, idempotency_key)
+     VALUES ('e2e-audit-pay-1', 'e2e-audit-hh-1', $1, 5000, DATE '2022-09-20', 'bank', 'Wpłata syntetyczna', 'recorded', $2, 'e2e-audit-pay-key-1')`,
+    [AUDIT_YEAR_ID, userId],
+  );
+  await db.query(
+    `INSERT INTO ledger_entries (id, school_year_id, direction, amount_cents, category_id, description, occurred_on, method, source, resolution_reference, payment_entry_id, created_by, idempotency_key) VALUES
+       ('e2e-audit-l-1', $1, 'expense', 12000, 'e2e-audit-cat-out', 'Wynajem sali na spotkanie Rady (syntetyczny)', DATE '2022-10-02', 'bank', NULL, NULL, NULL, $2, 'e2e-audit-l-key-1'),
+       ('e2e-audit-l-2', $1, 'income', 5000, 'e2e-audit-cat-in', 'Składka MRK-OPIS-RODZINY', DATE '2022-09-21', 'bank', 'MRK-ZRODLO-RODZINY', 'MRK-UCHWALA-RODZINY', 'e2e-audit-pay-1', $2, 'e2e-audit-l-key-2')`,
+    [AUDIT_YEAR_ID, userId],
+  );
+  for (const [index, doc] of AUDIT_DOCS.entries()) {
+    const bytes = buildDemoPdf({ title: `Dowod syntetyczny e2e ${index + 1}`, lines: ['To nie jest prawdziwy dokument.'] });
+    const objectKey = `docs/${doc.id}`;
+    await storage.putObject(objectKey, bytes, 'application/pdf');
+    await db.query(
+      `INSERT INTO documents (id, object_key, mime_type, byte_size, kind, created_by, school_year_id, sha256, idempotency_key, linked_entity_type, linked_entity_id, created_at)
+       VALUES ($1, $2, 'application/pdf', $3, 'financial', $4, $5, $6, $7, $8, $9, now() - ($10::int * interval '1 minute'))`,
+      [doc.id, objectKey, bytes.length, userId, AUDIT_YEAR_ID, sha256Hex(bytes), `e2e-audit-doc-${index + 1}`,
+        doc.linked ? 'payment_entry' : null, doc.linked, 10 - index],
+    );
+    await db.query(
+      `INSERT INTO document_descriptions (document_id, revision_no, title, category, description, created_by)
+       VALUES ($1, 1, $2, $3, 'MRK-OPIS-WOLNY-TEKST', $4)`,
+      [doc.id, doc.title, doc.category, userId],
+    );
+  }
+}
+
 // Wydruk zestawień (#151): osobny rok i osobny skarbnik, żeby 300 wpłat i 300
 // wpisów księgi nie zmieniało list widzianych przez inne testy. Część wpłat ma
 // korektę częściową (kolumny „Korekty” i „Netto” na wydruku). Dane syntetyczne.
@@ -470,6 +518,17 @@ async function main() {
   await seedDocs89(db, storage, 'e2e-board-docs89');
   const boardDocs89Cookie = await seedCookieSession(db, { userId: 'e2e-board-docs89', mfa: true });
 
+  // 3a'''. Komisja Rewizyjna (D-09, #137): konto audit z potwierdzonym MFA, wyłącznie rok e2e-y-auditro;
+  //    flaga AUDIT_LEDGER_READ=1 jest w env serwera (niżej). Dane księgi i dokumentów zapisuje osobny skarbnik.
+  await seedUser(db, 'e2e-audit');
+  await seedSchoolYear(db, AUDIT_YEAR_ID, { startsOn: '2022-09-01', endsOn: '2023-08-31' });
+  await grantRole(db, 'e2e-audit', 'audit', { schoolYearId: AUDIT_YEAR_ID });
+  await seedUser(db, 'e2e-treasurer-audit');
+  await grantRole(db, 'e2e-treasurer-audit', 'treasurer', { schoolYearId: AUDIT_YEAR_ID });
+  await seedAuditRead(db, storage, 'e2e-treasurer-audit');
+  const auditCookie = await seedCookieSession(db, { userId: 'e2e-audit', mfa: true });
+  const treasurerAuditCookie = await seedCookieSession(db, { userId: 'e2e-treasurer-audit', mfa: true });
+
   // 4. Panel „Konta i role” (#224): admin z czynnikiem TOTP i sesjami cookie —
   //    jedna ze starym MFA (krok w górę: mfa_stale), jedna ze świeżym; dwa konta
   //    docelowe (hasło + czynnik TOTP), na których test wykonuje resety.
@@ -538,6 +597,10 @@ async function main() {
       userId: 'e2e-board-docs89', cookie: boardDocs89Cookie, schoolYearId: DOCS89_YEAR_ID,
       documents: E2E_DOCS89.map(({ id, title }) => ({ id, title })),
     },
+    audit: {
+      userId: 'e2e-audit', cookie: auditCookie, treasurerCookie: treasurerAuditCookie, schoolYearId: AUDIT_YEAR_ID,
+      documents: AUDIT_DOCS.map(({ id, title }) => ({ id, title })),
+    },
     newsTitles,
     newsLongWord: NEWS_LONG_WORD,
     newsInjectionTitle: NEWS_INJECTION_TITLE,
@@ -554,6 +617,8 @@ async function main() {
       db,
       storage,
       APP_ENV: 'test',
+      // D-09 (#137): odczyt księgi i dowodów dla roli audit (flaga domyślnie wyłączona).
+      AUDIT_LEDGER_READ: '1',
       MFA_ENCRYPTION_KEY: mfaKey,
       SCRYPT_COST_LOG2: FAST_SCRYPT.SCRYPT_COST_LOG2,
     },

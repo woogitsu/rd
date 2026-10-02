@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  AUDIT_REMOVED_ELEMENT_IDS,
+  PAYMENT_LINKED_DESCRIPTION,
+  buildLedgerExportUrl,
+  entryTexts,
+  isLedgerAuditView,
   buildLedgerUrl,
   buildOverviewUrl,
   buildNextLedgerUrl,
@@ -14,6 +19,8 @@ import {
   normalizeEntry,
   parseEuroAmount,
 } from "../ledger/core.js";
+import { readFileSync } from "node:fs";
+import { assertEvery } from "./helpers/assertions.js";
 
 test("kwoty EUR są parsowane bez błędów zmiennoprzecinkowych", () => {
   assert.equal(parseEuroAmount("3000,01"), 300001);
@@ -264,4 +271,120 @@ test("#82: stan dowodów wpisu — dopisek do „Dowody: N”, bez słowa „usu
   // Starsze API (bez pola attachments) i same aktualne dowody: bez dopisku.
   assert.equal(attachmentStatusLabel(normalizeEntry({ id: "e2", attachmentIds: ["d1"] }).attachmentStatus), "");
   assert.deepEqual(attachmentStatusSummary([{ status: "active", currentDocumentId: "d1" }]), { superseded: 0, voided: 0, withoutCurrent: 0 });
+});
+
+// --- D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej w panelu księgi -------------------------------
+// Ukrycie przycisku NIE jest kontrolą dostępu (zapisy odrzuca serwer: tests/pg-audit-ledger-read.test.js);
+// te testy pilnują, że panel w widoku audit nie renderuje i nie woła niczego z zapisu.
+
+const ledgerHtml = readFileSync(new URL("../ledger/index.html", import.meta.url), "utf8");
+const ledgerMain = readFileSync(new URL("../ledger/main.js", import.meta.url), "utf8");
+const AUDIT_ON = { auditLedgerRead: true };
+const AUDIT_GRANT = [{ role: "audit", classId: null, schoolYearId: "2026-2027" }];
+
+function functionSource(source, header) {
+  const start = source.indexOf(header);
+  assert.notEqual(start, -1, `brak ${header}`);
+  const next = source.indexOf("\n}\n", start);
+  return source.slice(start, next + 3);
+}
+
+test("D-09: widok audit tylko dla konta audit bez klasy, z możliwością z sesji i bez roli finansowej", () => {
+  assert.equal(isLedgerAuditView(AUDIT_GRANT, AUDIT_ON), true);
+  assert.equal(isLedgerAuditView(AUDIT_GRANT, { auditLedgerRead: false }), false, "flaga serwera wyłączona");
+  assert.equal(isLedgerAuditView(AUDIT_GRANT, {}), false);
+  assert.equal(isLedgerAuditView(AUDIT_GRANT, undefined), false);
+  assert.equal(isLedgerAuditView([{ role: "audit", classId: "1A", schoolYearId: "2026-2027" }], AUDIT_ON), false, "przydział klasowy");
+  assert.equal(isLedgerAuditView([{ role: "representative", classId: "1A" }], AUDIT_ON), false, "możliwość bez roli audit");
+  // Rola finansowa zostawia widok pełny (dotychczasowe zachowanie panelu).
+  for (const role of ["admin", "board", "treasurer"]) assert.equal(isLedgerAuditView([...AUDIT_GRANT, { role }], AUDIT_ON), false, role);
+  assert.equal(isLedgerAuditView([...AUDIT_GRANT, { role: "board", classId: "1A" }], AUDIT_ON), true, "zarząd tylko klasowy nie ma dostępu finansowego");
+});
+
+test("D-09: lista usuwanych elementów wskazuje istniejące elementy i obejmuje każdy <dialog> oraz każdy przycisk poza odczytem", () => {
+  assertEvery(AUDIT_REMOVED_ELEMENT_IDS, (id) => ledgerHtml.includes(`id="${id}"`), "elementy z AUDIT_REMOVED_ELEMENT_IDS istnieją w ledger/index.html");
+  const dialogs = [...ledgerHtml.matchAll(/<dialog id="([^"]+)"/g)].map((match) => match[1]);
+  assertEvery(dialogs, (id) => AUDIT_REMOVED_ELEMENT_IDS.includes(id), "każdy <dialog> (formularz zapisu) jest usuwany w widoku audit", { min: 8 });
+  // Zakresy usuwanych sekcji i okien dialogowych w kodzie strony.
+  const range = (open, close, from) => [ledgerHtml.indexOf(open, from), ledgerHtml.indexOf(close, ledgerHtml.indexOf(open, from))];
+  const removedRanges = [
+    ...["budget-section", "history-section", "events-section"].map((id) => range(`id="${id}"`, "</section>", 0)),
+    range('id="opening-actions"', "</div>", 0),
+    ...[...ledgerHtml.matchAll(/<dialog id="/g)].map((match) => range("<dialog", "</dialog>", match.index)),
+  ];
+  assertEvery(removedRanges, ([from, to]) => from > 0 && to > from, "zakresy usuwanych bloków znalezione", { min: 12 });
+  // Każdy przycisk z identyfikatorem jest usuwany w widoku audit (wprost albo wraz z blokiem) — poza
+  // jawnie dozwolonymi przyciskami odczytu. Nowy przycisk wymaga decyzji: dopisz go tu albo do listy.
+  const READ_ONLY_BUTTONS = ["load-more", "print-ledger"];
+  const uncovered = [...ledgerHtml.matchAll(/<button[^>]*\bid="([^"]+)"/g)]
+    .filter((match) => !AUDIT_REMOVED_ELEMENT_IDS.includes(match[1]) && !removedRanges.some(([from, to]) => match.index > from && match.index < to))
+    .map((match) => match[1]);
+  assert.deepEqual(uncovered.sort(), READ_ONLY_BUTTONS);
+  // Wszystkie przyciski otwierające zapis (open-*) są pokryte.
+  const openButtons = [...ledgerHtml.matchAll(/<button[^>]*\bid="(open-[a-z-]+)"/g)].map((match) => match[1]);
+  assertEvery(openButtons, (id) => !uncovered.includes(id), "przyciski open-* usuwane w widoku audit", { min: 8 });
+});
+
+test("D-09: wiersz księgi w widoku audit nie ma kolumny ani przycisku akcji (korekta), a w widoku pełnym ma", () => {
+  const entryRow = functionSource(ledgerMain, "function entryRow(raw)");
+  const guard = entryRow.indexOf("if (state.auditView) return row;");
+  assert.notEqual(guard, -1, "wiersz audit kończy się przed akcjami");
+  assert.ok(guard < entryRow.indexOf('"Korekta"'), "strażnik stoi przed utworzeniem przycisku „Korekta”");
+  assert.ok(guard < entryRow.indexOf("row-actions"));
+});
+
+test("D-09: wczytanie roku w widoku audit woła wyłącznie trasy odczytu (podsumowanie, kategorie, lista) i nic z zapisu ani preliminarza", () => {
+  const audit = functionSource(ledgerMain, "async function loadAuditOverview(query)");
+  assert.match(audit, /buildOverviewUrl\("summary"/);
+  assert.match(audit, /buildOverviewUrl\("categories"/);
+  assert.match(audit, /loadEntries\(/);
+  assert.match(audit, /buildLedgerExportUrl\("csv"/);
+  assert.match(audit, /buildLedgerExportUrl\("xlsx"/);
+  assert.doesNotMatch(audit, /budget|CostCenters|Resolutions|opening-balance|History|method:|POST|PATCH|DELETE|Idempotency/i);
+  // loadOverview przełącza się na tę ścieżkę przed jakimkolwiek wywołaniem tras preliminarza.
+  const overview = functionSource(ledgerMain, "async function loadOverview(");
+  assert.ok(overview.indexOf("loadAuditOverview(query)") !== -1 && overview.indexOf("loadAuditOverview(query)") < overview.indexOf("budget/execution"));
+});
+
+test("D-09: widok audit rozstrzygany przed pierwszym wczytaniem roku i zastępuje komunikat o braku dostępu", () => {
+  const init = ledgerMain.slice(ledgerMain.indexOf("(async function initFilters()"));
+  assert.ok(init.indexOf("await auditViewReady") !== -1 && init.indexOf("await auditViewReady") < init.indexOf("loadOverview();"));
+  const access = functionSource(ledgerMain, "async function applyAccess()");
+  assert.ok(access.indexOf("await auditViewReady") !== -1 && access.indexOf("await auditViewReady") < access.indexOf("access-notice"), "audit nie dostaje „To konto nie ma dostępu”");
+  const apply = functionSource(ledgerMain, "function applyAuditView()");
+  assert.match(apply, /\.remove\(\)/, "elementy zapisu są usuwane z DOM, nie tylko ukrywane");
+});
+
+test("D-09: wpis powiązany z wpłatą rodziny — stały opis i znacznik „wpłata rodziny”, bez wolnego tekstu z odpowiedzi", () => {
+  const raw = {
+    id: "e-wplata", direction: "income", amountCents: 5000, method: "bank", categoryName: "Składki dobrowolne",
+    description: "MRK-OPIS-RODZINY", source: "MRK-ZRODLO-RODZINY", resolutionReference: "MRK-UCHWALA-RODZINY",
+    paymentLinked: true, paymentEntryId: null,
+  };
+  const entry = normalizeEntry(raw);
+  assert.equal(entry.paymentLinked, true);
+  const texts = entryTexts(entry);
+  assert.equal(texts.description, PAYMENT_LINKED_DESCRIPTION);
+  assert.equal(texts.badge, "wpłata rodziny");
+  assert.deepEqual([texts.source, texts.resolutionReference], ["", ""]);
+  assert.doesNotMatch(JSON.stringify(texts), /MRK-/);
+  // Zwykły wpis (bez znacznika) zachowuje opis, źródło i uchwałę oraz nie ma znacznika.
+  const plain = entryTexts(normalizeEntry({ ...raw, id: "e-wydatek", paymentLinked: undefined, direction: "expense" }));
+  assert.deepEqual([plain.description, plain.source, plain.resolutionReference, plain.badge], ["MRK-OPIS-RODZINY", "MRK-ZRODLO-RODZINY", "MRK-UCHWALA-RODZINY", ""]);
+  assert.equal(entryTexts(normalizeEntry({ id: "e3" })).description, "Bez opisu");
+  // Tylko dokładne `true` oznacza wpis powiązany z wpłatą.
+  for (const value of ["true", 1, null, undefined, false]) assert.equal(normalizeEntry({ id: "e4", paymentLinked: value }).paymentLinked, false, String(value));
+  assert.match(ledgerMain, /texts\.badge/, "wiersz w panelu używa entryTexts, nie surowego opisu");
+});
+
+test("D-09: adresy eksportu CSV i XLSX roku; zły format lub rok jest odrzucany", () => {
+  assert.equal(buildLedgerExportUrl("csv", "2026-2027"), "/api/ledger/export.csv?schoolYearId=2026-2027");
+  assert.equal(buildLedgerExportUrl("xlsx", " y2026 "), "/api/ledger/export.xlsx?schoolYearId=y2026");
+  assert.throws(() => buildLedgerExportUrl("pdf", "y2026"), /eksportu/);
+  assert.throws(() => buildLedgerExportUrl("csv", "../x"), /eksportu/);
+  assert.throws(() => buildLedgerExportUrl("csv", ""), /eksportu/);
+  for (const id of ["audit-export", "export-csv", "export-xlsx", "audit-notice"]) assert.ok(ledgerHtml.includes(`id="${id}"`), id);
+  // Elementy widoku audit są domyślnie ukryte — pojawiają się dopiero po rozstrzygnięciu widoku.
+  assert.match(ledgerHtml, /id="audit-export" hidden/);
+  assert.match(ledgerHtml, /id="audit-notice"[^>]* hidden/);
 });

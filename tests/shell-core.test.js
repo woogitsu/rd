@@ -3,7 +3,9 @@
 // wiązany ręcznie; kontrolę dostępu i tak wykonuje wyłącznie serwer (docs/AUTHORIZATION.md).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { READ_ONLY_BANNER_TEXT, isReadOnlySession, PANELS, activeYearLabel, isActivePanel, mountShell, navItemsHtml, roleLabel, scopeSummary, sessionDisplayName, visiblePanels } from '../shared/shell.js';
+import { READ_ONLY_BANNER_TEXT, isReadOnlySession, PANELS, activeYearLabel, isActivePanel, mountShell, navItemsHtml, roleLabel, scopeSummary, sessionCapabilities, sessionDisplayName, visiblePanels } from '../shared/shell.js';
+import { AUDIT_LEDGER_READ, hasAuditReadGrant, isAuditReadView } from '../shared/audit-view.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const PANEL_IDS = PANELS.map((p) => p.id);
 
@@ -249,4 +251,70 @@ test('mountShell: nazwa konta z odpowiedzi { user: { displayName } } (kształt G
   const acc = doc.els['shell-account'].innerHTML;
   assert.ok(acc.includes('<span class="shell-account-name">Skarbnik &lt;i&gt;X&lt;/i&gt;</span>'), acc);
   assert.equal(sessionDisplayName(result.session), 'Skarbnik <i>X</i>');
+});
+
+// --- D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej (capabilities z GET /api/session) ------
+
+test('sessionCapabilities: tylko dokładne `true` z GET /api/session włącza możliwość; brak pola i inne wartości — nie', () => {
+  assert.deepEqual(sessionCapabilities({ capabilities: { auditLedgerRead: true } }), { auditLedgerRead: true });
+  const none = [undefined, null, 'tekst', {}, { capabilities: null }, { capabilities: {} }, { capabilities: 'auditLedgerRead' },
+    { capabilities: { auditLedgerRead: 'true' } }, { capabilities: { auditLedgerRead: 1 } }, { capabilities: { auditLedgerRead: false } }];
+  assertEvery(none, (session) => sessionCapabilities(session)[AUDIT_LEDGER_READ] === false, 'wartości inne niż true', { exact: none.length });
+  assert.ok(Object.isFrozen(sessionCapabilities({})));
+});
+
+test('visiblePanels: audit bez możliwości widzi tylko Zebrania i swój raport, z możliwością także Księgę i Dokumenty (w stałej kolejności)', () => {
+  const grants = [{ role: 'audit', schoolYearId: '2026-2027' }];
+  assert.deepEqual(visiblePanels(grants).map((p) => p.id), ['meetings', 'audit']);
+  assert.deepEqual(visiblePanels(grants, { auditLedgerRead: false }).map((p) => p.id), ['meetings', 'audit']);
+  assert.deepEqual(visiblePanels(grants, { auditLedgerRead: 'true' }).map((p) => p.id), ['meetings', 'audit']);
+  assert.deepEqual(visiblePanels(grants, { auditLedgerRead: true }).map((p) => p.id), ['ledger', 'meetings', 'documents', 'audit']);
+});
+
+test('visiblePanels: możliwość auditLedgerRead nie dodaje paneli kontom bez roli audit (zarząd, przedstawiciel, brak ról)', () => {
+  const capabilities = { auditLedgerRead: true };
+  assert.deepEqual(visiblePanels([], capabilities), []);
+  const rep = visiblePanels([{ role: 'representative', classId: '1A', schoolYearId: 'y1' }], capabilities).map((p) => p.id);
+  assert.ok(!rep.includes('ledger'), 'przedstawiciel nie widzi Księgi');
+  assert.deepEqual(rep, visiblePanels([{ role: 'representative', classId: '1A', schoolYearId: 'y1' }]).map((p) => p.id));
+  // Zarząd ma te panele z własnej roli — możliwość niczego nie zmienia.
+  assert.deepEqual(visiblePanels([{ role: 'board' }], capabilities).map((p) => p.id), visiblePanels([{ role: 'board' }]).map((p) => p.id));
+});
+
+test('isAuditReadView i hasAuditReadGrant: audit bez klasy, z możliwością, bez dostępu standardowego', () => {
+  const audit = [{ role: 'audit', schoolYearId: 'y1' }];
+  const on = { auditLedgerRead: true };
+  assert.equal(hasAuditReadGrant(audit), true);
+  assert.equal(hasAuditReadGrant([{ role: 'audit', classId: '1A', schoolYearId: 'y1' }]), false, 'przydział klasowy nie daje dostępu');
+  assert.equal(hasAuditReadGrant([{ role: 'board' }]), false);
+  assert.equal(isAuditReadView({ grants: audit, capabilities: on }), true);
+  assert.equal(isAuditReadView({ grants: audit, capabilities: { auditLedgerRead: false } }), false, 'bez flagi serwera');
+  assert.equal(isAuditReadView({ grants: audit, capabilities: on, standardAccess: true }), false, 'rola standardowa zostawia widok pełny');
+  assert.equal(isAuditReadView({ grants: [{ role: 'treasurer' }], capabilities: on }), false, 'możliwość bez roli audit');
+  assert.equal(isAuditReadView({}), false);
+  assert.equal(isAuditReadView(), false);
+});
+
+test('mountShell: konto audit — Księga i Dokumenty w nawigacji tylko, gdy GET /api/session zgłasza capabilities.auditLedgerRead', async () => {
+  const grants = [{ role: 'audit', classId: null, schoolYearId: '2026-2027' }];
+  const labels = ['Księga', 'Dokumenty'];
+  const doc = fakeDoc();
+  const on = await withFetch({
+    '/api/access': { status: 200, body: { grants } },
+    '/api/session': { status: 200, body: { user: { displayName: 'Komisja' }, writeMode: 'normal', capabilities: { auditLedgerRead: true } } },
+  }, () => mountShell({ document: doc, location: loc }));
+  const nav = doc.els['shell-nav'].innerHTML;
+  assertEvery(labels, (label) => nav.includes(`>${label}</a>`), 'Księga i Dokumenty widoczne przy fladze', { exact: labels.length });
+  for (const label of ['Wpłaty', 'Kampanie', 'Uzgodnienia', 'Import uczniów']) assert.ok(!nav.includes(`>${label}</a>`), label);
+  assert.deepEqual(on.capabilities, { auditLedgerRead: true });
+
+  const off = fakeDoc();
+  const result = await withFetch({
+    '/api/access': { status: 200, body: { grants } },
+    '/api/session': { status: 200, body: { user: { displayName: 'Komisja' }, writeMode: 'normal' } },
+  }, () => mountShell({ document: off, location: loc }));
+  const navOff = off.els['shell-nav'].innerHTML;
+  assertEvery(labels, (label) => !navOff.includes(`>${label}</a>`), 'bez flagi brak Księgi i Dokumentów', { exact: labels.length });
+  assert.match(navOff, />Komisja Rewizyjna<\/a>/);
+  assert.deepEqual(result.capabilities, { auditLedgerRead: false });
 });

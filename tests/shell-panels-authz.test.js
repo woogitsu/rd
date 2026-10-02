@@ -11,6 +11,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PANELS, visiblePanels } from '../shared/shell.js';
 import { STATIC_PREFIXES } from '../src/node-app.js';
+import { AUDIT_LEDGER_READ_ROLES } from '../src/pg/audit-ledger-read.js';
+import { AUDIT_LEDGER_READ, AUDIT_READ_ROLES } from '../shared/audit-view.js';
+import { DOCUMENT_PANEL_ROLES } from '../documents/core.js';
+import { FINANCIAL_ROLES as LEDGER_PANEL_ROLES } from '../ledger/core.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const src = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const packageJson = () => JSON.parse(src('package.json'));
@@ -186,4 +191,34 @@ test('przedstawiciel klasy widzi wyłącznie moduły klasowe — nigdy finansów
   for (const forbidden of ['ledger', 'reconciliation', 'email', 'year-close', 'import', 'admin']) {
     assert.ok(!idSet.has(forbidden), `przedstawiciel nie powinien widzieć: ${forbidden}`);
   }
+});
+
+// D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej w panelach księgi i dokumentów. `roles` wpisów
+// PANELS zostają bez zmian (testy wyżej); audit dochodzi wyłącznie przez `capabilityRoles`, czyli gdy
+// GET /api/session zgłosi capabilities.auditLedgerRead (flaga AUDIT_LEDGER_READ, src/pg/routes/session.js).
+test('capabilityRoles: tylko Księga i Dokumenty, wyłącznie dla roli audit, tej samej co AUDIT_LEDGER_READ_ROLES na serwerze', () => {
+  const withCapability = PANELS.filter((panel) => panel.capabilityRoles);
+  assert.deepEqual(withCapability.map((panel) => panel.id), ['ledger', 'documents']);
+  assertEvery(withCapability, (panel) => Object.keys(panel.capabilityRoles).join() === AUDIT_LEDGER_READ
+    && [...panel.capabilityRoles[AUDIT_LEDGER_READ]].join() === [...AUDIT_LEDGER_READ_ROLES].join(), 'capabilityRoles = AUDIT_LEDGER_READ_ROLES', { exact: 2 });
+  assert.deepEqual([...AUDIT_READ_ROLES], [...AUDIT_LEDGER_READ_ROLES]);
+  assert.ok(!panelById.ledger.roles.includes('audit') && !panelById.documents.roles.includes('audit'), 'roles bez audit: zakres domyślny (flaga wyłączona) bez zmian');
+});
+
+test('role stałych w rdzeniach paneli ledger/ i documents/ zgodne z roles wpisów PANELS', () => {
+  assert.deepEqual([...DOCUMENT_PANEL_ROLES].sort(), [...panelById.documents.roles].sort());
+  assert.deepEqual([...LEDGER_PANEL_ROLES].sort(), [...panelById.ledger.roles].sort());
+});
+
+test('Komisja Rewizyjna (audit) z capabilities.auditLedgerRead widzi Księgę, Zebrania, Dokumenty i swój raport — nie Wpłaty, Uzgodnień, Kampanii, Zamknięcia ani Eksportu', () => {
+  const ids = visiblePanels([{ role: 'audit', schoolYearId: 'y1' }], { [AUDIT_LEDGER_READ]: true }).map((p) => p.id);
+  assert.deepEqual(ids, ['ledger', 'meetings', 'documents', 'audit']);
+  for (const forbidden of ['panel', 'reconciliation', 'email', 'year-close', 'data-export', 'import', 'families', 'admin']) assert.ok(!ids.includes(forbidden), forbidden);
+});
+
+test('capabilities.auditLedgerRead nie otwiera Księgi ani Dokumentów rolom spoza audit', () => {
+  const capabilities = { [AUDIT_LEDGER_READ]: true };
+  assert.deepEqual(visiblePanels([{ role: 'representative', classId: '1A', schoolYearId: 'y1' }], capabilities).map((p) => p.id),
+    visiblePanels([{ role: 'representative', classId: '1A', schoolYearId: 'y1' }]).map((p) => p.id));
+  assert.ok(!visiblePanels([{ role: 'principal' }], capabilities).some((p) => p.id === 'ledger' || p.id === 'documents'), 'dyrekcja nie ma dostępu (D-09)');
 });

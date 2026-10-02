@@ -8,4 +8,6 @@ Cykl nowego roku bez SQL (#207): sekcja „Historia preliminarza” ma „Kopiuj
 
 Tabela „Wynik wydarzeń” pokazuje przypisania wpisów do wydarzeń (centra kosztów, tylko odczyt, z pozycją „Bez przypisania” i eksportem CSV).
 
+Widok tylko do odczytu dla Komisji Rewizyjnej (D-09, #137): gdy serwer ma flagę `AUDIT_LEDGER_READ=1`, `GET /api/session` zwraca kontu z rolą `audit` pole `capabilities.auditLedgerRead`, a panel pokazuje wyłącznie listę, kategorie, podsumowanie i eksport CSV/XLSX; formularze, przyciski zapisu i sekcje preliminarza są usuwane z DOM. Wpisy powiązane z wpłatą rodziny mają stały opis i znacznik „wpłata rodziny”. Szczegóły: [docs/AUTHORIZATION.md](../docs/AUTHORIZATION.md), „Zakres roli audit”.
+
 Nie używać na danych rzeczywistych przed zatwierdzeniem zasad dostępu, księgowania i korekt.

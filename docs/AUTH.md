@@ -7,7 +7,7 @@ Logowanie: adres e-mail i hasło, a następnie kod z aplikacji uwierzytelniając
 - Sekret sesji ma 256 bitów losowości i trafia do przeglądarki w cookie HttpOnly, Secure, SameSite=Lax.
 - Baza (D1 w starym Workerze, PostgreSQL w prototypie na `src/pg/auth.js` — sekcja niżej) przechowuje wyłącznie SHA-256 sekretu. Surowy sekret nie może znaleźć się w bazie, logach ani dzienniku audytu.
 - Sesja jest ważna najwyżej 24 godziny (limit absolutny, liczony od pierwszego logowania — patrz niżej) i wygasa też po bezczynności (patrz „Limit bezczynności i sesje własne”, #150). Zapytanie odrzuca sesję wygasłą, wycofaną i konto wyłączone.
-- GET /api/session zwraca minimum danych bieżącego użytkownika i stan potwierdzenia MFA.
+- GET /api/session zwraca minimum danych bieżącego użytkownika i stan potwierdzenia MFA. Pole `capabilities` (D-09, #137) pojawia się wyłącznie dla konta z rolą `audit` (przydział bez klasy, potwierdzone MFA) przy włączonej fladze `AUDIT_LEDGER_READ`: `{ "auditLedgerRead": true }`. Dla pozostałych kont i przy fladze wyłączonej pola nie ma, więc odpowiedź nie zdradza konfiguracji serwera. Panele używają go tylko do pokazania widoku tylko do odczytu; dostęp do danych rozstrzyga serwer na każdej trasie.
 - POST /api/logout wymaga zgodnego nagłówka Origin, wycofuje sesję i zapisuje zdarzenie audytowe.
 - Tabele invitations i sessions tworzy migracja 0002_auth_sessions.sql. Migracji zdalnej nie uruchamiać bez przeglądu.
 

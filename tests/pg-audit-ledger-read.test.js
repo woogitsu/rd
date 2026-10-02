@@ -367,3 +367,37 @@ test('flaga wyłączona (brak, `0`, pusta): stan dotychczasowy — księga i dok
     });
   }
 });
+
+// Panele księgi i dokumentów (ledger/, documents/) dowiadują się o fladze z GET /api/session. Pole
+// `capabilities` dostaje wyłącznie konto z rolą audit (przydział bez klasy, MFA) przy fladze włączonej;
+// dla pozostałych kont i przy fladze wyłączonej pola nie ma — odpowiedź nie zdradza konfiguracji.
+test('GET /api/session, flaga włączona: capabilities.auditLedgerRead tylko dla audit z MFA i przydziałem bez klasy', () => withEnv('1', async ({ env, sessions }) => {
+  const audit = await call(env, '/api/session', { cookie: sessions.audit });
+  assert.equal(audit.status, 200, audit.text);
+  assert.deepEqual(audit.json.capabilities, { auditLedgerRead: true });
+  // Wskazówka zależy od roli konta, nie od roku — o roku decydują trasy (inny rok: 403, sprawdzone wyżej).
+  assert.deepEqual((await call(env, '/api/session', { cookie: sessions.auditY2 })).json.capabilities, { auditLedgerRead: true });
+  const others = ['treasurer', 'board', 'auditNoMfa', 'auditClass'];
+  const responses = await Promise.all(others.map((name) => call(env, '/api/session', { cookie: sessions[name] })));
+  assertEvery(responses, (response) => response.status === 200 && !('capabilities' in response.json) && !response.text.includes('auditLedgerRead'),
+    'konta bez roli audit, bez MFA albo z przydziałem klasowym nie dostają capabilities', { exact: others.length });
+}));
+
+test('GET /api/session, flaga wyłączona (brak, `0`, pusta): żadne konto nie dostaje capabilities, także audit', async () => {
+  for (const flag of [undefined, '0', '']) {
+    await withEnv(flag, async ({ env, sessions }) => {
+      const names = ['audit', 'auditY2', 'treasurer', 'board'];
+      const responses = await Promise.all(names.map((name) => call(env, '/api/session', { cookie: sessions[name] })));
+      assertEvery(responses, (response) => response.status === 200 && !('capabilities' in response.json) && !response.text.includes('auditLedgerRead'),
+        `flaga ${String(flag)}: brak capabilities`, { exact: names.length });
+    });
+  }
+});
+
+test('GET /api/session, flaga włączona: pole nie zmienia reszty kontraktu sesji (bez zapisu w bazie i śladów odczytu księgi)', () => withEnv('1', async ({ db, env, sessions }) => {
+  const before = await rowCount(db, 'audit_events');
+  const audit = await call(env, '/api/session', { cookie: sessions.audit });
+  assert.deepEqual(Object.keys(audit.json).sort(), ['capabilities', 'expiresAt', 'mfaVerified', 'sessionId', 'user', 'writeMode']);
+  assert.equal(await rowCount(db, 'audit_events'), before, 'odczyt sesji nie tworzy zdarzeń');
+  assert.equal((await events(db, 'ledger.audit_read')).length, 0);
+}));

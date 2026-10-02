@@ -9,6 +9,7 @@
 export const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 export const LIST_LIMIT = 50;
 
+import { isAuditReadView } from "../shared/audit-view.js";
 import { statusMessage } from "../shared/messages.js";
 import { formatSchoolYear } from "../shared/school-year.js";
 import { shortId } from "../shared/short-id.js";
@@ -509,3 +510,32 @@ export function statusConfirmation(action, label, replacementLabel = "", kind = 
     ],
   };
 }
+
+// --- D-09 (#137), wariant (b): widok tylko do odczytu Komisji Rewizyjnej -----------------------------
+// Serwer wydaje `audit` (flaga AUDIT_LEDGER_READ) wyłącznie dowody `financial` roku przydziału, z kategorii
+// bez danych płatników i niepowiązane z wpłatą: lista, metadane (bez opisu) i treść. Panel dowiaduje się
+// o fladze z `capabilities` w GET /api/session (shared/audit-view.js). Ukrycie akcji to skrót interfejsu —
+// przesyłanie, opis, zastąpienie i unieważnienie odrzuca serwer (403/404).
+
+// Role z własnym (standardowym) widokiem panelu — jak `roles` wpisu documents w shared/shell.js
+// (tests/shell-panels-authz.test.js pilnuje zgodności z DOCUMENT_POLICIES).
+export const DOCUMENT_PANEL_ROLES = Object.freeze(["admin", "board", "treasurer", "representative"]);
+
+// Kategorie dowodów czytelne dla audit — jak AUDIT_READABLE_DOCUMENT_CATEGORIES w src/pg/audit-ledger-read.js.
+export const AUDIT_READABLE_CATEGORIES = Object.freeze(["faktura", "umowa", "uchwala", "protokol", "sprawozdanie_rewizyjne"]);
+
+// Jedyny rodzaj, który widzi audit.
+export const AUDIT_DOCUMENT_KIND = "financial";
+
+export function isDocumentsAuditView(grants, capabilities) {
+  const standardAccess = (Array.isArray(grants) ? grants : []).some((grant) => DOCUMENT_PANEL_ROLES.includes(grant?.role));
+  return isAuditReadView({ grants, capabilities, standardAccess });
+}
+
+// Elementy panelu, których widok audit NIE renderuje (usuwane z DOM): formularz przesyłania, opis (tytuł,
+// kategoria), wersje i zmiana stanu (zastąp, unieważnij) oraz filtry spoza zakresu audit — klasa i
+// wyszukiwanie w opisie (opis nie jest wydawany). tests/documents-core.test.js pilnuje, że każdy formularz
+// zapisu w documents/index.html jest objęty tą listą.
+export const AUDIT_REMOVED_ELEMENT_IDS = Object.freeze([
+  "upload-section", "description-block", "status-block", "filter-class-field", "filter-search-field",
+]);

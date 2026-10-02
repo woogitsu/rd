@@ -25,6 +25,10 @@
         <p>Lista pokazuje wyłącznie dokumenty, do których masz dostęp według roli i przypisanych klas. Pliki są przechowywane prywatnie i pobierane przez serwer po sprawdzeniu uprawnień.</p>
       </div>
 
+      <div class="notice" id="audit-notice" role="note" hidden>
+        <p><strong>Widok tylko do odczytu dla Komisji Rewizyjnej.</strong> Widzisz dowody finansowe roku: faktury, umowy, uchwały, protokoły i sprawozdania rewizyjne. Potwierdzenia przelewów, wyciągi bankowe, dokumenty bez kategorii i dokumenty powiązane z wpłatami rodzin są dla Ciebie niewidoczne. Opis dokumentu nie jest wyświetlany. Każdy odczyt, podgląd i pobranie jest zapisywane w dzienniku zdarzeń.</p>
+      </div>
+
       <section class="section filters" aria-labelledby="filters-title">
         <h2 id="filters-title">Widok dokumentów</h2>
         <form id="filters-form" novalidate>
@@ -40,7 +44,7 @@
               <option value="class">Materiał klasy</option>
             </select>
           </label>
-          <label>Klasa
+          <label id="filter-class-field">Klasa
             <select id="filter-class" name="classId"><option value="">Wszystkie klasy</option></select>
           </label>
           <label>Kategoria
@@ -57,7 +61,7 @@
               <option value="inne">Inne</option>
             </select>
           </label>
-          <label>Szukaj w tytule i opisie
+          <label id="filter-search-field">Szukaj w tytule i opisie
             <input id="filter-search" name="q" autocomplete="off" placeholder="np. faktura wynajem" />
           </label>
           <label class="check">
@@ -118,6 +122,7 @@
           <div id="preview-pdf" class="preview-pdf" role="group" aria-label="Podgląd dokumentu PDF" hidden></div>
         </div>
 
+        <div id="status-block">
         <h3>Wersje i stan dokumentu</h3>
         <p class="hint">Zastąpienie i unieważnienie nie usuwają pliku: dokument zostaje w archiwum, znika tylko z domyślnej listy, a operacja trafia do dziennika zdarzeń. Powód jest wewnętrzny i nie trafia do dziennika.</p>
         <ol id="version-history" class="versions" aria-label="Historia wersji dokumentu"></ol>
@@ -140,7 +145,9 @@
           </div>
         </form>
         <p class="message" id="status-message" role="status" aria-live="polite"></p>
+        </div>
 
+        <div id="description-block">
         <h3>Tytuł i kategoria</h3>
         <p class="hint">Nie wpisuj imion i nazwisk uczniów ani rodziców — tytuł jest widoczny dla każdego z dostępem do dokumentów tego rodzaju. Zapis dodaje nową wersję opisu; poprzednia zostaje w historii.</p>
         <dl id="description-history" class="details"></dl>
@@ -177,9 +184,10 @@
           </div>
           <p class="message" id="description-status" role="status" aria-live="polite"></p>
         </form>
+        </div>
       </section>
 
-      <section class="section" aria-labelledby="upload-title">
+      <section class="section" id="upload-section" aria-labelledby="upload-title">
         <h2 id="upload-title">Przesłanie dokumentu</h2>
         <div class="notice" role="note">
           <p><strong>Nie przesyłaj dokumentów z danymi dzieci bez potrzeby.</strong> Zanim dodasz plik, usuń lub zasłoń dane, które nie są konieczne (nazwiska, adresy, numery rachunków osób prywatnych).</p>

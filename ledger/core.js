@@ -1,4 +1,5 @@
 import { MoneyError, formatEur, parseEurInput, parseStatementAmount } from "../panel/money.js";
+import { isAuditReadView } from "../shared/audit-view.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
@@ -215,6 +216,8 @@ export function normalizeEntry(entry) {
     attachmentCount: Array.isArray(entry?.attachmentIds) ? entry.attachmentIds.length : null,
     // #82: stan dowodów — plik zostaje przy wpisie także po zastąpieniu lub unieważnieniu.
     attachmentStatus: attachmentStatusSummary(entry?.attachments),
+    // D-09 (#137): wpis powiązany z wpłatą rodziny w widoku Komisji Rewizyjnej (opis i źródło zredagowane).
+    paymentLinked: entry?.paymentLinked === true,
     amountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
     correctedCents: Number.isSafeInteger(correctedCents) ? correctedCents : 0,
     netCents: Number.isSafeInteger(Number(entry?.netAmountCents))
@@ -254,6 +257,47 @@ export function hasFinancialAccess(grants, schoolYearId = "") {
   return (Array.isArray(grants) ? grants : []).some((grant) => FINANCIAL_ROLES.includes(grant?.role)
     && !grant.classId
     && (!schoolYearId || !grant.schoolYearId || grant.schoolYearId === String(schoolYearId).trim()));
+}
+
+// --- D-09 (#137), wariant (b): widok tylko do odczytu Komisji Rewizyjnej -----------------------------
+// Serwer dopuszcza `audit` do GET /api/ledger, /categories, /summary i eksportów dopiero przy fladze
+// AUDIT_LEDGER_READ; panel dowiaduje się o niej z `capabilities` w GET /api/session
+// (shared/audit-view.js). Ukrycie akcji to skrót interfejsu — zapisy i tak odrzuca serwer (403).
+
+// Widok audit: flaga zgłoszona, rola `audit` bez klasy i brak roli finansowej (wtedy zostaje widok pełny).
+export function isLedgerAuditView(grants, capabilities) {
+  return isAuditReadView({ grants, capabilities, standardAccess: hasFinancialAccess(grants) });
+}
+
+// Elementy panelu, których widok audit NIE renderuje (są usuwane z DOM, nie tylko ukrywane): wszystkie
+// formularze i przyciski zapisu (wpis, korekta, kategorie, kopiowanie, preliminarz, bilans otwarcia,
+// przyjęcie preliminarza) oraz sekcje pochodzące z tras, których audit nie ma (preliminarz, historia
+// preliminarza, wynik wydarzeń — 403). tests/ledger-panel-core.test.js pilnuje, że każdy <dialog>
+// i każdy przycisk otwierający zapis w ledger/index.html jest na tej liście.
+export const AUDIT_REMOVED_ELEMENT_IDS = Object.freeze([
+  "open-entry", "open-entry-hint", "col-actions-head",
+  "opening-actions", "budget-section", "history-section", "events-section",
+  "entry-dialog", "correction-dialog", "category-dialog", "copy-dialog", "opening-dialog",
+  "deactivate-dialog", "line-dialog", "revision-dialog", "adoption-dialog",
+]);
+
+// Adres eksportu księgi roku (GET /api/ledger/export.csv|xlsx) — pobranie pliku, nie zapis.
+export function buildLedgerExportUrl(format, schoolYearId) {
+  if (!["csv", "xlsx"].includes(format) || !isValidId(schoolYearId)) throw new Error("Niepoprawne parametry eksportu.");
+  return `/api/ledger/export.${format}?${new URLSearchParams({ schoolYearId: schoolYearId.trim() })}`;
+}
+
+export const PAYMENT_LINKED_LABEL = "wpłata rodziny";
+export const PAYMENT_LINKED_DESCRIPTION = "Wpłata rodziny (opis i źródło zredagowane)";
+
+// Teksty wiersza księgi. Wpis powiązany z wpłatą rodziny (paymentLinked) NIGDY nie pokazuje opisu, źródła
+// ani referencji uchwały z odpowiedzi — nawet gdyby serwer je przysłał; stały tekst + znacznik
+// „wpłata rodziny”. Pozostałe wpisy: opis, źródło i uchwała jak dotąd.
+export function entryTexts(entry) {
+  if (entry?.paymentLinked) {
+    return { description: PAYMENT_LINKED_DESCRIPTION, source: "", resolutionReference: "", badge: PAYMENT_LINKED_LABEL };
+  }
+  return { description: entry?.description || "Bez opisu", source: entry?.source || "", resolutionReference: entry?.resolutionReference || "", badge: "" };
 }
 
 // Opis błędu HTTP dla osoby korzystającej z panelu: 403 to brak uprawnień, nie awaria.
