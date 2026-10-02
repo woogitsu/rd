@@ -54,6 +54,7 @@ Wskazania właściciela prototypu, przekazane w sesji roboczej 02.10.2026. To **
 | Retencja dziennika odczytów i historii sprostowań | D-04 | Bez automatycznego usuwania (stan obecny) | Usunięcie wyłącznie przez anonimizację rodziny. |
 | Wiadomości poza kampaniami rodzin | D-16, D-17 | Szkice do zatwierdzenia | Kod generuje treść z szablonu opisanego w dokumentacji; wysyłka wymaga jawnego zatwierdzenia; nadawca wyłącznie z konfiguracji, bez domyślnego adresu. |
 | Zaproszeni na zebranie zarządu | D-21 | Zarząd, przedstawiciele klas, Komisja Rewizyjna i dyrekcja | Dyrekcja wymaga nowej roli/kont (dziś nie istnieje) — zakres D-08/D-09. |
+| Rola „dyrekcja” | D-08, D-09 | Zebrania + raporty zbiorcze | Nowa rola z kontem: zawiadomienia i odczyt zebrań, porządku, protokołów i uchwał oraz raport roczny i zestawienia zbiorcze (sumy); bez księgi szczegółowej, wpłat i danych rodzin. |
 
 ## Dane osobowe
 
