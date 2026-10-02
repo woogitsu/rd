@@ -21,7 +21,10 @@
 // Macierz poniżej to założenie techniczne do zatwierdzenia (D-08, D-09):
 // dyrekcja (`principal`) i Komisja Rewizyjna (`audit`) nie mają dostępu.
 
-import { loadAuthorizationContext, logAccessDenied } from '../authorization.js';
+import { loadAuthorizationContext, logAccessDenied, mfaAwareForbiddenCode } from '../authorization.js';
+import {
+  AUDIT_LEDGER_READ_ROLES, AUDIT_READABLE_DOCUMENT_CATEGORIES, auditLedgerReadEnabled,
+} from '../audit-ledger-read.js';
 import { authorizedClassIds, isAuthorizedScoped } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
 import { PersonalDataError, gateFreeText, piiAuditMetadata } from '../pii-gate.js';
@@ -113,12 +116,28 @@ export function canAccessDocument(context, doc) {
   return isAuthorizedScoped(context, policy.classScoped ? { ...requirement, classId: doc.classId } : requirement);
 }
 
+// D-09 (#137), wariant (b), za flagą AUDIT_LEDGER_READ: Komisja Rewizyjna (`audit`, przydział bez klasy, rok
+// dokumentu, MFA) czyta WYŁĄCZNIE dokumenty `financial` z kategorii bez danych płatników i niepowiązane z wpłatą
+// (AUDIT_READABLE_DOCUMENT_CATEGORIES). Tylko odczyt — canAccessDocument (zapis) nie zna roli audit.
+// Plik nie podlega redakcji, dlatego kryterium to kategoria i powiązanie, a nie zawartość.
+function auditRoleInYear(context, schoolYearId) {
+  return isAuthorizedScoped(context, { roles: AUDIT_LEDGER_READ_ROLES, requireMfa: true, schoolYearId });
+}
+
+export function canAuditReadDocument(context, doc, env) {
+  if (!auditLedgerReadEnabled(env) || doc?.kind !== 'financial' || !doc.schoolYearId || doc.classId) return false;
+  if (doc.linkedEntityType === 'payment_entry') return false;
+  if (!AUDIT_READABLE_DOCUMENT_CATEGORIES.includes(doc.category)) return false;
+  return auditRoleInYear(context, doc.schoolYearId);
+}
+
 // Odczyt (lista, metadane, treść): jak canAccessDocument, a dla rodzajów z `readRoles`
 // także rola tylko-do-odczytu z JAKIMKOLWIEK przydziałem klasowym w roku dokumentu
 // (przydział z innego roku nie liczy się — brak wyroczni istnienia, SR-07). Zapis
 // (przesłanie, opis, zastąpienie, unieważnienie) zostaje przy canAccessDocument.
-export function canReadDocument(context, doc) {
+export function canReadDocument(context, doc, env) {
   if (canAccessDocument(context, doc)) return true;
+  if (canAuditReadDocument(context, doc, env)) return true;
   const policy = DOCUMENT_POLICIES[doc?.kind];
   if (!policy?.readRoles || !doc.schoolYearId || doc.classId || policy.classScoped) return false;
   return authorizedClassIds(context, {
@@ -217,7 +236,7 @@ async function authorizedDocument(env, context, id, { auditDenied }) {
   const row = (await env.db.query(`${SELECT_DOCUMENT} WHERE d.id = $1`, [id])).rows[0];
   if (!row) return null;
   const doc = toDocument(row);
-  if (!canReadDocument(context, doc)) {
+  if (!canReadDocument(context, doc, env)) {
     if (auditDenied) {
       await insertAuditEvent(env.db, {
         actorId: context.session.user.id, action: 'document.access_denied', entityType: 'document', entityId: doc.id,
@@ -226,7 +245,7 @@ async function authorizedDocument(env, context, id, { auditDenied }) {
     }
     return null;
   }
-  return { doc, objectKey: row.object_key };
+  return { doc, objectKey: row.object_key, auditView: !canAccessDocument(context, doc) && canAuditReadDocument(context, doc, env) };
 }
 
 async function metadata(request, env, id, json) {
@@ -244,6 +263,17 @@ async function metadata(request, env, id, json) {
        FROM document_descriptions WHERE document_id = $1 ORDER BY revision_no DESC`,
     [id],
   );
+  if (found.auditView) {
+    // D-09 (#137): ślad odczytu przez audit przed wydaniem metadanych; wolny tekst opisu nie jest wydawany.
+    await insertAuditEvent(env.db, {
+      actorId: context.session.user.id, action: 'document.audit_read', entityType: 'document', entityId: found.doc.id,
+      metadata: { resource: 'metadata', kind: found.doc.kind, schoolYearId: found.doc.schoolYearId, role: 'audit' },
+    });
+    return json({
+      document: found.doc, supersedes,
+      descriptionHistory: history.rows.map((row) => ({ ...toDescription(row), description: null })),
+    });
+  }
   return json({ document: found.doc, supersedes, descriptionHistory: history.rows.map(toDescription) });
 }
 
@@ -258,7 +288,7 @@ async function download(request, env, id, json, url) {
   if (!env.storage) return json({ error: 'storage_unavailable' }, 503);
   const found = await authorizedDocument(env, context, id, { auditDenied: true });
   if (!found) return json({ error: 'not_found' }, 404);
-  const { doc, objectKey } = found;
+  const { doc, objectKey, auditView } = found;
   if (inline && !PREVIEW_TYPES.includes(doc.mimeType)) return json({ error: 'document_preview_unsupported' }, 400);
 
   let object;
@@ -284,7 +314,10 @@ async function download(request, env, id, json, url) {
     throw error;
   }
   // Dziennik odczytu przed wydaniem treści; błąd zapisu = brak pobrania/podglądu.
-  const auditMetadata = { kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId };
+  const auditMetadata = {
+    kind: doc.kind, schoolYearId: doc.schoolYearId, classId: doc.classId, sessionId: context.session.sessionId,
+    ...(auditView ? { role: 'audit' } : {}),
+  };
   // Podgląd w panelu (issue #89, część 2): przed wydaniem treści inline sprawdzamy
   // bajty PONOWNIE bieżącymi regułami — sygnatura musi odpowiadać zapisanemu typowi,
   // a struktura przejść validateStructure. Chroni to przed plikami przyjętymi przed
@@ -388,12 +421,21 @@ async function list(request, env, url, json) {
     .filter(([, policy]) => !policy.classScoped)
     .filter(([kind]) => canReadDocument(context, { kind, schoolYearId, classId: null }))
     .map(([kind]) => kind);
+  // D-09 (#137): audit (flaga AUDIT_LEDGER_READ) widzi wyłącznie dowody finansowe z dozwolonych kategorii;
+  // zawężenie w SQL (przed LIMIT), a canReadDocument sprawdza jeszcze każdy wiersz.
+  const auditFinancial = auditLedgerReadEnabled(env) && !unscopedKinds.includes('financial') && auditRoleInYear(context, schoolYearId);
+  if (auditFinancial) unscopedKinds.push('financial');
   const classPolicy = DOCUMENT_POLICIES.class;
   const allClasses = isAuthorizedScoped(context, { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId });
   // DOC-01: przydział klasowy liczy się tylko w swoim roku (i z MFA, jeśli rodzaj go wymaga) —
   // przydział z innego roku nie może zamienić odmowy (403) w pustą listę.
   const ownClasses = authorizedClassIds(context, { roles: classPolicy.roles, requireMfa: classPolicy.requireMfa, schoolYearId });
   if (!unscopedKinds.length && !allClasses && !ownClasses.length) {
+    // #161: sam brak MFA roli audit (flaga włączona, rok pasuje) zwraca mfa_required / mfa_enrollment_required.
+    if (auditLedgerReadEnabled(env)) {
+      const code = await mfaAwareForbiddenCode(context, { roles: AUDIT_LEDGER_READ_ROLES, schoolYearId, requireMfa: true }, env);
+      if (code !== 'forbidden') return json({ error: code }, 403);
+    }
     // #184: ślad odmowy 403 (przed transakcją żądania).
     await logAccessDenied(env, context, null, request);
     return json({ error: 'forbidden' }, 403);
@@ -403,7 +445,7 @@ async function list(request, env, url, json) {
   // (issue #76 wprost pilnuje tego, by pełna strona znaczyła realne wyniki).
   const queryValues = [schoolYearId, unscopedKinds, allClasses, ownClasses, kindFilter || null, classFilter.value,
     limit + 1, offset, statusFilter, categoryFilter || null, searchQuery || null, fromDate || null, toDate || null, sort,
-    outdatedOnly, DOCUMENT_VALIDATION_VERSION];
+    outdatedOnly, DOCUMENT_VALIDATION_VERSION, auditFinancial, AUDIT_READABLE_DOCUMENT_CATEGORIES];
   const after = cursor ? `AND ${afterTimestampDescSql('d.created_at', 'd.id', cursor, queryValues)}` : '';
   const { rows } = await env.db.query(
     `${SELECT_DOCUMENT}
@@ -417,6 +459,8 @@ async function list(request, env, url, json) {
         AND ($12::date IS NULL OR dd.document_date >= $12::date)
         AND ($13::date IS NULL OR dd.document_date <= $13::date)
         AND (NOT $15::boolean OR d.validation_version IS NULL OR d.validation_version < $16::integer)
+        AND (NOT $17::boolean OR d.kind <> 'financial'
+             OR (COALESCE(dd.category, '') = ANY($18::text[]) AND COALESCE(d.linked_entity_type, '') <> 'payment_entry'))
         ${after}
       ORDER BY CASE WHEN $14::text = 'documentDate' THEN dd.document_date END DESC NULLS LAST, d.created_at DESC, d.id
       LIMIT $7 OFFSET $8`,
@@ -425,7 +469,13 @@ async function list(request, env, url, json) {
   // Kursor liczymy z wierszy SQL (przed filtrem canReadDocument), żeby strona
   // zawężona filtrem uprawnień nie zgubiła dalszych wyników.
   const page = pageOf(rows, limit, (row) => ({ key: row.cursor_ts, id: row.id }), cursorScope);
-  const documents = page.items.map(toDocument).filter((doc) => canReadDocument(context, doc));
+  const documents = page.items.map(toDocument).filter((doc) => canReadDocument(context, doc, env));
+  if (auditFinancial) {
+    await insertAuditEvent(env.db, {
+      actorId: context.session.user.id, action: 'document.audit_read', entityType: 'school_year', entityId: schoolYearId,
+      metadata: { resource: 'list', schoolYearId, rowCount: documents.length, role: 'audit' },
+    });
+  }
   return json({ documents, limit, offset, nextCursor: sort === 'documentDate' ? null : page.nextCursor, truncated: page.truncated });
 }
 

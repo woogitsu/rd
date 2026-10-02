@@ -10,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const READ_ONLY_EXCEPTIONS = new Map([
-  ['src/pg/routes/documents.js', ['document.access_denied', 'document.downloaded', 'document.viewed', 'document.content_missing', 'document.preview_blocked']],
+  ['src/pg/routes/documents.js', ['document.access_denied', 'document.downloaded', 'document.viewed', 'document.content_missing', 'document.preview_blocked',
+    // D-09 (#137): ślad odczytu listy i metadanych dokumentów przez audit, zapisany przed wydaniem danych.
+    'document.audit_read']],
   ['src/pg/routes/print.js', ['print.cards_requested']],
   ['src/pg/routes/email.js', ['email.recipients.viewed', 'email.suppressions.viewed', 'email.attention_list.viewed', 'email.webhook.previous_secret_used', 'email.report.exported']],
   ['src/pg/routes/reconciliation.js', ['report.audit.generated']],

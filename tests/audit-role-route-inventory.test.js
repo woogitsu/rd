@@ -1,12 +1,15 @@
 // #137 / D-09: zestawienie zakresu roli `audit` (Komisja Rewizyjna) dla tras finansowych,
 // wyprowadzone z macierzy autoryzacji (tests/helpers/route-matrix.js). Test statyczny (bez bazy):
-// dokumentuje FAKTY, a nie zatwierdza zakresu — zarząd decyduje o D-09 na ich podstawie.
-// Zmiana zakresu audit (np. po D-09) ma wymagać świadomej zmiany tego pliku i tabeli
-// „Zakres roli audit” w docs/AUTHORIZATION.md, a nie tylko poszerzenia listy ról w trasie.
+// dokumentuje zakres. Wskazanie właściciela z 2026-10-02 (D-09, wariant b): odczyt księgi i dokumentów
+// finansowych roku za flagą AUDIT_LEDGER_READ (domyślnie wyłączona) — dwa stany:
+//   * flaga wyłączona = dotychczasowa lista (AUDIT_ALLOWED),
+//   * flaga włączona  = lista rozszerzona o odczyty (AUDIT_ALLOWED_WITH_FLAG), nadal bez żadnego zapisu.
+// Zmiana zakresu audit ma wymagać świadomej zmiany tego pliku i tabeli „Zakres roli audit”
+// w docs/AUTHORIZATION.md, a nie tylko poszerzenia listy ról w trasie.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { ROUTE_MATRIX, denyStatus } from './helpers/route-matrix.js';
+import { ROUTE_MATRIX, auditScopes, denyStatus } from './helpers/route-matrix.js';
 
 const authorization = await readFile(new URL('../docs/AUTHORIZATION.md', import.meta.url), 'utf8');
 
@@ -26,10 +29,24 @@ const AUDIT_ALLOWED = [
   'POST /api/audit-reviews/:year/notes/:id/closure',
   'POST /api/audit-reviews/:year/conclusion',
 ];
+// Dodatkowe trasy (wyłącznie GET) dopuszczone dla audit po włączeniu AUDIT_LEDGER_READ (D-09, wariant b).
+const AUDIT_FLAG_ADDED = [
+  'GET /api/ledger?schoolYearId=:year',
+  'GET /api/ledger/categories?schoolYearId=:year',
+  'GET /api/ledger/summary?schoolYearId=:year',
+  'GET /api/ledger/export.csv?schoolYearId=:year',
+  'GET /api/ledger/export.xlsx?schoolYearId=:year',
+  'GET /api/documents?schoolYearId=:year',
+  'GET /api/documents/:financialDocumentId',
+  'GET /api/documents/:financialDocumentId/content',
+];
+const AUDIT_ALLOWED_WITH_FLAG = [...AUDIT_ALLOWED, ...AUDIT_FLAG_ADDED];
 // Trasy zapisu, które audit może wywołać: wyłącznie własna ścieżka kontroli (niezmienne uwagi).
 const AUDIT_WRITES = AUDIT_ALLOWED.filter((entry) => entry.startsWith('POST '));
 
+// Stan domyślny (flaga wyłączona): wprost z `allow`. Stan z flagą: `allow` + `auditFlag` (route-matrix.js).
 const allowsAudit = (route) => typeof route.allow === 'object' && Boolean(route.allow.audit);
+const allowsAuditWithFlag = (route) => typeof route.allow === 'object' && auditScopes(route, true).length > 0;
 const label = (route) => `${route.method} ${route.path}`;
 const financialRoutes = ROUTE_MATRIX.filter((route) => FINANCIAL_MODULES.includes(route.module));
 
@@ -76,7 +93,44 @@ test('#137 D-09: audit nigdy nie ma tras księgi, wpłat, dokumentów ani ekspor
   for (const route of finance) assert.deepEqual(route.allow.audit, ['W1'], label(route));
 });
 
-// Tabela w docs/AUTHORIZATION.md: | moduł | tras w macierzy | audit 200 | audit odmowa |
+test('#137 D-09 (b): flaga włączona — audit dostaje dokładnie jawną, rozszerzoną listę, wyłącznie GET, rok bez klasy', () => {
+  const allowed = financialRoutes.filter(allowsAuditWithFlag).map(label).sort();
+  assert.deepEqual(allowed, [...AUDIT_ALLOWED_WITH_FLAG].sort());
+  // Dodane trasy: tylko odczyt, tylko moduły księgi i dokumentów, tylko zakres roku (W1), wyłącznie przez `auditFlag`.
+  const added = financialRoutes.filter((route) => allowsAuditWithFlag(route) && !allowsAudit(route));
+  assert.equal(added.length, AUDIT_FLAG_ADDED.length);
+  for (const route of added) {
+    assert.equal(route.method, 'GET', label(route));
+    assert.ok(['ledger', 'documents'].includes(route.module), label(route));
+    assert.deepEqual(auditScopes(route, true), ['W1'], label(route));
+    assert.deepEqual(route.auditFlag, ['W1'], label(route));
+  }
+  // Flaga niczego nie zapisuje: lista tras zapisu audit jest identyczna w obu stanach.
+  const writes = financialRoutes.filter((route) => route.method !== 'GET' && allowsAuditWithFlag(route)).map(label).sort();
+  assert.ok(writes.length > 0);
+  assert.deepEqual(writes, [...AUDIT_WRITES].sort());
+});
+
+test('#137 D-09 (b): flaga nie otwiera wpłat, kart rodzin, eksportu danych, historii obiektu, uzgodnień ani innych dokumentów', () => {
+  const stillClosed = ['payments', 'payment-references', 'payment-instructions', 'ledger-budget', 'ledger-cost-centers',
+    'ledger-cash', 'financial-reports', 'exports', 'families', 'year-close', 'audit-history', 'import', 'email', 'board'];
+  const closedRoutes = ROUTE_MATRIX.filter((route) => stillClosed.includes(route.module));
+  assert.ok(closedRoutes.length > 50);
+  assert.equal(closedRoutes.filter(allowsAuditWithFlag).length, 0, 'flaga otworzyła moduł spoza zakresu D-09 (b)');
+  // W modułach ledger/documents flaga dotyczy tylko GET z listy; reszta (w tym dokumenty niefinansowe) zostaje zamknięta.
+  const partly = ROUTE_MATRIX.filter((route) => ['ledger', 'documents'].includes(route.module));
+  const open = partly.filter(allowsAuditWithFlag).map(label).sort();
+  assert.deepEqual(open, [...AUDIT_FLAG_ADDED].sort());
+  const closedDocs = partly.filter((route) => route.module === 'documents' && !allowsAuditWithFlag(route));
+  assert.ok(closedDocs.some((route) => /board|class|council_shared/i.test(route.path)), 'dokumenty niefinansowe muszą zostać zamknięte');
+  for (const route of closedDocs.filter((item) => item.method === 'GET')) {
+    assert.ok([403, 404].includes(denyStatus(route, { key: 'audit' }, 'W1', true)), label(route));
+  }
+  // Tylko dowody finansowe: żadna trasa dokumentu rodzaju board/class/council_shared nie ma auditFlag.
+  assert.equal(partly.filter((route) => route.auditFlag && /board|class|council_shared/i.test(route.path)).length, 0);
+});
+
+// Tabela w docs/AUTHORIZATION.md: | moduł | tras w macierzy | audit 200 | audit odmowa | audit 200 z flagą |
 test('#137 D-09: tabela „Zakres roli audit” w docs/AUTHORIZATION.md zgadza się z macierzą', () => {
   const section = authorization.split('## Zakres roli audit')[1];
   assert.ok(section, 'brak sekcji „Zakres roli audit” w docs/AUTHORIZATION.md');
@@ -84,15 +138,18 @@ test('#137 D-09: tabela „Zakres roli audit” w docs/AUTHORIZATION.md zgadza s
   const rows = new Map();
   for (const line of body.split('\n')) {
     const match = line.match(/^\|\s*`([a-z-]+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/);
-    if (match) rows.set(match[1], { total: Number(match[2]), allowed: Number(match[3]), denied: Number(match[4]) });
+    const flagged = line.match(/^\|[^|]+\|[^|]+\|[^|]+\|[^|]+\|\s*(\d+)\s*\|/);
+    if (match) rows.set(match[1], { total: Number(match[2]), allowed: Number(match[3]), denied: Number(match[4]), withFlag: Number(flagged?.[1]) });
   }
   assert.equal(rows.size, FINANCIAL_MODULES.length, 'tabela musi mieć wiersz dla każdego modułu finansowego');
   for (const name of FINANCIAL_MODULES) {
     const routes = ROUTE_MATRIX.filter((route) => route.module === name);
     const allowed = routes.filter(allowsAudit).length;
-    assert.deepEqual(rows.get(name), { total: routes.length, allowed, denied: routes.length - allowed }, `moduł ${name}`);
+    const withFlag = routes.filter(allowsAuditWithFlag).length;
+    assert.deepEqual(rows.get(name), { total: routes.length, allowed, denied: routes.length - allowed, withFlag }, `moduł ${name}`);
   }
-  for (const entry of AUDIT_ALLOWED) {
+  for (const entry of AUDIT_ALLOWED_WITH_FLAG) {
     assert.ok(body.includes(entry.split(' ')[1].split('?')[0]), `tabela nie wymienia trasy ${entry}`);
   }
+  assert.ok(body.includes('AUDIT_LEDGER_READ'), 'sekcja nie opisuje flagi AUDIT_LEDGER_READ');
 });

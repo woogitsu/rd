@@ -58,6 +58,13 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 - Aktualności: wycofanie wygrywa z równoległym zatwierdzeniem i publikacją; blokują to
   trzy warstwy (sprawdzenie stanu w `transition()`, wyzwalacze w `0018_news.sql`
   i blokada wiersza), dlatego test mutacyjny jednej warstwy nie wystarcza do czerwonego wyniku.
+- Rola `audit` i flaga `AUDIT_LEDGER_READ` (D-09, wariant b, #137): macierz
+  `tests/pg-authz-matrix.test.js` sprawdza stan domyślny (flaga wyłączona) i grupę `auditFlag`
+  (osobna baza z flagą włączoną); `tests/pg-audit-ledger-read.test.js` pokrywa redakcję wpisów
+  powiązanych z wpłatą (opis, źródło, referencja uchwały, identyfikator wpłaty), kategorie dowodów,
+  inny rok, przydział klasowy, brak MFA, brak zapisów i ślad odczytu; liczby tras per moduł
+  pilnuje `tests/audit-role-route-inventory.test.js` (tabela „Zakres roli audit” w docs/AUTHORIZATION.md).
+  To założenie prototypu do formalnego potwierdzenia przez zarząd, nie decyzja.
 
 ## Rejestr dowodów
 

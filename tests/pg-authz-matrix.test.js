@@ -54,9 +54,9 @@ import { generateStructuredReference } from '../src/pg/ogm.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedClass, seedDocument, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 import {
-  ACTOR_KEYS, ACTORS, MARKERS, MFA_GATE_EXEMPT_REASONS, REFERENCE_CASES, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
+  ACTOR_KEYS, ACTORS, AUDIT_FLAG_ROUTES, MARKERS, MFA_GATE_EXEMPT_REASONS, REFERENCE_CASES, ROUTE_MATRIX, SCOPED_MARKER_KEYS, TARGETS, YEAR_1, YEAR_2,
   campaignBody, denyStatus, expectedStatus, importPayload, ledgerCategory, marker, mfaOnlyDenial, mfaPending, pdfBytes, PHOTO_SOURCE_DOCUMENT_ID, photoBody,
-  pngBytes, safeKey, statementDate, todoReason, visibleScopes, yearDate,
+  pngBytes, routeWithAuditFlag, safeKey, statementDate, todoReason, visibleScopes, yearDate,
 } from './helpers/route-matrix.js';
 import { assertEvery } from './helpers/assertions.js';
 
@@ -805,6 +805,12 @@ const MAKERS = {
     const classPart = kind === 'class' ? `&classId=${target.classId}` : '';
     const { json } = await api(ctx, ctx.fxCookies.admin, 'POST', `/api/documents?kind=${kind}&schoolYearId=${target.schoolYearId}${classPart}`,
       pdfBytes(target.key), { 'Content-Type': 'application/pdf', 'Idempotency-Key': nextKey('fx-doc') });
+    // D-09 (#137): audit czyta tylko dowody z kategorii bez danych płatników — w grupie z flagą
+    // dowód finansowy dostaje kategorię `faktura` (bez niej audit dostałby 404, jak w trasie).
+    if (kind === 'financial' && ctx.env.AUDIT_LEDGER_READ) {
+      await api(ctx, ctx.fxCookies.admin, 'POST', `/api/documents/${json.document.id}/description`,
+        { title: `Faktura ${marker(target.key)}`, category: 'faktura' }, { 'Idempotency-Key': nextKey('fx-doc-desc') });
+    }
     return { documentId: json.document.id };
   },
   // Para dokumentów tego samego rodzaju/roku/klasy — cel zastąpienia (issue #82).
@@ -1078,10 +1084,12 @@ async function matrixContext(group = 'main') {
         // (nigdy nie łączy się z siecią), adres z listy technicznej Rady.
         EMAIL_SENDING_ENABLED: 'true', EMAIL_PREVIEW_RECIPIENTS: 'fx-preview@rada.example.invalid',
         emailTransport: { send: async () => ({ messageId: 'fx-preview-message' }) },
+        // D-09 (#137): grupa 'auditFlag' uruchamia serwer z włączonym odczytem księgi i dokumentów przez audit.
+        ...(group === 'auditFlag' ? { AUDIT_LEDGER_READ: '1' } : {}),
       };
       await seedBase(db);
       const ctx = { db, env, cache: new Map(), fxCookies: await seedFixtureSessions(db), checklistOpen: [...CHECKLIST_OPEN] };
-      ctx.fx = group === 'main' ? await seedStatic(ctx) : { webhookSecret: WEBHOOK_SECRET, unsubscribeSecret: UNSUBSCRIBE_SECRET };
+      ctx.fx = group === 'main' || group === 'auditFlag' ? await seedStatic(ctx) : { webhookSecret: WEBHOOK_SECRET, unsubscribeSecret: UNSUBSCRIBE_SECRET };
       if (group === 'yearClose') {
         // Zamknięcie roku 1 rozpoczęte przez inną osobę; dwie pozycje listy kontrolnej zostają dla macierzy.
         await api(ctx, ctx.fxCookies.board, 'POST', `/api/year-close/${YEAR_1}/start`, { nextSchoolYearId: YEAR_2 });
@@ -1236,11 +1244,11 @@ function caseList(route) {
   return cases;
 }
 
-for (const route of ROUTE_MATRIX) {
+for (const route of [...ROUTE_MATRIX, ...AUDIT_FLAG_ROUTES.map(routeWithAuditFlag)]) {
   const cases = caseList(route);
   const todoReasons = [...new Set(cases.map((item) => item.todo).filter(Boolean))];
   let todoFailures = [];
-  const done = test(`macierz uprawnień: ${route.id} (${route.method} ${route.path})`, async () => {
+  const done = test(`macierz uprawnień: ${route.id} (${route.method} ${route.path})${route.group === 'auditFlag' ? ' [AUDIT_LEDGER_READ=1]' : ''}`, async () => {
     const ctx = await matrixContext(route.group);
     for (const [kind, stage, targets] of route.needs ?? []) {
       for (const targetKey of targets) await staticObject(ctx, kind, stage, targetKey);

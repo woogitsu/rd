@@ -106,7 +106,7 @@ const EXEMPT_GROUPS = [
   },
   {
     reason: 'finanse Rady (księga, budżet, uzgodnienia, sprawozdania): kwoty i opisy operacji, tytuły wyciągu tylko jako skrót, bez imion i e-maili rodzin',
-    routes: ['ledger.list', 'ledger.categories', 'ledger.summary', 'ledger.budget', 'ledger.exportCsv', 'ledger.exportXlsx',
+    routes: ['ledger.budget',
       'ledger.reviews', 'ledger.resolutions', 'ledgerBudget.history', 'ledgerBudget.execution',
       'ledgerCostCenters.report', 'ledgerCostCenters.allocations', 'ledgerCostCenters.eventFinance',
       'ledgerCash.transfers', 'ledgerCash.openingBalance', 'reconciliation.list', 'reconciliation.get',
@@ -117,7 +117,7 @@ const EXEMPT_GROUPS = [
     reason: 'zebrania, uchwały, wydarzenia, aktualności i metadane dokumentów Rady (zgody na wizerunek jako numery i referencje, bez imion)',
     routes: ['meetings.list', 'meetings.sharedMinutes', 'meetings.resolutionLookup', 'meetings.get', 'meetings.approvalChecklist', 'meetings.noticeCalendar',
       'meetings.resolutionRegister', 'events.list', 'events.get', 'news.list', 'news.get', 'news.photos', 'news.photoGet',
-      'documents.list', 'documents.getFinancial', 'documents.getBoard', 'documents.getClass', 'documents.getCouncilShared'],
+      'documents.getBoard', 'documents.getClass', 'documents.getCouncilShared'],
   },
   {
     reason: 'agregaty i liczniki (bez imion, e-maili i identyfikatorów rodzin) albo konfiguracja',
@@ -144,6 +144,21 @@ const EXEMPT_GROUPS = [
   {
     reason: 'podgląd kampanii: jedna próbka (identyfikator gospodarstwa i zamaskowany adres); pełna lista tylko przez email.recipients ze śladem audytu',
     routes: ['email.preview'],
+  },
+  // D-09 (#137, wariant b): odczyt księgi i dowodów finansowych przez Komisję Rewizyjną (flaga AUDIT_LEDGER_READ).
+  // Role finansowe widzą kwoty i opisy operacji (bez imion i e-maili rodzin); audit — widok zredagowany
+  // (wpisy powiązane z wpłatą bez opisu i identyfikatora wpłaty). Każdy odczyt audit ma ślad w audit_events.
+  {
+    reason: 'księga roku (lista, kategorie, podsumowanie): odczyt przez audit zapisuje ślad ledger.audit_read, zredagowany widok wpisów powiązanych z wpłatą',
+    audit: 'ledger.audit_read', routes: ['ledger.list', 'ledger.categories', 'ledger.summary'],
+  },
+  {
+    reason: 'eksport księgi (CSV/XLSX): każdy eksport, także przez audit (metadata.role), zapisuje ślad ledger.exported w transakcji eksportu',
+    audit: 'ledger.exported', routes: ['ledger.exportCsv', 'ledger.exportXlsx'],
+  },
+  {
+    reason: 'lista i metadane dokumentów finansowych: odczyt przez audit zapisuje ślad document.audit_read; metadane innych ról bez wolnego tekstu i danych rodzin',
+    audit: 'document.audit_read', routes: ['documents.list', 'documents.getFinancial'],
   },
   { reason: 'treść dokumentu: osobny ślad audytu każdego pobrania', audit: 'document.downloaded', routes: ['documents.contentFinancial', 'documents.contentBoard', 'documents.contentClass', 'documents.contentCouncilShared'] },
   { reason: 'odbiorcy kampanii (adresy opiekunów): osobny ślad audytu', audit: 'email.recipients.viewed', routes: ['email.recipients'] },
