@@ -19,6 +19,7 @@ import { csvRow, toCsv } from './csv.js';
 import { toXlsx } from './xlsx.js';
 import { insertAuditEvent } from './audit.js';
 import { JsonLinesScanner, readBundleStream, scanJsonLines } from './export-reader.js';
+import { brusselsStartOfDaySql } from './today.js';
 
 export const EXPORT_FORMAT = 'rd-yearly-export';
 // Wersja 2 (#202): gospodarstwa i ich historia (0014), uzgodnienia rachunku
@@ -121,8 +122,8 @@ function householdScope(has) {
 }
 
 // Przedział czasu roku szkolnego (Europe/Brussels), jak w zakresie audytu.
-const YEAR_TIME = (column) => `${column} >= (SELECT (starts_on::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)
-      AND ${column} < (SELECT ((ends_on + 1)::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)`;
+const YEAR_TIME = (column) => `${column} >= (SELECT ${brusselsStartOfDaySql('starts_on')} FROM school_years WHERE id = $1)
+      AND ${column} < (SELECT ${brusselsStartOfDaySql('ends_on + 1')} FROM school_years WHERE id = $1)`;
 const YEAR_RECONCILIATIONS = 'SELECT id FROM bank_reconciliations WHERE school_year_id = $1';
 
 // Zakres audytu (#174). Przynależność zdarzenia do roku ustala, w kolejności:
@@ -164,8 +165,8 @@ const AUDIT_ENTITY_YEAR = Object.freeze([
   ['enrollment', [], 'SELECT id FROM enrollments WHERE school_year_id = $1'],
 ]);
 // `school_year` wskazuje rok wprost (entity_id = id roku).
-const AUDIT_YEAR_TIME = `occurred_at >= (SELECT (starts_on::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)
-      AND occurred_at < (SELECT ((ends_on + 1)::timestamp AT TIME ZONE 'Europe/Brussels') FROM school_years WHERE id = $1)`;
+const AUDIT_YEAR_TIME = `occurred_at >= (SELECT ${brusselsStartOfDaySql('starts_on')} FROM school_years WHERE id = $1)
+      AND occurred_at < (SELECT ${brusselsStartOfDaySql('ends_on + 1')} FROM school_years WHERE id = $1)`;
 
 const ALL_AUDIT_YEAR_TABLES = new Set(AUDIT_ENTITY_YEAR.flatMap(([, tables]) => tables));
 

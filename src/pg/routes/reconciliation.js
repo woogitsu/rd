@@ -48,6 +48,7 @@ import { parseCoda } from '../bank/coda.js';
 import { parseCamt053 } from '../bank/camt053.js';
 import { createIdempotencyKeyReader, createJsonReader, isUniqueError } from '../input.js';
 import { extractStructuredReference } from '../ogm.js';
+import { brusselsDateSql } from '../today.js';
 
 export const name = 'reconciliation';
 
@@ -2449,7 +2450,7 @@ export async function buildAccountOperations(executor, year) {
        count(*) FILTER (WHERE action = 'auth.login_succeeded' AND metadata_json->>'afterAdminReset' = 'true') AS logins_after_admin_reset
        FROM audit_events
       WHERE action = ANY($4::text[])
-        AND (occurred_at AT TIME ZONE 'Europe/Brussels')::date BETWEEN $1::date AND $2::date`,
+        AND ${brusselsDateSql('occurred_at')} BETWEEN $1::date AND $2::date`,
     [year.starts_on, year.ends_on, PROTECTED_ACCOUNT_ROLES, [
       'role_grant.created', 'role_grant.four_eyes_waived', 'role_grant.revoked', 'role_grant_request.requested',
       'role_grant_request.rejected', 'role_grant_request.expired', 'auth.password_reset_issued', 'mfa.reset',
