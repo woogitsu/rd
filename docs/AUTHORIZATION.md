@@ -166,7 +166,7 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `GET /api/documents/:boardDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu | nie | 404 | |
 | `GET /api/documents/:council_sharedDocumentId` | admin, zarząd — przydział bez klasy, rok dokumentu; przedstawiciel — przydział klasowy w roku dokumentu (dowolna klasa) | nie | 404 | #167: przydział z innego roku, zarząd z przydziałem klasy, dyrekcja, Komisja Rewizyjna — 404 jak brak dokumentu |
 | `GET /api/documents/:classDocumentId` | admin, zarząd — klasy roku 1; przedstawiciel i zarząd z przydziałem klasy — własna klasa | nie | 404 | |
-| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego (w tym audit z flagą `AUDIT_LEDGER_READ=1`) | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded`; `?disposition=inline` (podgląd PDF/PNG/JPEG, ta sama macierz) — `document.viewed`; dla audit oba zdarzenia mają `metadata.role = audit` (D-09) |
+| `GET /api/documents/:financialDocumentId/content` | jak metadane dokumentu finansowego (w tym audit z flagą `AUDIT_LEDGER_READ=1`) | tak | 404 | odmowa zapisuje `document.access_denied`, pobranie — `document.downloaded`; `?disposition=inline` (podgląd PNG/JPEG, ta sama macierz; PDF inline = `400 pdf_inline_not_allowed`) i `?purpose=preview` (bajty PDF dla PDF.js, ta sama macierz) — `document.viewed`; dla audit oba zdarzenia mają `metadata.role = audit` (D-09) |
 | `GET /api/documents/:boardDocumentId/content` | jak metadane dokumentu zarządu | nie | 404 | |
 | `GET /api/documents/:council_sharedDocumentId/content` | jak metadane dokumentu Rady | nie | 404 | #167 |
 | `GET /api/documents/:classDocumentId/content` | jak metadane dokumentu klasy | nie | 404 | |

@@ -1252,14 +1252,17 @@ async function insertLegacyDocument(db, storage, {
 }
 
 const JPEG = syntheticJpeg();
-const preview = (env, id, cookie, extra = '') => get(env, `/api/documents/${id}/content?disposition=inline${extra}`, cookie);
+// PDF nie jest wydawany inline (#89, PDF.js): bajty podglądu idą z purpose=preview; obrazy też
+// przechodzą tę ścieżkę (te same kontrole i dziennik), a inline zostaje dla obrazów (osobne testy).
+const preview = (env, id, cookie, extra = '') => get(env, `/api/documents/${id}/content?purpose=preview${extra}`, cookie);
+const previewInline = (env, id, cookie, extra = '') => get(env, `/api/documents/${id}/content?disposition=inline${extra}`, cookie);
 
-test('inline preview of PDF, PNG and JPEG: safe headers, byte-identical body, audited as document.viewed only', async () => withEnv(async (db, env) => {
+test('inline preview of PNG and JPEG: safe headers, byte-identical body, audited as document.viewed only', async () => withEnv(async (db, env) => {
   const cookie = await treasurer(db);
-  const samples = [[PDF, 'application/pdf', 'pdf'], [PNG, 'image/png', 'png'], [JPEG, 'image/jpeg', 'jpg']];
+  const samples = [[PNG, 'image/png', 'png'], [JPEG, 'image/jpeg', 'jpg']];
   for (const [bytes, type, extension] of samples) {
     const { data } = await upload(env, { cookie, bytes, type });
-    const response = await preview(env, data.document.id, cookie);
+    const response = await previewInline(env, data.document.id, cookie);
     assert.equal(response.status, 200, type);
     assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
     assert.equal(response.headers.get('Content-Type'), type);
@@ -1274,7 +1277,7 @@ test('inline preview of PDF, PNG and JPEG: safe headers, byte-identical body, au
     assert.equal(response.headers.get('X-Frame-Options'), 'SAMEORIGIN');
   }
   const viewed = await auditRows(db, 'document.viewed');
-  assert.equal(viewed.length, 3);
+  assert.equal(viewed.length, 2);
   assertEvery(viewed, (event) => event.actor_id === 'u-treasurer');
   viewed.forEach((event) => assertNoPii(event.metadata_json));
   assert.equal((await auditRows(db, 'document.downloaded')).length, 0);
@@ -1284,7 +1287,48 @@ test('inline preview of PDF, PNG and JPEG: safe headers, byte-identical body, au
   assert.match(download.headers.get('Content-Disposition'), /^attachment;/);
   assert.equal(download.headers.get('X-Frame-Options'), null);
   assert.equal((await auditRows(db, 'document.downloaded')).length, 1);
-  assert.equal((await auditRows(db, 'document.viewed')).length, 3);
+  assert.equal((await auditRows(db, 'document.viewed')).length, 2);
+}));
+
+test('PDF with disposition=inline is 400 pdf_inline_not_allowed (PDF.js only): no content, no viewed event, role boundaries first (#89)', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const id = data.document.id;
+  const response = await previewInline(env, id, cookie);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'pdf_inline_not_allowed' });
+  assert.equal(response.headers.get('Content-Disposition'), null);
+  assert.equal((await previewInline(env, id)).status, 401);
+  assert.equal((await previewInline(env, crypto.randomUUID(), cookie)).status, 404);
+  assert.equal((await auditRows(db, 'document.viewed')).length, 0);
+}));
+
+test('PDF bytes for the PDF.js preview (purpose=preview): attachment headers, byte-identical, audited as document.viewed, never as downloaded (#89)', async () => withEnv(async (db, env) => {
+  const cookie = await treasurer(db);
+  const { data } = await upload(env, { cookie });
+  const response = await preview(env, data.document.id, cookie);
+  assert.equal(response.status, 200);
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), PDF);
+  assert.equal(response.headers.get('Content-Type'), 'application/pdf');
+  assert.equal(response.headers.get('Content-Disposition'), `attachment; filename="dokument-${data.document.id}.pdf"`);
+  assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.equal(response.headers.get('Cross-Origin-Resource-Policy'), 'same-origin');
+  assert.match(response.headers.get('Content-Security-Policy'), /^sandbox; default-src 'none'/);
+  assert.equal(response.headers.get('X-Frame-Options'), null);
+  const viewed = await auditRows(db, 'document.viewed');
+  assert.equal(viewed.length, 1);
+  assert.equal(viewed[0].actor_id, 'u-treasurer');
+  assertNoPii(viewed[0].metadata_json);
+  assert.equal((await auditRows(db, 'document.downloaded')).length, 0);
+  // Nieznana wartość purpose = 400 bez dotykania bucketu i dziennika; inline + purpose dla PDF nadal 400.
+  for (const value of ['', 'PREVIEW', 'download', 'preview;x']) {
+    const bad = await get(env, `/api/documents/${data.document.id}/content?purpose=${value}`, cookie);
+    assert.equal(bad.status, 400, value);
+    assert.equal((await bad.json()).error, 'invalid_disposition');
+  }
+  assert.equal((await previewInline(env, data.document.id, cookie, '&purpose=preview')).status, 400);
+  assert.equal((await auditRows(db, 'document.viewed')).length, 1);
 }));
 
 test('explicit disposition=attachment behaves as a download; unknown values are 400 without touching the bucket or the log', async () => withEnv(async (db, env) => {

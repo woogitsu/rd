@@ -252,6 +252,8 @@ test('previewKind i previewUrl: tylko PDF/PNG/JPEG, adres bez tokenu (#89)', asy
   const id = '11111111-2222-4333-8444-555555555555';
   assert.equal(core.previewUrl(id), `/api/documents/${id}/content?disposition=inline`);
   assert.throws(() => core.previewUrl('../x'));
+  assert.equal(core.pdfPreviewUrl(id), `/api/documents/${id}/content?purpose=preview`);
+  assert.throws(() => core.pdfPreviewUrl('../x'));
 });
 
 // --- Wersje i unieważnienie (issue #82) ---

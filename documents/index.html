@@ -111,13 +111,11 @@
           <button id="details-preview" type="button" hidden>Podgląd</button>
           <a id="details-download" class="button-link" href="#" rel="noopener">Pobierz plik</a>
         </p>
-        <p class="hint">Podgląd otwiera plik w panelu bez zapisu na dysku (PDF w ramce bez skryptów, obraz jako obraz). Przed podglądem serwer ponownie sprawdza strukturę pliku; plik, który tej kontroli nie przechodzi, można tylko pobrać. Pobranie zapisuje plik jako załącznik z nazwą techniczną. Podgląd i pobranie są zapisywane w dzienniku zdarzeń.</p>
+        <p class="hint">Podgląd otwiera plik w panelu bez zapisu na dysku (PDF rysowany stronami w przeglądarce biblioteką PDF.js dołączoną do panelu, bez skryptów, formularzy i linków z pliku; obraz jako obraz). Przed podglądem serwer ponownie sprawdza strukturę pliku; plik, który tej kontroli nie przechodzi, można tylko pobrać. Pobranie zapisuje plik jako załącznik z nazwą techniczną. Podgląd i pobranie są zapisywane w dzienniku zdarzeń.</p>
         <div id="preview-area" hidden>
           <p id="preview-message" class="message" role="status"></p>
           <img id="preview-image" class="preview-image" alt="Podgląd dokumentu" hidden />
-          <iframe id="preview-frame" class="preview-frame" title="Podgląd dokumentu PDF" sandbox="" referrerpolicy="no-referrer" hidden></iframe>
-          <p class="hint" id="preview-fallback">Chrome, Edge i inne przeglądarki oparte na Chromium nie wyświetlają PDF w ramce bez skryptów (pokazują własny komunikat o blokadzie). Wtedy otwórz podgląd w nowej karcie — ten sam adres, sprawdzany przez serwer i zapisywany w dzienniku — albo pobierz plik.
-            <a id="preview-open-tab" class="button-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Otwórz podgląd w nowej karcie</a></p>
+          <div id="preview-pdf" class="preview-pdf" role="group" aria-label="Podgląd dokumentu PDF" hidden></div>
         </div>
 
         <h3>Wersje i stan dokumentu</h3>

@@ -62,6 +62,17 @@ test('CSP serwera Node nie dopuszcza wbudowanych stylów ani skryptów', () => {
   assert.equal((directive('worker-src') ?? directive('script-src')).includes('blob:'), false);
 });
 
+// PDF.js (issue #89): CSP nie może zostać poluzowane. Worker pochodzi z 'self' (script-src
+// przez brak worker-src), eval jest wyłączony w bibliotece (isEvalSupported:false), a
+// WebAssembly nie jest używane (brak 'wasm-unsafe-eval').
+test('CSP nie dopuszcza eval, wasm-unsafe-eval ani zewnętrznych hostów (PDF.js lokalnie, worker z self)', () => {
+  assert.doesNotMatch(policy, /unsafe-eval|wasm-unsafe-eval/);
+  assert.doesNotMatch(policy, /https?:|\*/);
+  assert.deepEqual(directive('script-src'), ["'self'"]);
+  assert.equal(directive('worker-src'), null, 'worker-src nie jest potrzebny: obowiązuje script-src \'self\'');
+  assert.deepEqual(directive('object-src'), ["'none'"]);
+});
+
 test('wykrywacz łapie celowo wstawione naruszenia (fixture)', () => {
   assert.deepEqual(cspViolations('<link rel="stylesheet" href="/styles.css"><script type="module" src="/main.js"></script>'), []);
   assert.ok(cspViolations('<style>a{}</style>').includes('<style>'));
