@@ -37,7 +37,7 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 | dokumenty | documents | ✓ | n/d (dokument nie ma rodziny) | n/d (dokument nie ma rodziny) | n/d (brak kwot) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | wydarzenia | events | ✓ | n/d (wydarzenia bez rodzin) | n/d (wydarzenia bez rodzin) | n/d (brak kwot) | ✓ | ✓ | n/d (brak adresów) | ✓ |
 | aktualnosci | news | ✓ | ✓ | ✓ | n/d (brak kwot) | ✓ | ✓ | n/d (brak adresów) | ✓ |
-| zebrania | meetings | ✓ | ✓ | ✓ | n/d (brak kwot) | ✓ | ✓ | n/d (brak adresów) | ✓ |
+| zebrania | meetings | ✓ | ✓ | ✓ | n/d (brak kwot) | ✓ | ✓ | ✓ | ✓ |
 | druk | print | ✓ | ✓ | ✓ | ✓ | n/d (odczyt bez zapisu) | n/d (odczyt bez zapisu) | n/d (kartki bez adresów e-mail) | ✓ |
 | eksport | exports | ✓ | ~ (niesprawdzone pole po polu) | ~ (niesprawdzone pole po polu) | ~ (niesprawdzone pole po polu) | ~ (wyścig tylko z `RD_TEST_PG_URL`) | ✓ | n/d (brak adresów) | ~ (niesprawdzone pole po polu) |
 
@@ -122,6 +122,9 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | email | Ponowienie | tests/pg-email.test.js | job retried while the first run is still sending |
 | email | Błędny e-mail | tests/pg-email.test.js | invalid address at the provider (400) fails only that message |
 | email | Korekty | tests/pg-email.test.js | any change after approval invalidates it |
+| email | Podw. kliknięcie | tests/pg-meeting-board-notice.test.js | podwójne kliknięcie migawki, zatwierdzenia i kolejki |
+| email | Ponowienie | tests/pg-meeting-board-notice.test.js | ponowienie zadania bez drugiej wiadomości |
+| email | Błędny e-mail | tests/pg-meeting-board-notice.test.js | błędny adres odrzucony przez dostawcę i odbicie |
 | dokumenty | Podw. kliknięcie | tests/pg-documents.test.js | double click and retry reuse the idempotency key |
 | dokumenty | Ponowienie | tests/pg-documents.test.js | genuine rollback (object written, insert rolled back) |
 | dokumenty | Korekty | tests/pg-documents.test.js | treasurer supersedes a financial document |
@@ -138,6 +141,8 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | zebrania | Podw. kliknięcie | tests/pg-meetings.test.js | double submit with the same Idempotency-Key creates one record |
 | zebrania | Ponowienie | tests/pg-meetings.test.js | double submit with the same Idempotency-Key creates one record |
 | zebrania | Korekty | tests/pg-meetings.test.js | approved minutes are immutable, lock the meeting and are corrected by new versions |
+| zebrania | Korekty | tests/pg-meeting-board-notice.test.js | zmiana porządku lub terminu po zatwierdzeniu kampanii |
+| zebrania | Błędny e-mail | tests/pg-meeting-board-notice.test.js | błędny adres odrzucony przez dostawcę i odbicie |
 | druk | 2 opiekunów | tests/pg-primary-household.test.js | opieka naprzemienna: dwa obowiązujące gospodarstwa |
 | druk | Rodzeństwo | tests/pg-print.test.js | rodzeństwo: jedna rodzina z uczniami z różnych klas |
 | druk | Wpł. częściowe | tests/pg-print.test.js | kwoty netto tylko dla roli finansowej z MFA |

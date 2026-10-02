@@ -347,12 +347,11 @@ wpisów).
 | `nothing_to_promote` | Plan nie zawiera żadnego ucznia do przeniesienia. | Nie — popraw dane żądania. |
 | `nothing_to_extend` | Plan nie zawiera żadnego przedstawiciela do przedłużenia. | Nie — popraw dane żądania. |
 | `notice_calendar_unavailable` | Plik kalendarza jest dostępny tylko dla najnowszego zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |
-| `notice_campaign_audience_unsupported` | Dla zebrania zarządu nie tworzymy jeszcze szkicu kampanii — lista zaproszonych kont nie jest obsługiwana. | Nie — popraw dane żądania. |
 | `notice_four_eyes_required` | Zawiadomienie zatwierdza inna osoba niż jego autor. | Nie — popraw dane żądania. |
 | `notice_not_approved` | Szkic kampanii powstaje tylko z zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |
 | `notice_not_found` | Nie znaleziono zawiadomienia. | Nie — popraw dane żądania. |
 | `notice_not_latest` | Istnieje nowsza wersja zawiadomienia. Wróć do jej treści. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
-| `notice_outdated` | Termin, miejsce albo porządek obrad zmieniły się po przygotowaniu zawiadomienia. Przygotuj nową wersję. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `notice_outdated` | Termin, miejsce albo porządek obrad zmieniły się po przygotowaniu zawiadomienia (albo istnieje jego nowsza wersja). Przygotuj nową wersję; kampania e-mail z poprzedniej wersji nie zostanie zatwierdzona, zakolejkowana ani wznowiona (#113). | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `notice_requires_agenda` | Zawiadomienie wymaga co najmniej jednego niewycofanego punktu porządku obrad. | Nie — popraw dane żądania. |
 | `notice_up_to_date` | Zatwierdzone zawiadomienie odpowiada aktualnemu zebraniu — nowa wersja nie jest potrzebna. | Nie — popraw dane żądania. |
 | `offset_not_valid_in_europe_brussels` | Wybrane przesunięcie czasu nie pasuje do tej daty w Brukseli. | Zależy od kontekstu (patrz moduł trasy). |

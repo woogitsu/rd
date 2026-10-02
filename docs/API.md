@@ -18,7 +18,7 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/admin/audit` | `occurred_at` malejąco, `id` | 100 / 500 | `domain`, `actorId`, `schoolYearId`, `from`, `to` |
 | `GET /api/email/campaigns?schoolYearId=` | `created_at` malejąco, `id` | 100 / 100 | rok szkolny |
 | `GET /api/documents?schoolYearId=` | `created_at` malejąco, `id` | 50 / 100 | rok, `kind`, `classId`, `status`, `category`, `q` |
-| `GET /api/email/campaigns/{id}/recipients` (#543) | `household_id`, `id` | 200 / 200 | kampania |
+| `GET /api/email/campaigns/{id}/recipients` (#543) | `household_id`, `id` (kampania do kont `meeting_invitees`, 0183: `user_id`, `id`) | 200 / 200 | kampania |
 | `GET /api/email/campaigns/{id}/attention` (#543) | `outbox_id` | 200 / 200 | kampania |
 | `GET /api/email/suppressions?schoolYearId=` (#543) | `created_at` malejąco, `email_hash` | 500 / 500 | rok szkolny |
 | `GET /api/meetings?schoolYearId=` | `scheduled_at` malejąco, `id` | 500 / 500 | rok szkolny |
