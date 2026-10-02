@@ -418,5 +418,9 @@
   {
     "name": "0182_identity_changes.sql",
     "sha256": "ede81f168a3bc805c9e9b9abbbd5f72512af80db00576e1ab19f72110df070e9"
+  },
+  {
+    "name": "0183_email_account_recipients.sql",
+    "sha256": "39e0b489c1a1da56a23363a25d11733d171e49e98307a404b267fa791e78ff94"
   }
 ]

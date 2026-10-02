@@ -2048,6 +2048,17 @@
       "free_text": false,
       "exportable": false,
       "data_type": "text"
+    },
+    "user_id": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z kontem członka Rady (zawiadomienie o zebraniu zarządu, 0183)",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
     }
   },
   "email_campaign_recipients": {
@@ -2077,7 +2088,7 @@
       "personal": "direct",
       "subject": "guardian",
       "category": "kontakt",
-      "purpose": "migawka adresu w chwili wysyłki",
+      "purpose": "migawka adresu w chwili wysyłki (opiekuna; dla zawiadomienia o zebraniu zarządu — konta członka Rady, 0183)",
       "retention_category": "email_snapshot",
       "visible_to": [],
       "free_text": false,
@@ -2122,6 +2133,17 @@
       "subject": null,
       "category": null,
       "purpose": null,
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
+    },
+    "user_id": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z kontem członka Rady (zawiadomienie o zebraniu zarządu, 0183)",
       "retention_category": null,
       "visible_to": [],
       "free_text": false,
@@ -2758,6 +2780,17 @@
       "free_text": false,
       "exportable": false,
       "data_type": "timestamp with time zone"
+    },
+    "user_id": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "powiązanie rekordu z kontem członka Rady (zawiadomienie o zebraniu zarządu, 0183)",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "text"
     }
   },
   "email_outbox_resolutions": {
