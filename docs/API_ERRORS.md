@@ -81,6 +81,7 @@ wpisów).
 | `class_not_in_school_year` | Klasa nie należy do wskazanego roku szkolnego. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_required` | Wskaż klasę. | Nie — popraw dane żądania. |
 | `class_scope_not_supported` | Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste. | Nie — popraw dane żądania. |
+| `school_year_required` | Dyrekcja dostaje przydział tylko na wskazany rok szkolny. Wybierz rok. | Nie — popraw dane żądania. |
 | `class_year_mismatch` | Klasa należy do innego roku szkolnego. | Nie — popraw dane żądania. |
 | `closing_balance_out_of_range` | Saldo zamknięcia jest poza dozwolonym zakresem. | Zależy od kontekstu (patrz moduł trasy). |
 | `commit_outcome_unknown` | Nie wiadomo, czy zapis został utrwalony (połączenie z bazą zerwało się przy zatwierdzaniu). Sprawdź aktualny stan i dopiero wtedy ponów operację. | Nie automatycznie — najpierw sprawdź stan (odśwież widok); ponowienie z tym samym `Idempotency-Key` jest bezpieczne tam, gdzie trasa go obsługuje. |

@@ -19836,6 +19836,7 @@
           "school_year_exists",
           "school_year_not_finished",
           "school_year_not_found",
+          "school_year_required",
           "self_approval_forbidden",
           "sending_disabled",
           "service_unavailable",
@@ -22042,6 +22043,11 @@
       {
         "code": "school_year_not_found",
         "meaning": "Nie znaleziono roku szkolnego.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "school_year_required",
+        "meaning": "Dyrekcja dostaje przydział tylko na wskazany rok szkolny. Wybierz rok.",
         "retry": "Nie — popraw dane żądania."
       },
       {

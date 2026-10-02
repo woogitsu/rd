@@ -34,9 +34,9 @@ test('ROLE_STATUS: principal i audit są "partial", reszta "active", żadna rola
 test('zaproszenie principal działa bez ALLOW_PENDING_ROLES; podwójne kliknięcie daje jedno zaproszenie', async () => {
   const { db, env, admin } = await setup();
   try {
-    const first = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal' });
+    const first = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal', schoolYearId: 'y-now' });
     assert.equal(first.status, 201);
-    const second = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal' });
+    const second = await post(env, '/api/admin/invitations', admin, { email: 'dyrekcja@example.invalid', role: 'principal', schoolYearId: 'y-now' });
     assert.equal(second.status, 409);
     assert.equal(second.data.error, 'invitation_pending');
   } finally { await db.close(); }

@@ -152,3 +152,30 @@ test('rolę dyrekcji nadaje wyłącznie admin: samonadanie 409, nie-admin 403, a
     assert.ok(audit.rows.some((row) => row.actor_id === 'u-admin' && row.entity_type === 'role_grant'));
   } finally { await db.close(); }
 });
+
+test('przydział i zaproszenie dyrekcji wymagają roku szkolnego: bez roku 422 school_year_required, bez zapisu', async () => {
+  const { db, env, cookies } = await setup();
+  try {
+    const grant = await call(env, '/api/admin/grants', cookies.admin, { method: 'POST', body: { userId: 'u-board', role: 'principal' } });
+    assert.equal(grant.status, 422);
+    assert.equal(grant.data.error, 'school_year_required');
+    const invite = await call(env, '/api/admin/invitations', cookies.admin, {
+      method: 'POST', body: { email: 'dyrekcja@example.invalid', role: 'principal' },
+    });
+    assert.equal(invite.status, 422);
+    assert.equal(invite.data.error, 'school_year_required');
+    const rows = (await db.query(
+      `SELECT (SELECT count(*) FROM role_grants WHERE user_id = 'u-board' AND role = 'principal')::int AS g,
+              (SELECT count(*) FROM invitations WHERE role = 'principal')::int AS i`,
+    )).rows[0];
+    assert.deepEqual(rows, { g: 0, i: 0 });
+    // Ten sam wymóg nie dotyczy innych ról bez klasy (np. audit bez roku — wszystkie lata).
+    const audit = await call(env, '/api/admin/grants', cookies.admin, { method: 'POST', body: { userId: 'u-board', role: 'audit' } });
+    assert.equal(audit.status, 201);
+    // Z rokiem przydział dyrekcji powstaje.
+    const withYear = await call(env, '/api/admin/invitations', cookies.admin, {
+      method: 'POST', body: { email: 'dyrekcja@example.invalid', role: 'principal', schoolYearId: YEAR },
+    });
+    assert.equal(withYear.status, 201);
+  } finally { await db.close(); }
+});

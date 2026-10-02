@@ -215,6 +215,7 @@ export const ERROR_MESSAGES = Object.freeze({
   // bez tras klasowych — patrz docs/AUTHORIZATION.md „Stan roli i konto bez funkcji”.
   role_pending_decision: "Ta rola nie daje dziś dostępu do żadnego panelu (decyzja zarządu i szkoły jeszcze nie zapadła). Konto powstałoby bez żadnej funkcji. Potwierdź świadomie albo wybierz inną rolę.",
   class_scope_not_supported: "Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste.",
+  school_year_required: "Dyrekcja dostaje przydział tylko na wskazany rok szkolny. Wybierz rok.",
 });
 
 export function errorMessage(code, status) {

@@ -56,6 +56,10 @@ export function allowPendingRoles(env) {
 // (isAuthorizedScoped odfiltrowuje przydziały klasowe), a klasowej dla tych ról
 // nie ma. Tylko `representative` używa classId; inne role go dziś nie obsługują.
 export const CLASS_SCOPE_ROLES = Object.freeze(['representative']);
+// Role, których przydział i zaproszenie MUSZĄ wskazywać rok szkolny (wskazanie właściciela
+// 2026-10-02): dyrekcja zmienia się z kadencją, więc dostęp wygasa razem z rokiem, a
+// przydział bez roku (ważny we wszystkich latach) jest odrzucany kodem school_year_required.
+export const YEAR_SCOPE_REQUIRED_ROLES = Object.freeze(['principal']);
 const REVOKE_REASONS = new Set(['logout', 'rotated', 'admin', 'user_disabled', 'password_changed', 'password_reset', 'mfa_reset', 'idle']);
 
 export function sessionIdleTimeoutSeconds(env) {
@@ -316,6 +320,7 @@ export async function createInvitation(env, { actorId, email, role, classId = nu
   if (!actorId) throw new Error('actor_required');
   if (!ROLES.includes(role)) throw new Error('invalid_role');
   if (role === 'representative' && !classId) throw new Error('class_required');
+  if (YEAR_SCOPE_REQUIRED_ROLES.includes(role) && !schoolYearId) throw new Error('school_year_required');
   const normalized = normalizeEmail(email);
   return database(env).transaction((tx) => insertInvitation(tx, {
     actorId, email: normalized, role, classId, schoolYearId, ttlSeconds, replacesInvitationId, rejectPending,
@@ -332,6 +337,7 @@ export async function insertInvitation(tx, { actorId, email: normalized, role, c
   if (!actorId) throw new Error('actor_required');
   if (!ROLES.includes(role)) throw new Error('invalid_role');
   if (role === 'representative' && !classId) throw new Error('class_required');
+  if (YEAR_SCOPE_REQUIRED_ROLES.includes(role) && !schoolYearId) throw new Error('school_year_required');
   const ttl = Math.max(60, Math.min(Number(ttlSeconds) || INVITATION_DEFAULT_TTL_SECONDS, INVITATION_MAX_TTL_SECONDS));
   const { secret, tokenHash } = await createSessionSecret();
   const invitationId = crypto.randomUUID();
