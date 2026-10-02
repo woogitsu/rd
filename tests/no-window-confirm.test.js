@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Wszystkie katalogi paneli i strony publicznej oraz wspólne moduły (shared/).
-const APP_DIRS = ['admin', 'audit', 'data-export', 'documents', 'email', 'events', 'families', 'import', 'ledger', 'login', 'meetings', 'news', 'panel', 'print', 'reconciliation', 'shared', 'site', 'year-close'];
+const APP_DIRS = ['admin', 'audit', 'data-export', 'documents', 'email', 'events', 'families', 'import', 'kontakt', 'ledger', 'login', 'meetings', 'news', 'panel', 'print', 'reconciliation', 'shared', 'site', 'year-close'];
 // Natywne okna przeglądarki: window.confirm/globalThis.confirm oraz goły confirm(…).
 const NATIVE_CONFIRM = /(?:\b(?:window|globalThis|self)\.confirm\b|(?<![\w$.])confirm\s*\()/;
 
