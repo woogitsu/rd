@@ -866,6 +866,30 @@ test('#196: ponowiony reset hasła odrzuconym hasłem z diakrytykami nie zużywa
   assert.equal(done.status, 200, `ten sam token działa z dobrym hasłem: ${await done.clone().text()}`);
 });
 
+// D-10 (#196): hasło z offline listy SecLists 10k (wpis ≥ minLength, np. „unbelievable”,
+// „scandinavian”) jest odrzucane przy zmianie i resecie, także w innej wielkości liter.
+test('D-10: zmiana i reset hasła odrzucają hasło z listy SecLists 10k (bez zapisu, token nie zużyty)', async () => {
+  const account = await seedPasswordUser({ userId: 'u-login-weak10k' });
+  const cookie = cookieFrom(await login(account));
+  const hashBefore = (await db.query("SELECT hash FROM user_passwords WHERE user_id = 'u-login-weak10k'")).rows[0];
+  for (const weakPassword of ['unbelievable', 'Scandinavian', 'PORNOGRAPHIC']) {
+    const weak = await post('/api/password/change', { currentPassword: account.password, newPassword: weakPassword }, { cookie });
+    assert.equal(weak.status, 400, weakPassword);
+    assert.deepEqual(await weak.json(), { error: 'password_common' });
+  }
+  assert.deepEqual((await db.query("SELECT hash FROM user_passwords WHERE user_id = 'u-login-weak10k'")).rows[0], hashBefore);
+  const admin = await seedUserSession(db, { userId: 'u-login-admin10k', roles: [{ role: 'admin' }], mfa: true });
+  const issued = await post(`/api/admin/users/${account.userId}/password-reset`, {}, { cookie: admin });
+  assert.equal(issued.status, 201);
+  const { token } = await issued.json();
+  const weakReset = await post('/api/password/reset', { token, newPassword: 'Contortionist' });
+  assert.equal(weakReset.status, 400);
+  assert.deepEqual(await weakReset.json(), { error: 'password_common' });
+  const tokens = await db.query("SELECT used_at FROM password_reset_tokens WHERE user_id = 'u-login-weak10k'");
+  assert.equal(tokens.rows.length, 1);
+  assert.equal(tokens.rows[0].used_at, null, 'token nie zużyty');
+});
+
 // #150 (krok w górę): rotacja przy zmianie hasła przenosi MOMENT potwierdzenia
 // MFA, nie ustawia now() — inaczej przejęta sesja ze starym MFA + znane hasło
 // dawały „świeże” MFA bez kodu (np. dla eksportu rocznego, nadania roli).
