@@ -12046,6 +12046,9 @@
           ],
           "boardA": [
             "W1"
+          ],
+          "principal": [
+            "W1"
           ]
         },
         "x-rd-deny-status": [
@@ -12062,7 +12065,8 @@
           "admin",
           "audit",
           "board",
-          "board:class"
+          "board:class",
+          "principal"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       },
@@ -12256,6 +12260,9 @@
           ],
           "boardA": [
             "W1"
+          ],
+          "principal": [
+            "W1"
           ]
         },
         "x-rd-deny-status": [
@@ -12272,7 +12279,8 @@
           "admin",
           "audit",
           "board",
-          "board:class"
+          "board:class",
+          "principal"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -12336,6 +12344,9 @@
           "board": [
             "W1"
           ],
+          "principal": [
+            "W1"
+          ],
           "treasurer": [
             "W1"
           ]
@@ -12354,6 +12365,7 @@
           "admin",
           "audit",
           "board",
+          "principal",
           "treasurer"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
@@ -12484,6 +12496,9 @@
           "board": [
             "W1"
           ],
+          "principal": [
+            "W1"
+          ],
           "repA": [
             "W1"
           ],
@@ -12505,6 +12520,7 @@
           "admin",
           "audit",
           "board",
+          "principal",
           "representative"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
@@ -12569,6 +12585,11 @@
           ],
           "boardA": [
             "A"
+          ],
+          "principal": [
+            "A",
+            "B",
+            "W1"
           ]
         },
         "x-rd-deny-status": [
@@ -12585,7 +12606,8 @@
           "admin",
           "audit",
           "board",
-          "board:class"
+          "board:class",
+          "principal"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       },
@@ -12951,6 +12973,11 @@
           ],
           "boardA": [
             "A"
+          ],
+          "principal": [
+            "A",
+            "B",
+            "W1"
           ]
         },
         "x-rd-deny-status": [
@@ -12967,7 +12994,8 @@
           "admin",
           "audit",
           "board",
-          "board:class"
+          "board:class",
+          "principal"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -13581,6 +13609,11 @@
           ],
           "boardA": [
             "A"
+          ],
+          "principal": [
+            "A",
+            "B",
+            "W1"
           ]
         },
         "x-rd-deny-status": [
@@ -13597,7 +13630,8 @@
           "admin",
           "audit",
           "board",
-          "board:class"
+          "board:class",
+          "principal"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
       }
@@ -17871,6 +17905,9 @@
           "board": [
             "W1"
           ],
+          "principal": [
+            "W1"
+          ],
           "treasurer": [
             "W1"
           ]
@@ -17887,6 +17924,7 @@
         ],
         "x-rd-roles": [
           "board",
+          "principal",
           "treasurer"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"
@@ -18302,6 +18340,9 @@
           "board": [
             "W1"
           ],
+          "principal": [
+            "W1"
+          ],
           "treasurer": [
             "W1"
           ]
@@ -18318,6 +18359,7 @@
         ],
         "x-rd-roles": [
           "board",
+          "principal",
           "treasurer"
         ],
         "x-rd-roles-status": "założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia"

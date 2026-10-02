@@ -82,8 +82,8 @@ test('visiblePanels: Komisja Rewizyjna (audit) widzi wyłącznie zebrania i swó
   assert.deepEqual(visiblePanels([{ role: 'audit' }]).map((p) => p.id), ['meetings', 'audit']);
 });
 
-test('visiblePanels: dyrekcja (principal) bez domyślnych uprawnień — brak paneli', () => {
-  assert.deepEqual(visiblePanels([{ role: 'principal' }]), []);
+test('visiblePanels: dyrekcja (principal) widzi wyłącznie zebrania (odczyt; sumy roku tylko przez API)', () => {
+  assert.deepEqual(visiblePanels([{ role: 'principal' }]).map((p) => p.id), ['meetings']);
 });
 
 test('visiblePanels: przydział wygasły/cofnięty nie dociera tu wcale (filtrowane przez /api/access)', () => {

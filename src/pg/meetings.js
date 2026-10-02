@@ -7,10 +7,10 @@
 //
 // Założenia (do zatwierdzenia w D-08/D-09, patrz docs/MEETINGS.md i docs/DECISIONS.md):
 // - zarządzanie zebraniami: role admin i board,
-// - odczyt wewnętrzny (także projektów protokołów): admin, board, audit,
+// - odczyt wewnętrzny (także projektów protokołów): admin, board, audit, principal,
 // - przedstawiciel klasy: wyłącznie protokoły zatwierdzone i udostępnione rodzicom,
 //   dla zebrań ogólnych i zebrań własnej klasy,
-// - dyrekcja (principal): brak dostępu do czasu decyzji D-09,
+// - dyrekcja (principal): tylko odczyt jak audit (wskazanie właściciela 2026-10-02, D-09), bez zapisu,
 // - skarbnik: tylko sprawdzenie przyjętej uchwały po numerze (księga, wydatki > 3000 EUR).
 // Nie ma głosowania elektronicznego (D-19): zapisywane są wyłącznie wyniki głosowań
 // przeprowadzonych na zebraniu.
@@ -27,8 +27,8 @@ import { afterTimestampDescSql, afterTupleAscSql, cursorTimestampSql, decodeList
 import { buildCalendar, icalUidDomain } from '../ical.js';
 
 export const MANAGE_ROLES = Object.freeze(['admin', 'board']);
-export const READ_ROLES = Object.freeze(['admin', 'board', 'audit']);
-export const RESOLUTION_LOOKUP_ROLES = Object.freeze(['admin', 'board', 'audit', 'treasurer']);
+export const READ_ROLES = Object.freeze(['admin', 'board', 'audit', 'principal']);
+export const RESOLUTION_LOOKUP_ROLES = Object.freeze(['admin', 'board', 'audit', 'principal', 'treasurer']);
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/;

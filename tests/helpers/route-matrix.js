@@ -75,7 +75,7 @@ export const ACTORS = Object.freeze([
   // class_id ogranicza przydział do jednej klasy — nigdy nie otwiera danych ogólnoszkolnych (SR-01).
   { key: 'boardA', label: 'zarząd — przydział ograniczony do klasy 1A', grants: [{ role: 'board', classId: 'kl-1a', schoolYearId: YEAR_1 }], scopes: ['A'], classBoard: 'A' },
   { key: 'audit', label: 'Komisja Rewizyjna', grants: [{ role: 'audit', schoolYearId: YEAR_1 }], scopes: ['A', 'B', 'W1'] },
-  { key: 'principal', label: 'dyrekcja', grants: [{ role: 'principal', schoolYearId: YEAR_1 }], scopes: [] },
+  { key: 'principal', label: 'dyrekcja', grants: [{ role: 'principal', schoolYearId: YEAR_1 }], scopes: ['A', 'B', 'W1'] },
   { key: 'noGrant', label: 'zalogowany bez przydziału', grants: [], scopes: [] },
   { key: 'expiredGrant', label: 'zarząd — przydział wygasły', grants: [{ ...board1, expiresAt: PAST }], scopes: [] },
   { key: 'revokedGrant', label: 'zarząd — przydział cofnięty', grants: [{ ...board1, revoked: true }], scopes: [] },
@@ -100,7 +100,7 @@ const FINANCIAL = { admin: SCHOOL_Y1, board: SCHOOL_Y1, treasurer: SCHOOL_Y1 };
 const PAYMENT_INSTRUCTIONS_APPROVE = { admin: SCHOOL_Y1, board: SCHOOL_Y1 };
 // Zarząd z przydziałem klasy 1A zarządza wyłącznie zebraniami klasy 1A.
 const MEETING_MANAGE = { admin: Y1_ALL, board: Y1_ALL, boardA: ['A'] };
-const MEETING_READ = { admin: Y1_ALL, board: Y1_ALL, audit: Y1_ALL, boardA: ['A'] };
+const MEETING_READ = { admin: Y1_ALL, board: Y1_ALL, audit: Y1_ALL, principal: Y1_ALL, boardA: ['A'] };
 
 const json = (body) => body;
 const withKey = (key) => ({ 'Idempotency-Key': key });
@@ -714,7 +714,7 @@ export const ROUTE_MATRIX = Object.freeze([
   // ---------- meetings (#13) ----------
   {
     id: 'meetings.list', module: 'meetings', method: 'GET', path: '/api/meetings?schoolYearId=:year',
-    targets: YEAR_TARGETS, allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, boardA: SCHOOL_Y1 },
+    targets: YEAR_TARGETS, allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, principal: SCHOOL_Y1, boardA: SCHOOL_Y1 },
     mfa: false, ok: 200, deny: 403, fixture: null,
     build: ({ target }) => ({ path: `/api/meetings?schoolYearId=${target.schoolYearId}` }),
     // Przydział klasowy zarządu widzi na liście roku wyłącznie zebrania swojej klasy.
@@ -732,7 +732,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'meetings.sharedMinutes', module: 'meetings', method: 'GET', path: '/api/meetings/shared-minutes?schoolYearId=:year',
     targets: YEAR_TARGETS,
-    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, repA: SCHOOL_Y1, repB: SCHOOL_Y1 },
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, principal: SCHOOL_Y1, repA: SCHOOL_Y1, repB: SCHOOL_Y1 },
     mfa: false, ok: 200, deny: 403, fixture: null,
     build: ({ target }) => ({ path: `/api/meetings/shared-minutes?schoolYearId=${target.schoolYearId}` }),
     // Przedstawiciel: protokoły ogólnoszkolne udostępnione rodzicom + własna klasa.
@@ -754,7 +754,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'meetings.resolutionLookup', module: 'meetings', method: 'GET',
     path: '/api/meetings/resolutions/lookup?schoolYearId=:year&number=:number', targets: YEAR_TARGETS,
-    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, treasurer: SCHOOL_Y1 },
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, principal: SCHOOL_Y1, treasurer: SCHOOL_Y1 },
     mfa: false, ok: 200, deny: 403, fixture: null,
     build: ({ target, fx }) => ({
       path: `/api/meetings/resolutions/lookup?schoolYearId=${target.schoolYearId}&number=${encodeURIComponent(fx.resolutionNumber[target.key])}`,
@@ -846,7 +846,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'meetings.resolutionRegister', module: 'meetings', method: 'GET',
     path: '/api/meetings/resolutions?schoolYearId=:year', targets: YEAR_TARGETS,
-    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, boardA: SCHOOL_Y1 },
+    allow: { admin: SCHOOL_Y1, board: SCHOOL_Y1, audit: SCHOOL_Y1, principal: SCHOOL_Y1, boardA: SCHOOL_Y1 },
     mfa: false, ok: 200, deny: 403, fixture: null,
     build: ({ target }) => ({ path: `/api/meetings/resolutions?schoolYearId=${target.schoolYearId}` }),
   },
@@ -1715,16 +1715,16 @@ export const ROUTE_MATRIX = Object.freeze([
   },
 
   // ---------- sprawozdanie roczne i przepływy (#125) ----------
-  // Zarząd i skarbnik z MFA; admin, audit, principal, przedstawiciel: 403 (D-08/D-09).
+  // Zarząd i skarbnik z MFA; dyrekcja (principal) tylko annual i cash-flow (sumy); admin, audit, przedstawiciel: 403 (D-08/D-09).
   {
     id: 'financialReports.annual', module: 'financial-reports', method: 'GET', path: '/api/reports/annual?schoolYearId=:year&format=json',
-    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1, principal: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/annual?schoolYearId=${target.schoolYearId}&format=json` }),
   },
   {
     id: 'financialReports.cashFlow', module: 'financial-reports', method: 'GET', path: '/api/reports/cash-flow?schoolYearId=:year',
-    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
+    targets: YEAR_TARGETS, allow: { board: SCHOOL_Y1, treasurer: SCHOOL_Y1, principal: SCHOOL_Y1 }, mfa: true, ok: 200, deny: 403,
     fixture: null, needs: [['ledgerEntry', undefined, YEAR_TARGETS]],
     build: ({ target }) => ({ path: `/api/reports/cash-flow?schoolYearId=${target.schoolYearId}` }),
   },

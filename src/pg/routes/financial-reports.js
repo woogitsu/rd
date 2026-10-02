@@ -7,8 +7,10 @@
 //   GET  /api/reports/annual/snapshots/{id}?format=json|html    zapisana treść (SHA-256 sprawdzany przy odczycie)
 //   POST /api/reports/annual/snapshots/{id}/approve             tylko zarząd, świeże MFA, inna osoba niż autor
 //
-// Dostęp: zarząd i skarbnik z MFA w zakresie roku. `admin` (techniczny),
-// `audit`, `principal` i przedstawiciel klasy: 403 — D-08/D-09 nierozstrzygnięte,
+// Dostęp: zarząd i skarbnik z MFA w zakresie roku. Dyrekcja (`principal`, wskazanie
+// właściciela 2026-10-02): wyłącznie GET /api/reports/annual i /api/reports/cash-flow
+// (sumy zbiorcze, MFA, przydział bez klasy w roku) — bez migawek, księgi i wpłat.
+// `admin` (techniczny), `audit` i przedstawiciel klasy: 403 — D-08/D-09 nierozstrzygnięte,
 // wariant zachowawczy (KR ma własny raport /api/reports/audit). Każde wygenerowanie
 // zapisuje zdarzenie audytu bez treści raportu, w jednej transakcji z odczytem.
 // Migawki (0138, src/pg/report-snapshots.js): tworzy zarząd albo skarbnik, zatwierdza
@@ -33,6 +35,8 @@ import { createJsonReader } from '../input.js';
 export const name = 'financial-reports';
 
 const REPORT_ROLES = ['board', 'treasurer'];
+// Zbiorcze sumy roku (bez migawek): dodatkowo dyrekcja, tylko odczyt.
+const SUMMARY_ROLES = ['board', 'treasurer', 'principal'];
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 const APPROVE_ROLES = ['board'];
@@ -89,7 +93,7 @@ async function annualReport(request, env, url, json) {
   const schoolYearId = readYear(url);
   const format = url.searchParams.get('format') ?? 'json';
   if (!['json', 'html'].includes(format)) throw new RequestError('invalid_request');
-  const context = await requireReportAccess(request, env, schoolYearId);
+  const context = await requireReportAccess(request, env, schoolYearId, { roles: SUMMARY_ROLES });
   // Jedna migawka (REPEATABLE READ) dla wszystkich sum i zdarzenie audytu w tej samej transakcji (#213, #178).
   const report = await env.db.transaction(async (tx) => {
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
@@ -170,7 +174,7 @@ async function cashFlow(request, env, url, json) {
   const schoolYearId = readYear(url);
   const granularity = url.searchParams.get('granularity') ?? 'month';
   if (granularity !== 'month') throw new RequestError('invalid_request');
-  const context = await requireReportAccess(request, env, schoolYearId);
+  const context = await requireReportAccess(request, env, schoolYearId, { roles: SUMMARY_ROLES });
   // Jedna migawka (REPEATABLE READ) dla wszystkich sum i zdarzenie audytu w tej samej transakcji (#213, #178).
   const report = await env.db.transaction(async (tx) => {
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');

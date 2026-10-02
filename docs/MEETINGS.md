@@ -91,7 +91,7 @@ Wydatek powyżej 3000 EUR wymaga w `ledger_entries.resolution_reference` tekstow
 | audit (Komisja Rewizyjna) | odczyt wszystkich zebrań, także projektów protokołów |
 | treasurer | wyłącznie sprawdzenie przyjętej uchwały po numerze |
 | representative | wyłącznie udostępnione rodzicom zatwierdzone protokoły: zebrania ogólne i zarządu oraz własnej klasy (patrz niżej: zebranie klasowe za flagą) |
-| principal | brak dostępu do decyzji D-09 |
+| principal (dyrekcja) | tylko odczyt jak `audit`: zebrania, porządek obrad, protokoły (także projekty), uchwały i rejestr uchwał — przydział ogólnoszkolny w roku; bez zapisu (wskazanie właściciela 2026-10-02, D-09) |
 
 Przydział z `classId` działa tylko dla zebrań tej klasy; nigdy dla zebrań ogólnych lub zarządu. Przydział z `schoolYearId` działa tylko w swoim roku. Całe zarządzanie zebraniem (utworzenie i zmiana danych zebrania, obecność, porządek obrad, ustalenie quorum, projekt i rozstrzygnięcie uchwały, protokół, widoczność) wymaga sesji z potwierdzonym MFA — od #150 także dla przedstawiciela prowadzącego zebranie klasowe własnej klasy (#171); szczegóły w sekcji niżej. Brak roli lub zakresu daje `403 forbidden` przed sprawdzeniem MFA. **Założenie do D-08:** `admin` (techniczny) ma dziś te same uprawnienia zarządzania co `board`, choć PRODUCT.md mówi, że admin techniczny nie publikuje — nie zawężono tego w tym PR, wymaga osobnej decyzji.
 
@@ -130,9 +130,9 @@ Elektroniczne lub zdalne głosowanie zarządu między zebraniami (np. pilna zgod
 
 Panel sprawdza `GET /api/access` **przed** pierwszym żądaniem listy i wybiera jeden z dwóch widoków (`meetings/core.js`, `meetingsViewMode`):
 
-- role z listy wyżej z dostępem do `GET /api/meetings` (`admin`, `board`, `audit`) → obecny widok bez zmian (lista zebrań, szczegóły, obecność, quorum, protokoły, uchwały);
+- role z listy wyżej z dostępem do `GET /api/meetings` (`admin`, `board`, `audit`, `principal`) → obecny widok bez zmian (lista zebrań, szczegóły, obecność, quorum, protokoły, uchwały);
 - sam `representative` (bez żadnej z tych ról) → widok „Protokoły udostępnione” z `GET /api/meetings/shared-minutes`: data, rodzaj, klasa (nazwa z `GET /api/classes`, który zwraca tylko klasy z zakresu roli; awaryjnie identyfikator), tytuł, wersja, data zatwierdzenia i podgląd treści tylko do odczytu (bez listy obecności, quorum i projektów uchwał). Panel nigdy nie woła `GET /api/meetings` dla tej roli, więc nie ma odmowy 403 na starcie. Pozycja listy ma identyfikator protokołu w polu `minutesId` (nie `id`) — przycisk „Pokaż” szuka po tym polu (`findSharedMinutes` w `meetings/core.js`).
-- inne role bez żadnej z powyższych (np. sam `principal`) → obie sekcje ukryte, tak jak dziś (403 przy próbie odczytu, bez zmiany funkcji tego PR).
+- inne role bez żadnej z powyższych (np. sam `treasurer`) → obie sekcje ukryte, tak jak dziś (403 przy próbie odczytu, bez zmiany funkcji tego PR).
 
 Widoczność `parents` w widoku przedstawiciela oznacza, że wolno przekazać treść rodzicom klasy; wydruk/PDF tego widoku korzysta ze wspólnego arkusza druku (#151). Wydruk protokołu (przycisk „Drukuj / zapisz jako PDF”) zawiera listę obecności wg funkcji (bez nazwisk i e-maili — API ich nie zwraca; pusta kolumna „Imię i nazwisko” do wpisania ręcznie obok kolumny „Podpis”), wynik quorum, treść i dwa puste pola podpisu (prowadzący, protokolant) — układ podpisów to założenie zachowawcze do decyzji D-21. Daty i godziny na wydruku w zapisie dd.mm.rrrr gg:mm (Europe/Brussels).
 
@@ -220,4 +220,4 @@ Migracja `0139_meeting_cancel_notice.sql`. **Prototyp — niczego nie wysyła i 
 - Po zatwierdzeniu protokołu nie można poprawić struktury listy obecności; poprawkę opisuje nowa wersja protokołu.
 - Treść protokołu jest tekstem wpisanym przez człowieka: system nie wykrywa w niej danych osobowych przed publikacją.
 - Retencja protokołów i uchwał wymaga decyzji D-04.
-- **Rejestr uchwał (#102):** format numeru (D-15), czy regulamin w ogóle przewiduje uchylanie i zmianę uchwał (D-21), czy dyrekcja widzi rejestr (D-09) — do czasu tych decyzji `resolution_number_pattern` zostaje pusty (brak podpowiedzi), a relacje zmienia/uchyla działają, ale nikt nie musi ich używać. Osoba odpowiedzialna za wykonanie uchwały to konto (`users`); nie przechowujemy w rejestrze nazwisk ani stanowisk poza kontem systemowym.
+- **Rejestr uchwał (#102):** format numeru (D-15), czy regulamin w ogóle przewiduje uchylanie i zmianę uchwał (D-21), czy dyrekcja widzi rejestr (D-09; od 2026-10-02 widzi go w trybie odczytu — wskazanie właściciela, nie zatwierdzona macierz) — do czasu tych decyzji `resolution_number_pattern` zostaje pusty (brak podpowiedzi), a relacje zmienia/uchyla działają, ale nikt nie musi ich używać. Osoba odpowiedzialna za wykonanie uchwały to konto (`users`); nie przechowujemy w rejestrze nazwisk ani stanowisk poza kontem systemowym.

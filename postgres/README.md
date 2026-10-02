@@ -1483,3 +1483,11 @@ zostawia odtąd wpis `direct`. Tabela zawiera dane osobowe (retencja — D-04), 
 eksportem rocznym, a w audycie są wyłącznie identyfikatory i nazwy pól. Wycofanie:
 DROP TRIGGER na `students`/`guardians`, DROP FUNCTION trzech funkcji, DROP TABLE
 (na bazie z wpisami tylko po kopii zapasowej).
+
+Rola dyrekcji (`principal`, wskazanie właściciela 2026-10-02) nie wymaga migracji: klucz
+istnieje od `0001_core.sql` w ograniczeniach CHECK `role_grants.role` i
+`role_invitations.role`, a `0009_meetings.sql` zna go jako funkcję uczestnika zebrania.
+Zmiana dotyczy wyłącznie uprawnień tras (odczyt zebrań, sumy raportu rocznego),
+więc żaden wiersz ani schemat się nie zmienia; wycofanie to cofnięcie kodu, a
+istniejące przydziały `principal` po prostu zyskują odczyt opisany w
+docs/AUTHORIZATION.md. Numeracja migracji bez zmian (ostatnia: 0182).

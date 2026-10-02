@@ -25,10 +25,12 @@ export const ROLES = Object.freeze(['admin', 'board', 'treasurer', 'representati
 // #176: stan roli w kodzie, nie tylko w komentarzach — źródło dla admin/ (formularz
 // zaproszenia i nadania roli), ekranu startowego i tests/pg-authz-matrix.test.js.
 // 'active'          — rola ma dziś co najmniej jedną trasę chronioną.
-// 'partial'         — rola ma dziś część tras (np. audit: tylko GET /api/reports/audit,
-//                      reszta czeka na D-09 — zob. docs/LEDGER.md, issue #137).
-// 'pending_decision' — rola nie ma dziś ŻADNEJ trasy chronionej (docs/AUTHORIZATION.md:
-//                      "Rola `principal` nie ma dziś dostępu do żadnej trasy chronionej").
+// 'partial'         — rola ma dziś część tras (audit: raport KR i odczyt zebrań;
+//                      principal: odczyt zebrań i zbiorcze sumy roku; reszta czeka na D-09 —
+//                      zob. docs/LEDGER.md, issue #137, docs/DECISIONS.md „Wskazania użytkownika 2026-10-02”).
+// 'pending_decision' — rola nie ma dziś ŻADNEJ trasy chronionej. Dziś żadna rola nie ma
+//                      tego stanu (dyrekcja `principal` dostała zakres 2026-10-02), ale mechanizm
+//                      (422 role_pending_decision, hasActiveRole) zostaje dla przyszłych ról.
 // Zmiana tej mapy bez zmiany faktycznych tras w modułach byłaby fałszywą obietnicą
 // (AGENTS.md: „widok publiczny/komunikaty nie mogą obiecywać funkcji, których nie ma”).
 export const ROLE_STATUS = Object.freeze({
@@ -37,7 +39,7 @@ export const ROLE_STATUS = Object.freeze({
   treasurer: 'active',
   representative: 'active',
   audit: 'partial',
-  principal: 'pending_decision',
+  principal: 'partial',
 });
 
 // Zaproszenie/nadanie roli 'pending_decision' jest domyślnie odrzucane (422
