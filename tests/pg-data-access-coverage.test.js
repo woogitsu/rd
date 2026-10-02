@@ -120,6 +120,19 @@ describe('pokrycie dziennika odczytu danych rodzin (#133)', () => {
     }
   });
 
+  // D-09 (#137): trasa, którą audit czyta za flagą, nie może być cichym wyjątkiem — wymaga śladu odczytu
+  // (akcja ze słownika, zapisywana w źródle: sprawdza to test wyżej), a nie luki followUp.
+  test('trasy odczytu audit za flagą AUDIT_LEDGER_READ mają ślad audytu, nie samo uzasadnienie', () => {
+    const flagged = ROUTE_MATRIX.filter((route) => route.auditFlag);
+    assert.ok(flagged.length >= 8, `za mało tras z auditFlag: ${flagged.length}`);
+    for (const route of flagged) {
+      const entry = DATA_ACCESS_EXEMPT_ROUTES[route.id];
+      assert.ok(entry, `${route.id}: trasa z odczytem audit musi być sklasyfikowana`);
+      assert.ok(entry.audit, `${route.id}: odczyt przez audit bez śladu audytu`);
+      assert.equal(entry.followUp, false, `${route.id}: odczyt audit nie może być odłożoną luką`);
+    }
+  });
+
   test('lista odłożonych luk (followUp) nie rośnie bez decyzji', () => {
     // Zmniejszanie jest mile widziane; dopisanie nowej luki = świadoma zmiana tego testu i docs/SECURITY.md.
     const pending = Object.entries(DATA_ACCESS_EXEMPT_ROUTES).filter(([, e]) => e.followUp).map(([id]) => id).sort();
