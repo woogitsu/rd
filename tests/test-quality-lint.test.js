@@ -73,6 +73,8 @@ const TRIGGER_BYPASS = /DISABLE\s+TRIGGER|session_replication_role\s*=\s*replica
 const SHORT_DIGITS_NEGATIVE = [
   /!\s*[^\s!&|]*\.includes\((['"`])\d{1,5}\1\)/,
   /\.includes\((['"`])\d{1,5}\1\)\s*,\s*false\b/,
+  // `assert.doesNotMatch(text, /Ala|4000/)`: goła liczba jako alternatywa wyrażenia.
+  /doesNotMatch\([^,]+,\s*\/(?:[^/]*\|)?\d{3,}(?:\||\/)/,
 ];
 
 // Pliki, w których wolno używać opcji `todo` testu (pilnowane osobnym meta-testem
@@ -134,6 +136,8 @@ test('lint testów: reguły wykrywają wzorce zakazane (kontrola pozytywna)', ()
     ['x.test.js', "assert.ok(!JSON.stringify(metadata).includes('2500'), text);", 'short-digit-negative-substring'],
     ['x.test.js', "assert.ok(audit.includes('piiConfirmed') && !audit.includes('470'));", 'short-digit-negative-substring'],
     ['x.test.js', "assert.equal(text.includes(`5390`), false);", 'short-digit-negative-substring'],
+    ['x.test.js', "assert.doesNotMatch(text, /h-a|2500|amount/i);", 'short-digit-negative-substring'],
+    ['x.test.js', "assert.doesNotMatch(html, /Ewa|4000/);", 'short-digit-negative-substring'],
     ['x.test.js', 'assert.equal(rows.every((row) => row.ok), true);', 'every-without-nonempty'],
     ['x.test.js', "import { createTestDb } from './helpers/pg.js';\ntest('two parallel drafts: second gets 409', async () => {});", 'pglite-parallel-unlabeled'],
     ['x.test.js', "test('two truly parallel edits: one 409', async () => {});", 'pglite-race-claim'],
@@ -149,6 +153,8 @@ test('lint testów: reguły wykrywają wzorce zakazane (kontrola pozytywna)', ()
   assert.deepEqual(lintSource('x.test.js', '// komentarz: ALTER TABLE ... DISABLE TRIGGER jest tu zakazane'), []);
   assert.deepEqual(lintSource('x.test.js', "assert.ok(!meta.includes('470 12 34 56') && !SYNTHETIC_PHONE_IN_TEXT.test(meta));"), []);
   assert.deepEqual(lintSource('x.test.js', "assert.ok(text.includes('2500'));"), []);
+  assert.deepEqual(lintSource('x.test.js', "assert.doesNotMatch(text, /h-a|(?<![\\w-])2500(?![\\w-])|amount/i);"), []);
+  assert.deepEqual(lintSource('x.test.js', "assert.doesNotMatch(html, /Ewa|40,00/);"), []);
   assert.deepEqual(lintSource('x.test.js', "test('a', { skip }, () => {});"), [], 'skip warunkowy ze zmiennej jest dozwolony');
   assert.deepEqual(lintSource('pg-authz-matrix.test.js', "test('a', { todo: 'x' }, () => {});"), []);
   assert.deepEqual(lintSource('x.test.js', "const skip = !process.env.RD_TEST_PG_URL;\ntest('two truly parallel edits', { skip }, async () => {});"), [],
