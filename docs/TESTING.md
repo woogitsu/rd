@@ -341,7 +341,12 @@ locie” A; razem wychodzi dokładnie tyle, ile wynosi pula z większego zużyci
 doba konta), bez drugiej wysyłki tej samej wiadomości. Kontrola: ten sam układ z kontem w
 UTC daje większą pulę. Zegar: `now` jest wstrzykiwany, ale `recorded_at` nowych wpisów
 dziennika pochodzi z zegara bazy, więc test nie robi przebiegu po zakończeniu A; wpisy
-„other” są zasiewane z jawnym `recorded_at`. Dane syntetyczne, atrapa transportu, brak sieci.
+„other” są zasiewane z jawnym `recorded_at`. Daty scenariuszy nie są sztywne:
+`tests/helpers/quota-dates.js` wybiera najbliższy dzień w czasie letnim (CEST, kwiecień–wrzesień)
+co najmniej 30 dni po rzeczywistym „dziś” (kolejka powstaje w czasie rzeczywistym, a `claim()`
+przejmuje wiersze z `next_attempt_at <= now`, więc `now` z przeszłości zawiesza barierę), a rok
+szkolny obejmuje „dziś” i ten dzień; dobór sprawdza `tests/email-quota-dates.test.js` (bez bazy).
+Dane syntetyczne, atrapa transportu, brak sieci.
 
 `tests/pg-real-brussels-day.test.js` (pomijany bez `RD_TEST_PG_URL`): daty dzienne wyliczane z czasu (`timestamptz` → data)
 liczymy w strefie szkoły `Europe/Brussels` (wskazanie właściciela 2026-10-02), nie w `TimeZone` sesji bazy. Jedyne
