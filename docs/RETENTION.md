@@ -190,6 +190,34 @@ gospodarstw; (2) paczki roczne pobrane przed przebiegiem trzeba zniszczyć u
 odbiorcy — serwer ich nie przechowuje. Skrypt `scripts/reapply-anonymization.js`
 i automatyczne ponowienie przy odtworzeniu **nie są zrobione** (follow-up #91).
 
+## Dziennik odczytów i historia sprostowań (wskazanie D-04 z 2026-10-02)
+
+Wskazanie użytkownika z 2026-10-02 ([`docs/DECISIONS.md`](DECISIONS.md),
+„Wskazania użytkownika 2026-10-02”): **bez automatycznego usuwania**. To opis
+obecnego stanu kodu przyjęty jako wariant do oceny. Nie jest to decyzja zarządu
+ani IOD i wymaga formalnego potwierdzenia w D-04.
+
+- **`data_access_log`** (dziennik odczytów, migracja 0067): żaden proces nie
+  usuwa ani nie skraca tej tabeli. Trigger `data_access_log_guard` odrzuca
+  `DELETE` (`data_access_log_cannot_be_deleted`) i każdą zmianę wpisu poza
+  scaleniem powtórzeń w oknie. Wiersze zawierają wyłącznie identyfikatory
+  (aktor, rok, klasa, gospodarstwo), rodzaj odczytu, wynik i liczniki, bez
+  imion, e-maili i adresów IP. Anonimizacja gospodarstwa **nie zmienia** tej
+  tabeli (wpisy zostają, zob. „Co zmienia, a czego nie”).
+- **`identity_changes`** (historia sprostowań imion i nazwisk, migracja 0182):
+  tabela tylko do dopisywania. Trigger `identity_changes_immutable` odrzuca
+  `UPDATE` i `DELETE`. Jedynym wyjątkiem jest anonimizacja gospodarstwa: w
+  trakcie przebiegu zastępuje imiona wartością `[zanonimizowano]` i zeruje powód.
+  Wiersz, aktor, czas i powiązanie z żądaniem zostają.
+- Żadna z tych tabel nie jest źródłem kategorii w „Kategorie danych” wyżej
+  (`student_identity` liczy `enrollments`, nie `identity_changes`). Wpis w
+  `retention_policies` i tak niczego by nie usunął, bo kod nie ma zadania
+  okresowego.
+- Gdyby zarząd i IOD ustalili okres przechowywania, potrzebna będzie osobna
+  migracja (furtka w triggerze w rodzaju `rd_anonymization_active()`), zadanie w
+  trybie „propozycja do zatwierdzenia” i test zachowania sum. Do tego czasu
+  usunięcie danych osoby oznacza wyłącznie anonimizację gospodarstwa.
+
 ## Czego to jeszcze NIE obejmuje (część #91 zostaje otwarta)
 
 - Okresów retencji i ich zatwierdzania — D-04 (kod ich nie zawiera).
