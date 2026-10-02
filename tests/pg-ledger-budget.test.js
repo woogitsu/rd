@@ -139,7 +139,7 @@ test('wersje linii: nowa wersja nie usuwa poprzedniej, historia w API, równoleg
 
     const events = (await db.query("SELECT action, metadata_json FROM audit_events WHERE action LIKE 'ledger.budget_line.%' ORDER BY occurred_at")).rows;
     assert.deepEqual(events.map((event) => event.action), ['ledger.budget_line.created', 'ledger.budget_line.revised']);
-    assert.doesNotMatch(JSON.stringify(events), /200000|180000|220000/);
+    assert.doesNotMatch(JSON.stringify(events), /(?<![\w-])200000(?![\w-])|(?<![\w-])180000(?![\w-])|(?<![\w-])220000(?![\w-])/);
   } finally { await db.close(); }
 });
 

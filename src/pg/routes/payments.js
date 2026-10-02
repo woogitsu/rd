@@ -35,6 +35,7 @@ import { recordDataAccess } from '../data-access.js';
 import {
   createIdempotencyKeyReader, createJsonReader, decodeDateIdCursor, encodeDateIdCursor, isUniqueError,
 } from '../input.js';
+import { brusselsDaySql } from '../today.js';
 
 export const name = 'payments';
 
@@ -1193,7 +1194,7 @@ async function exportPayments(request, env, url, format) {
     );
     if (entries.rows.length > MAX_EXPORT_ROWS) throw new RequestError('export_too_large', 413);
     const corrections = await tx.query(
-      `SELECT c.id, c.payment_entry_id, to_char(c.created_at, 'YYYY-MM-DD') AS created_on, c.amount_cents, c.reason, p.household_id,
+      `SELECT c.id, c.payment_entry_id, ${brusselsDaySql('c.created_at')} AS created_on, c.amount_cents, c.reason, p.household_id,
               COALESCE((
                 SELECT rg.role FROM role_grants rg
                  WHERE rg.user_id = c.created_by AND rg.revoked_at IS NULL

@@ -158,6 +158,7 @@ import {
 import { csvResponse } from '../csv.js';
 import { ANONYMIZATION_REASON_CODES, AnonymizationError, anonymizeHousehold } from '../anonymization.js';
 import { createJsonReader, IDEMPOTENCY_KEY_PATTERN } from '../input.js';
+import { brusselsDaySql } from '../today.js';
 
 export const name = 'admin';
 
@@ -607,7 +608,7 @@ async function expireSchoolYear(env, actorId, schoolYearId, request, json) {
   const result = await env.db.transaction(async (tx) => {
     await lockGrantChanges(tx);
     const { rows: years } = await tx.query(
-      'SELECT id, ends_on < current_date AS finished FROM school_years WHERE id = $1',
+      'SELECT id, ends_on < rd_today() AS finished FROM school_years WHERE id = $1',
       [schoolYearId],
     );
     if (!years[0]) throw new Abort('school_year_not_found', 404);
@@ -1010,7 +1011,7 @@ async function classCoverage(env, url, json) {
             (SELECT min(i.expires_at) FROM invitations i
                WHERE i.class_id = c.id AND i.role = 'representative'
                  AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()) AS next_expires_at,
-            (SELECT to_char(max(s.created_at), 'YYYY-MM-DD') FROM sessions s
+            (SELECT ${brusselsDaySql('max(s.created_at)')} FROM sessions s
                JOIN role_grants g2 ON g2.user_id = s.user_id
               WHERE g2.class_id = c.id AND g2.role = 'representative'
                 AND g2.revoked_at IS NULL AND (g2.expires_at IS NULL OR g2.expires_at > now())) AS last_login_on,
@@ -1052,7 +1053,7 @@ async function classCoverage(env, url, json) {
 async function listSchoolYears(env, json) {
   const { rows: years } = await env.db.query(
     `SELECT id, label, to_char(starts_on, 'YYYY-MM-DD') AS starts_on, to_char(ends_on, 'YYYY-MM-DD') AS ends_on,
-            ends_on < current_date AS finished
+            ends_on < rd_today() AS finished
        FROM school_years ORDER BY starts_on DESC, id`,
   );
   const { rows: classes } = await env.db.query('SELECT id, school_year_id, name FROM classes ORDER BY school_year_id, name, id');

@@ -61,7 +61,7 @@
   `409 privacy_notice_missing` bez opublikowanej wersji; odpowiedź zawiera
   `privacyNotice: { id, version, url }`, a panel `print/` drukuje na kartce
   ten sam odnośnik. Zdarzenie `print.cards_requested` zapisuje `privacyNoticeId`
-  i `privacyNoticeVersion`. Kartki z pliku CSV/JSON wczytanego lokalnie w panelu
+  i `privacyNoticeVersion`. Odpowiedź zawiera też `skippedRestricted` (D-07, wskazanie 2026-10-02): liczbę rodzin pominiętych z powodu ograniczenia przetwarzania w zakresie wydruku — wyłącznie liczbę, a zdarzenie zapisuje ją jako `skippedRestrictedCount`. Kartki z pliku CSV/JSON wczytanego lokalnie w panelu
   (bez API) nie mają odnośnika — to nadal otwarte.
 
 ## Czego jeszcze brakuje w #145 (świadomie)

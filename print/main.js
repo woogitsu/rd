@@ -12,6 +12,7 @@ import {
   previewBlockedMessage,
   renderCardsHtml,
   schoolYearCardLabel,
+  skippedRestrictedMessage,
   structuredReferenceNotice,
 } from "./core.js";
 import { describeSource } from "../import/csv.js";
@@ -46,6 +47,7 @@ const fileInput = byId("file-input");
 const fileEncoding = byId("file-encoding");
 const fileDelimiter = byId("file-delimiter");
 const fileMessage = byId("file-message");
+const skippedNote = byId("skipped-restricted");
 const fileErrors = byId("file-errors");
 const selectSection = byId("select-section");
 const classFilter = byId("class-filter");
@@ -301,6 +303,8 @@ function resetData() {
   state.selected.clear();
   applyPaymentInstructions(null);
   state.privacyNotice = null;
+  skippedNote.hidden = true;
+  skippedNote.textContent = "";
   fileErrors.hidden = true;
   fileErrors.replaceChildren();
   selectSection.hidden = true;
@@ -388,6 +392,9 @@ async function handleApiLoad() {
     const data = await loadFromApi(schoolYearId, classId);
     applyPaymentInstructions(data.paymentInstructions ?? null);
     state.privacyNotice = data.privacyNotice ?? null;
+    const skipped = skippedRestrictedMessage(data.skippedRestricted);
+    skippedNote.textContent = skipped;
+    skippedNote.hidden = !skipped;
     loadParsed(() => parseInputRows(data), "Odpowiedź serwera");
     if (state.households.length && !data.paymentInfoIncluded) {
       fileMessage.textContent += " Informacja o wpisach wpłat nie jest dostępna dla tej roli lub sesji.";

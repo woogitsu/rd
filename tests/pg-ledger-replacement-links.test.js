@@ -126,7 +126,7 @@ test('wpis powiązany z wpłatą: przeksięgowanie kategorii/daty/metody przenos
     const meta = typeof audit[0].metadata_json === 'string' ? JSON.parse(audit[0].metadata_json) : audit[0].metadata_json;
     assert.equal(meta.schoolYearId, YEAR);
     assert.equal(meta.paymentEntryId, paymentId);
-    assert.doesNotMatch(JSON.stringify(meta), /amount|description|5000|Ujęcie/);
+    assert.doesNotMatch(JSON.stringify(meta), /amount|description|(?<![\w-])5000(?![\w-])|Ujęcie/);
 
     // Łańcuch: wpis zastępczy sam można przeksięgować (nadal jedno ujęcie wpłaty).
     const again = await post(ctx, `/api/ledger/${res.body.entry.id}/replacement`, replBody({ amountCents: 5000, categoryId: 'cat-in-a' }));

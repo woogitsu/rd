@@ -14,6 +14,7 @@ import {
   parseStructuredReferenceCell,
   paymentVersionLabel,
   selectHouseholds,
+  skippedRestrictedMessage,
   structuredReferenceNotice,
 } from "../print/core.js";
 import { formatStructuredReference, generateStructuredReference, isValidStructuredReference } from "../src/pg/ogm.js";
@@ -357,4 +358,17 @@ test("stopka kartki: wersja zatwierdzonych danych do wpłaty; dane ręczne oznac
   // Wersja bez identyfikatora i daty (starsze klienty) — etykieta bez pustych pól.
   assert.equal(paymentVersionLabel(PAYMENT_INSTRUCTIONS), "Dane do wpłaty: wersja zatwierdzona.");
   for (const html of [first.html, second.html, manual.html]) assert.doesNotMatch(html, DEBT_WORDS);
+});
+
+test("komunikat o pominiętych rodzinach (D-07): tylko liczba, tylko gdy N>0, polska odmiana", () => {
+  for (const empty of [0, -1, null, undefined, "x", 1.5, Number.NaN]) assert.equal(skippedRestrictedMessage(empty), "");
+  const expected = new Map([
+    [1, "Pominięto 1 rodzinę z ograniczeniem przetwarzania (RODO)."],
+    [2, "Pominięto 2 rodziny z ograniczeniem przetwarzania (RODO)."],
+    [5, "Pominięto 5 rodzin z ograniczeniem przetwarzania (RODO)."],
+    [12, "Pominięto 12 rodzin z ograniczeniem przetwarzania (RODO)."],
+    [22, "Pominięto 22 rodziny z ograniczeniem przetwarzania (RODO)."],
+  ]);
+  assert.ok(expected.size > 0);
+  for (const [count, text] of expected) assert.equal(skippedRestrictedMessage(count), text);
 });
