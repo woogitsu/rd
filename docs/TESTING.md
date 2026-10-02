@@ -343,6 +343,15 @@ UTC daje większą pulę. Zegar: `now` jest wstrzykiwany, ale `recorded_at` nowy
 dziennika pochodzi z zegara bazy, więc test nie robi przebiegu po zakończeniu A; wpisy
 „other” są zasiewane z jawnym `recorded_at`. Dane syntetyczne, atrapa transportu, brak sieci.
 
+`tests/pg-real-brussels-day.test.js` (pomijany bez `RD_TEST_PG_URL`): daty dzienne wyliczane z czasu (`timestamptz` → data)
+liczymy w strefie szkoły `Europe/Brussels` (wskazanie właściciela 2026-10-02), nie w `TimeZone` sesji bazy. Jedyne
+źródło to `src/pg/today.js`: `SCHOOL_TIME_ZONE`, `brusselsDaySql(expr)` (tekst `YYYY-MM-DD`), `brusselsDateSql(expr)` (DATE),
+`brusselsStartOfDaySql(dateExpr)` (początek dnia jako `timestamptz`); „dziś” w SQL to `rd_today()`, nie `current_date`.
+Nowy kod nie używa `to_char(kolumna_timestamptz, …)`, `kolumna::date` ani `current_date` bez tych helperów; kolumny
+`DATE` zostają bez zmian. Test sprawdza chwilę 23:30 UTC latem (= 01:30 następnego dnia w Brukseli) i granice
+północy lato/zima przy sesji UTC, `Pacific/Kiritimati`, `Pacific/Pago_Pago` i `America/New_York`, także przez trasę
+`/api/admin/class-coverage` (`lastRepresentativeLoginOn`). Limit dzienny Brevo ma osobną strefę konta i tej zasady nie dotyczy.
+
 `tests/pg-real-type-parity.test.js` (#208 pkt 5, część na `pg` pomijana bez `RD_TEST_PG_URL`): te same zapytania
 (kolumny `bigint`, `integer`, `numeric`, `date`, `timestamptz`, `boolean`, `jsonb`, `uuid`, `text[]`, `bigint[]`, NULL, agregaty
 `count`/`sum`/`avg`/`max`) przez adapter na PGlite i na `createPgDatabase` (`src/db.js`); porównuje typy JS.

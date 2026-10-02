@@ -38,6 +38,7 @@
 
 import { createHash } from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
+import { brusselsDateSql, brusselsStartOfDaySql } from './today.js';
 
 export const ANONYMIZATION_REASON_CODES = Object.freeze(['retention_policy', 'data_subject_request']);
 
@@ -294,12 +295,12 @@ async function checkRetentionPolicies(tx, householdId) {
          JOIN email_campaigns c ON c.id = r.campaign_id JOIN school_years sy ON sy.id = c.school_year_id
         WHERE r.household_id = $1
      )
-     SELECT COALESCE((SELECT max(ends_on) FROM activity), (SELECT created_at::date FROM households WHERE id = $1)) AS last_activity_end`,
+     SELECT COALESCE((SELECT max(ends_on) FROM activity), (SELECT ${brusselsDateSql('created_at')} FROM households WHERE id = $1)) AS last_activity_end`,
     [householdId],
   );
   const lastActivity = rows[0].last_activity_end;
   for (const interval of intervals) {
-    const { rows: check } = await tx.query('SELECT ($1::date + $2::interval) <= now() AS elapsed', [lastActivity, interval]);
+    const { rows: check } = await tx.query(`SELECT ${brusselsStartOfDaySql('$1::date + $2::interval')} <= now() AS elapsed`, [lastActivity, interval]);
     if (!check[0].elapsed) throw new AnonymizationError('retention_period_not_elapsed');
   }
   return policyIds;

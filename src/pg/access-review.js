@@ -20,7 +20,7 @@ export function proposalFor({ status, yearEnded, readsWithoutValidGrant }) {
 
 export async function accessReview(executor, schoolYearId) {
   const year = (await executor.query(
-    `SELECT y.id, to_char(y.ends_on, 'YYYY-MM-DD') AS ends_on, (y.ends_on < current_date) AS ended,
+    `SELECT y.id, to_char(y.ends_on, 'YYYY-MM-DD') AS ends_on, (y.ends_on < rd_today()) AS ended,
             (SELECT c.status FROM school_year_closures c WHERE c.school_year_id = y.id) AS closure_status
        FROM school_years y WHERE y.id = $1`,
     [schoolYearId],
