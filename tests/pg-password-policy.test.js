@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { checkPasswordPolicy, contextStems, passwordPolicyLists, PASSWORD_POLICY } from '../src/pg/password.js';
+import { createHash } from 'node:crypto';
+import { checkPasswordPolicy, contextStems, loadSecListsPasswords, passwordPolicyLists, PASSWORD_POLICY } from '../src/pg/password.js';
 
 // Dostęp do listy przez zachowanie funkcji (nie eksportujemy wewnętrznego Set),
 // więc kontrakt listy sprawdzamy pośrednio: żadne z podanych haseł nie może
@@ -130,4 +131,44 @@ test('lista z wycieków (#196): plik w repo, wpisy w postaci porównawczej, wari
   assert.equal(checkPasswordPolicy('MojeHasło12345'), 'password_common');
   assert.equal(checkPasswordPolicy('Tajne-Hasło-1234'), 'password_common');
   assert.equal(checkPasswordPolicy('Syntetyczne hasło z polskimi znakami żółć'), null);
+});
+
+// D-10 (#196): offline lista SecLists 10k. Plik jest niezmienioną kopią (bez nagłówka),
+// więc suma SHA-256 musi zgadzać się z udokumentowaną w weak-passwords.SOURCE.md.
+const TEN_K_URL = new URL('../src/pg/data/weak-passwords-10k.txt', import.meta.url);
+const SOURCE_URL = new URL('../src/pg/data/weak-passwords.SOURCE.md', import.meta.url);
+
+test('lista SecLists 10k: suma SHA-256 pliku zgadza się z weak-passwords.SOURCE.md, 10 001 wierszy, licencja MIT w opisie', () => {
+  const bytes = readFileSync(TEN_K_URL);
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  const source = readFileSync(SOURCE_URL, 'utf8');
+  assert.ok(source.includes(`\`${sha}\``), `suma pliku ${sha} nie występuje w weak-passwords.SOURCE.md`);
+  assert.equal(bytes.toString('utf8').split('\n').filter(Boolean).length, 10001);
+  assert.match(source, /Licencja: MIT/);
+  assert.match(source, /Permission is hereby granted, free of charge/);
+  assert.match(source, /danielmiessler\/SecLists/);
+});
+
+test('lista SecLists 10k: wczytanie pomija wpisy krótsze niż minLength, normalizuje i trafia do polityki', () => {
+  const all = readFileSync(TEN_K_URL, 'utf8').split('\n').filter(Boolean);
+  const loaded = loadSecListsPasswords();
+  const expected = all.filter((line) => [...line].length >= PASSWORD_POLICY.minLength);
+  assert.ok(expected.length >= 5, `za mało wpisów ≥ minLength: ${expected.length}`);
+  assert.ok(all.length - expected.length > 9000, 'większość listy jest krótsza niż minLength (odrzuca ją długość)');
+  assert.deepEqual(loaded, expected.map((line) => fold(line.toLowerCase())));
+  for (const entry of loaded) {
+    assert.equal(checkPasswordPolicy(entry), 'password_common', entry);
+    assert.equal(checkPasswordPolicy(entry.toUpperCase()), 'password_common', `wielkie litery: ${entry}`);
+  }
+  // Wpisy krótsze niż minLength są odrzucane długością, nie listą.
+  assert.equal(checkPasswordPolicy('password'), 'password_too_short');
+  const { commonPasswords } = passwordPolicyLists();
+  assert.equal(commonPasswords.includes('password'), false);
+  assert.equal(checkPasswordPolicy('Unbelievable'), 'password_common');
+  assert.equal(checkPasswordPolicy('Scandinavian'), 'password_common');
+});
+
+test('lista SecLists 10k: nie powoduje fałszywych odrzuceń długich syntetycznych fraz', () => {
+  assert.equal(checkPasswordPolicy('Unbelievable but synthetic phrase'), null);
+  assert.equal(checkPasswordPolicy('scandinavian-winter-lantern-47'), null);
 });

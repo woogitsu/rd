@@ -242,12 +242,25 @@ export async function verifyPasswordOrDummy(password, hash, env) {
 // #196 punkt 4: mała lista haseł z publicznych wycieków w repozytorium
 // (src/pg/data/weak-passwords.txt), ładowana raz na proces, bez zapytań sieciowych.
 // Komentarze (#) i puste wiersze są pomijane; wpisy są już w postaci porównawczej.
-function loadLeakedPasswords() {
-  const text = readFileSync(new URL('./data/weak-passwords.txt', import.meta.url), 'utf8');
+function readWordlist(name) {
+  const text = readFileSync(new URL(`./data/${name}`, import.meta.url), 'utf8');
   return text.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
 }
+function loadLeakedPasswords() { return readWordlist('weak-passwords.txt'); }
 
-const COMMON_PASSWORDS = new Set([
+// D-10 (#196): lista ok. 10 000 popularnych haseł (SecLists, MIT; źródło i suma
+// SHA-256 w data/weak-passwords.SOURCE.md), wyłącznie offline. Wpis jest sprowadzany do
+// postaci porównawczej (małe litery, bez diakrytyków), a wpisy krótsze niż minLength
+// pomijamy — takie hasło odrzuca już długość. Wczytanie jest leniwe (pierwsze
+// sprawdzenie hasła), raz na proces, żeby nie wydłużać startu.
+export function loadSecListsPasswords() {
+  const entries = readWordlist('weak-passwords-10k.txt')
+    .map((line) => foldLatin(line.normalize('NFKC').toLowerCase()))
+    .filter((entry) => [...entry].length >= PASSWORD_POLICY.minLength && [...entry].length <= PASSWORD_POLICY.maxLength);
+  return entries;
+}
+
+const BASE_COMMON_PASSWORDS = [
   '123456789012', '1234567890123', '12345678901234', '123456789012345', '1234567890qwerty',
   '1q2w3e4r5t6y', '1q2w3e4r5t6y7u', '1qaz2wsx3edc', '1qaz2wsx3edc4rfv', 'zaq12wsxcde3', 'zaq1zaq1zaq1',
   'qwertyuiop12', 'qwertyuiop123', 'qwertyuiopasdf', 'qwerty123456', 'qwerty12345678', 'qwertyqwerty',
@@ -262,7 +275,12 @@ const COMMON_PASSWORDS = new Set([
   'radarodzicow', 'radarodzicow1', 'radarodzicow12', 'radarodzicow123', 'radarodzicow2026',
   'szkolapolska', 'szkolapolska1', 'szkolapolska123', 'kochamcie123', 'kochamcie1234',
   ...loadLeakedPasswords(),
-]);
+];
+let commonPasswordsSet;
+function commonPasswords() {
+  commonPasswordsSet ??= new Set([...BASE_COMMON_PASSWORDS, ...loadSecListsPasswords()]);
+  return commonPasswordsSet;
+}
 // Rdzenie dopasowywane po zdjęciu diakrytyków i cyfr/znaków — patrz `checkPasswordPolicy`.
 // `zaqwsxcde` łapie rozszerzony marsz klawiaturowy (np. „Zaq1@wsxcde3”, gdzie
 // `compact` usuwa tylko separatory, więc dopasowanie idzie po samych literach).
@@ -285,7 +303,7 @@ const COMMON_STEMS = [
 // Wyłącznie dla testu kontraktu listy (tests/pg-password-policy.test.js):
 // kopie, żeby test nie mógł zmienić polityki procesu.
 export function passwordPolicyLists() {
-  return { commonPasswords: [...COMMON_PASSWORDS], commonStems: [...COMMON_STEMS] };
+  return { commonPasswords: [...commonPasswords()], commonStems: [...COMMON_STEMS] };
 }
 
 // #196 punkt 3: kontekstowe rdzenie z konfiguracji (nazwa szkoły, miasto,
@@ -355,7 +373,8 @@ export function checkPasswordPolicy(password, { email, env } = {}) {
   // ASCII (#196). Hash i reszta polityki (długość, e-mail) nadal używają `lower`.
   const folded = foldLatin(lower);
   const compact = folded.replace(/[\s\-_.!@#$%^&*]+/g, '');
-  if (COMMON_PASSWORDS.has(folded) || COMMON_PASSWORDS.has(compact)) return 'password_common';
+  const common = commonPasswords();
+  if (common.has(folded) || common.has(compact)) return 'password_common';
   if (isRepetitive(compact) || isSequential(compact)) return 'password_common';
   // Rdzeń + same cyfry/znaki (np. „haslo12345678!”, „Hasło123456789”).
   const letters = compact.replace(/[^a-z]/g, '');
