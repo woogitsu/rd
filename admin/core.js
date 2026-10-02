@@ -141,6 +141,7 @@ export const REASON_LABELS = Object.freeze({
   // #140 pkt 5 (0184): kod weryfikacyjny nowego adresu opiekuna.
   address_suppressed: "adres na liście wyłączeń",
   attempts_exhausted: "wyczerpany limit prób wpisania kodu",
+  confirmed_by_recipient: "potwierdzone kodem przez odbiorcę",
   delivery_unknown: "nieznany wynik doręczenia",
   lease_expired: "przerwany przebieg wysyłki",
   privacy_notice_missing: "brak opublikowanej informacji o przetwarzaniu danych",

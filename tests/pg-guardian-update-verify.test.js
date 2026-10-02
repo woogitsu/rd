@@ -397,6 +397,40 @@ describe('kod weryfikacyjny nowego adresu z wniosku rodzica (#140 pkt 5)', () =>
     await ctx.db.close();
   });
 
+  test('kod wpisany, zanim worker zapisze wynik: wysyłka kończy się „sent”, a wynik niepewny nie unieważnia potwierdzenia', async () => {
+    const ctx = await setup();
+    await seedGuardian(ctx.db, { id: 'g-14', householdId: 'h-14', studentId: 's-14' });
+    await seedGuardian(ctx.db, { id: 'g-15', householdId: 'h-15', studentId: 's-15' });
+    await approvedTemplate(ctx);
+    const quick = await submitRequest(ctx, 'g-14', { email: 'nowy14@example.invalid' });
+    // Atrapa „rodzica”: kod dociera i jest wpisany w trakcie wywołania dostawcy.
+    const transport = {
+      sent: [],
+      async send(message) {
+        this.sent.push(message);
+        const confirmed = await call(ctx.env, '/api/public/guardian-update/verify', { body: { token: quick.token, code: codeFrom(message) } });
+        assert.equal(confirmed.status, 200);
+        return { messageId: 'fx-verify-quick' };
+      },
+    };
+    await runWorker(ctx.env, transport);
+    const row = await verificationRow(ctx.db, quick.requestId);
+    assert.equal(row.state, 'sent');
+    assert.ok(row.confirmed_at, 'potwierdzenie zostaje');
+    assert.equal((await queueEntry(ctx, quick.requestId)).verification, 'confirmed');
+
+    const uncertain = await submitRequest(ctx, 'g-15', { email: 'nowy15@example.invalid' });
+    const flaky = {
+      async send(message) {
+        await call(ctx.env, '/api/public/guardian-update/verify', { body: { token: uncertain.token, code: codeFrom(message) } });
+        throw new EmailTransportError('delivery_unknown', { uncertain: true });
+      },
+    };
+    await runWorker(ctx.env, flaky);
+    assert.equal((await queueEntry(ctx, uncertain.requestId)).verification, 'confirmed', 'wynik niepewny nie nadpisuje potwierdzenia');
+    await ctx.db.close();
+  });
+
   test('błąd dostawcy: 429 wraca do kolejki bez zużycia próby, potem jedna wiadomość; wynik niepewny → failed bez ponowienia', async () => {
     const ctx = await setup();
     await seedGuardian(ctx.db, { id: 'g-12', householdId: 'h-12', studentId: 's-12' });

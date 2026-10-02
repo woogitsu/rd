@@ -143,7 +143,12 @@ BEGIN
      OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'guardian_update_verification_immutable_fields';
   END IF;
-  IF OLD.confirmed_at IS NOT NULL THEN
+  -- Potwierdzony kod jest zamknięty; jedyny wyjątek: zapis wyniku wysyłki
+  -- (sending -> sent), gdy rodzic wpisał kod, zanim worker zdążył go utrwalić.
+  IF OLD.confirmed_at IS NOT NULL AND NOT (
+       OLD.state = 'sending' AND NEW.state = 'sent'
+       AND NEW.confirmed_at = OLD.confirmed_at AND NEW.failed_attempts = OLD.failed_attempts
+  ) THEN
     RAISE EXCEPTION 'guardian_update_verification_already_confirmed';
   END IF;
   IF OLD.state IN ('skipped', 'cancelled') THEN

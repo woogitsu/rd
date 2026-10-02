@@ -51,13 +51,13 @@
 
 import { EmailTransportError, emailConfig, liveRunRefusal, recipientRefusal, withinSendWindow } from './brevo.js';
 import {
-  contentHash, inviteeGrantSql, MEETING_INVITEE_ROLES, preferencesToken, renderMessage, usesPaymentInstructions,
+  contentHash, emailHash, inviteeGrantSql, MEETING_INVITEE_ROLES, normalizeEmail, preferencesToken, renderMessage,
+  usesPaymentInstructions,
   usesStructuredReference,
 } from './content.js';
 import { insertAuditEvent } from '../pg/audit.js';
 import { campaignPaymentInstructions } from '../pg/routes/payment-instructions.js';
 import { campaignPrivacyNotice, loadNoticeById, noticeReference } from '../pg/routes/privacy-notice.js';
-import { emailHash, normalizeEmail } from './content.js';
 import {
   GUARDIAN_RESTRICTED_SQL, generateVerificationCode, hashVerificationCode, newCodeSalt, renderVerifyMessage,
   VERIFY_CODE_TTL_MS,
@@ -983,6 +983,21 @@ async function closeVerification(tx, row, verdict, now) {
 // kolejki; rozpoczęta → failed/delivery_unknown (mogła wyjść — bez ponawiania).
 async function recoverStaleVerifications(db, now) {
   return db.transaction(async (tx) => {
+    // Rodzic wpisał już kod z tej wiadomości (wynik wysyłki nie został
+    // utrwalony, np. awaria bazy po przyjęciu przez dostawcę) — wiadomość
+    // dotarła, więc „sent”, nie delivery_unknown.
+    const { rows: delivered } = await tx.query(
+      `UPDATE guardian_update_verifications
+          SET state = 'sent', sent_at = send_started_at, last_error = NULL, updated_at = $1
+        WHERE state = 'sending' AND confirmed_at IS NOT NULL AND send_started_at IS NOT NULL
+          AND claimed_at < $1::timestamptz - make_interval(mins => $2)
+        RETURNING id, request_id, attempts, to_char(send_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
+      [now.toISOString(), LEASE_MINUTES],
+    );
+    for (const row of delivered) {
+      await recordVerificationLedger(tx, { day: row.day, verificationId: row.id, attempt: row.attempts });
+      await audit(tx, 'guardian_update_request.verification_sent', row, { attempt: row.attempts, reason: 'confirmed_by_recipient' });
+    }
     const { rows } = await tx.query(
       `UPDATE guardian_update_verifications
           SET state = CASE WHEN send_started_at IS NULL THEN 'queued' ELSE 'failed' END,
@@ -991,7 +1006,7 @@ async function recoverStaleVerifications(db, now) {
               next_attempt_at = CASE WHEN send_started_at IS NULL THEN $1::timestamptz ELSE next_attempt_at END,
               claim_token = CASE WHEN send_started_at IS NULL THEN NULL ELSE claim_token END,
               updated_at = $1
-        WHERE state = 'sending' AND claimed_at < $1::timestamptz - make_interval(mins => $2)
+        WHERE state = 'sending' AND confirmed_at IS NULL AND claimed_at < $1::timestamptz - make_interval(mins => $2)
         RETURNING id, request_id, state, attempts,
                   to_char(COALESCE(send_started_at, claimed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day`,
       [now.toISOString(), LEASE_MINUTES],
@@ -1117,6 +1132,8 @@ async function recordVerificationPause(tx, { code, runToken }) {
 async function recordVerificationResult(db, item, { error = null, messageId = null, config, now, runToken }) {
   return db.transaction(async (tx) => {
     const owned = 'WHERE id = $1 AND state = \'sending\' AND claim_token = $2';
+    // Niepowodzenie nie nadpisuje kodu, który rodzic już potwierdził (strażnik 0184).
+    const ownedOpen = `${owned} AND confirmed_at IS NULL`;
     if (!error) {
       const { rows } = await tx.query(
         `UPDATE guardian_update_verifications SET state = 'sent', sent_at = $3, provider_message_id = $4, last_error = NULL, updated_at = $3
@@ -1137,13 +1154,13 @@ async function recordVerificationResult(db, item, { error = null, messageId = nu
     const notSent = known && (error.accountLevel || error.notSent || error.code === 'provider_rate_limited');
     if (notSent) {
       const delaySeconds = error.accountLevel ? 0 : (error.retryAfterSeconds ?? BACKOFF_BASE_MINUTES * 60);
-      await tx.query(
+      const requeued = await tx.query(
         `UPDATE guardian_update_verifications SET state = 'queued', last_error = $3, updated_at = $4, send_started_at = NULL,
                 claim_token = NULL, attempts = GREATEST(0, attempts - 1), next_attempt_at = $4::timestamptz + make_interval(secs => $5)
-          ${owned}`,
+          ${ownedOpen} RETURNING id`,
         [item.id, runToken, code, now.toISOString(), delaySeconds],
       );
-      await audit(tx, 'guardian_update_request.verification_requeued', item, { reason: code });
+      if (requeued.rows[0]) await audit(tx, 'guardian_update_request.verification_requeued', item, { reason: code });
       if (error.accountLevel) await recordVerificationPause(tx, { code, runToken });
       const stop = error.accountLevel ? 'provider_account_rejected' : error.notSent ? 'provider_unreachable' : 'provider_rate_limited';
       return { outcome: error.accountLevel ? null : 'retried', stop };
@@ -1152,19 +1169,21 @@ async function recordVerificationResult(db, item, { error = null, messageId = nu
     const mayHaveLeft = !known || error.uncertain;
     if (mayHaveLeft) await recordVerificationLedger(tx, { day: item.day, verificationId: item.id, attempt: item.attempts });
     if (retry) {
-      await tx.query(
+      const requeued = await tx.query(
         `UPDATE guardian_update_verifications SET state = 'queued', last_error = $3, updated_at = $4, send_started_at = NULL,
                 claim_token = NULL, next_attempt_at = $4::timestamptz + make_interval(mins => $5)
-          ${owned}`,
+          ${ownedOpen} RETURNING id`,
         [item.id, runToken, code, now.toISOString(), backoffMinutes(item.attempts)],
       );
+      if (!requeued.rows[0]) return { outcome: null };
       await audit(tx, 'guardian_update_request.verification_requeued', item, { reason: code });
       return { outcome: 'retried' };
     }
-    await tx.query(
-      `UPDATE guardian_update_verifications SET state = 'failed', last_error = $3, updated_at = $4 ${owned}`,
+    const failed = await tx.query(
+      `UPDATE guardian_update_verifications SET state = 'failed', last_error = $3, updated_at = $4 ${ownedOpen} RETURNING id`,
       [item.id, runToken, code, now.toISOString()],
     );
+    if (!failed.rows[0]) return { outcome: null };
     await audit(tx, 'guardian_update_request.verification_failed', item, { reason: code });
     return { outcome: 'failed' };
   });
