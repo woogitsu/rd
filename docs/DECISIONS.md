@@ -19,26 +19,41 @@ Stan na 27.09.2026 (uzupełnione 29.09.2026 o pytania zebrane 28–29.09): żadn
 | D-01 | Administrator danych | #1, #2, #36, #41 | otwarta |
 | D-02 | Podstawa i cele przetwarzania | #1, #2, #36 | otwarta |
 | D-03 | Zakres importu i lista pól | #1, #2, #36 | otwarta |
-| D-04 | Okresy retencji i usuwanie | #1, #2, #8, #9, #36, #39 | otwarta |
+| D-04 | Okresy retencji i usuwanie | #1, #2, #8, #9, #36, #39 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
 | D-05 | Dostawcy, umowy powierzenia, lokalizacja | #1, #31, #40, #41 | otwarta |
 | D-06 | Obowiązek informacyjny wobec rodziców | #1, #2, #10 | otwarta |
-| D-07 | Procedura incydentowa, sprostowanie i usuwanie danych | #1, #41 | otwarta |
+| D-07 | Procedura incydentowa, sprostowanie i usuwanie danych | #1, #41 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
 | D-08 | Role i macierz kompetencji | #4, #35 | otwarta |
-| D-09 | Uprawnienia dyrekcji i Komisji Rewizyjnej | #4, #6, #7, #35 | otwarta |
-| D-10 | Dostawca logowania i przyjmowanie zaproszeń | #3, #35 | otwarta — wskazanie użytkownika 2026-09-27: e-mail + hasło + TOTP; do formalnego potwierdzenia |
+| D-09 | Uprawnienia dyrekcji i Komisji Rewizyjnej | #4, #6, #7, #35 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
+| D-10 | Dostawca logowania i przyjmowanie zaproszeń | #3, #35 | otwarta — wskazanie użytkownika 2026-09-27: e-mail + hasło + TOTP; do formalnego potwierdzenia; 2026-10-02: lista słabych haseł offline |
 | D-11 | Jednostka ewidencji składki i opieka dzielona | #5, #6, #10, #11 | otwarta |
 | D-12 | Zasady korekt wpłat i ich zatwierdzania | #6, #37 | otwarta |
 | D-13 | Rachunek bankowy, gotówka i uzgadnianie | #6, #7, #10 | otwarta |
 | D-14 | Sugerowana składka na rok | #6, #10, #11 | otwarta |
 | D-15 | Zatwierdzanie wydatków powyżej 3000 EUR | #7, #38 | otwarta |
-| D-16 | Szablon wiadomości i kartki | #10, #11, #40 | otwarta |
-| D-17 | Adres nadawcy i adresaci wysyłki | #10, #40 | otwarta |
+| D-16 | Szablon wiadomości i kartki | #10, #11, #40 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
+| D-17 | Adres nadawcy i adresaci wysyłki | #10, #40 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
 | D-18 | Zasady publikacji zdjęć | #14 | otwarta |
 | D-19 | Głosowanie elektroniczne | #13 | otwarta |
 | D-20 | Zgoda na produkcję na Railway | #31, #41, #42 | otwarta |
-| D-21 | Aktualny regulamin i dostęp do dokumentów źródłowych | #13, #15 | otwarta |
+| D-21 | Aktualny regulamin i dostęp do dokumentów źródłowych | #13, #15 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
 | D-22 | Wersje językowe strony publicznej | #129 | otwarta |
 | D-23 | Nazwa szkoły i format roku szkolnego | wydruki, strona publiczna | otwarta |
+
+## Wskazania użytkownika 2026-10-02
+
+Wskazania właściciela prototypu, przekazane w sesji roboczej 02.10.2026. To **nie** są decyzje zarządu ani IOD: prototyp realizuje wskazane warianty, aby można je było ocenić na danych syntetycznych. Każde wymaga formalnego potwierdzenia (data, organ, uchwała) w sekcji danej decyzji.
+
+| Temat | Decyzja w rejestrze | Wskazany wariant | Skutek w prototypie |
+|---|---|---|---|
+| Strefa czasowa dat dziennych | — (nowe, techniczne) | `Europe/Brussels` | Daty dzienne liczone z czasu (np. ostatnie logowanie przedstawiciela, daty w raportach) w strefie szkoły, nie w strefie sesji bazy. |
+| Podgląd PDF w panelu dokumentów | D-05 (bez nowego podmiotu — biblioteka dołączona lokalnie) | PDF.js dołączony do repozytorium (bez CDN) | PDF z `disposition=inline` → 400; podgląd renderowany przez PDF.js w izolacji. |
+| Pominięcie rodziny z ograniczeniem przetwarzania na kartkach | D-07 | Pokazywać wszystkim drukującym | Wydruk pokazuje „pominięto N rodzin” bez nazw; przedstawiciel klasy dowiaduje się o fakcie ograniczenia. |
+| Lista słabych haseł | D-10 | Lista offline w repozytorium (~10 000 wpisów, suma SHA-256) | Bez zapytań do usług zewnętrznych. |
+| Zakres roli `audit` (Komisja Rewizyjna) | D-09 | Wariant (b): odczyt i eksport księgi oraz dokumentów finansowych roku | Bez danych rodzin ponad sumy, bez zapisu; za flagą konfiguracji. |
+| Retencja dziennika odczytów i historii sprostowań | D-04 | Bez automatycznego usuwania (stan obecny) | Usunięcie wyłącznie przez anonimizację rodziny. |
+| Wiadomości poza kampaniami rodzin | D-16, D-17 | Szkice do zatwierdzenia | Kod generuje treść z szablonu opisanego w dokumentacji; wysyłka wymaga jawnego zatwierdzenia; nadawca wyłącznie z konfiguracji, bez domyślnego adresu. |
+| Zaproszeni na zebranie zarządu | D-21 | Zarząd, przedstawiciele klas, Komisja Rewizyjna i dyrekcja | Dyrekcja wymaga nowej roli/kont (dziś nie istnieje) — zakres D-08/D-09. |
 
 ## Dane osobowe
 
