@@ -10,10 +10,10 @@
 // Obsługiwane: $ref (lokalne `#/components/schemas/Nazwa`), type (też lista, `null`, `integer`),
 // enum, const, properties, required, additionalProperties (bool albo schemat), items, minItems,
 // maxItems, minLength, maxLength, pattern, minimum, maximum, format (`date`, `date-time`, `binary`),
-// oneOf, anyOf, allOf. Słowa opisowe (description, title, default, example(s), deprecated)
-// są ignorowane.
+// oneOf, anyOf, allOf. Słowa opisowe (description, title, default, example(s), deprecated, a od #160 etapu 11
+// także writeOnly/readOnly — oznaczenie pól tajnych żądania, np. hasła i tokenu) są ignorowane.
 
-const ANNOTATIONS = new Set(['description', 'title', 'default', 'example', 'examples', 'deprecated', '$comment']);
+const ANNOTATIONS = new Set(['description', 'title', 'default', 'example', 'examples', 'deprecated', '$comment', 'writeOnly', 'readOnly']);
 const KEYWORDS = new Set([
   '$ref', 'type', 'enum', 'const', 'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems',
   'minLength', 'maxLength', 'pattern', 'minimum', 'maximum', 'format', 'oneOf', 'anyOf', 'allOf',

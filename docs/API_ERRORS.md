@@ -27,8 +27,10 @@ modułu trasy, który ją zwraca.
 Wygenerowane z listy kodów w `src/pg/**` i w parserze treści kampanii
 `src/email/content.js` (te same reguły wykrywania co
 `tests/shared-api.test.js#serverErrorCodes`; kody zwracane przez funkcje
-pomocnicze, których wzorce nie widzą — `mfa_stale`, `preview_recipient_not_allowed`
-i kody bramki MFA — są w tym detektorze wymienione wprost; od #160 etapu 7 detektor
+pomocnicze, których wzorce nie widzą — `mfa_stale`, `preview_recipient_not_allowed`,
+kody bramki MFA, a od #160 etapu 11 kody polityki haseł (`password_too_short`, `password_common`,
+`password_contains_email`) i braku czynnika (`mfa_enrollment_not_found`, `mfa_not_enrolled`) — są w tym
+detektorze wymienione wprost; od #160 etapu 7 detektor
 czyta też listę `DATABASE_CONFLICTS` w `src/pg/meetings.js` — kody reguł bazy, które
 moduł zebrań przekazuje jako `409` — i kod podany w `requireId(…, 'kod')`) i tekstów z
 `shared/messages.js`. Test `tests/pg-api-errors-catalog.test.js` sprawdza, że
@@ -386,9 +388,11 @@ przy przydziale, nie błąd.
 | `meeting_notice_closed` | Dla tego zebrania nie można już przygotować zawiadomienia. | Nie — popraw dane żądania. |
 | `meeting_status_transition_invalid` | Ta zmiana stanu zebrania jest niedozwolona. | Nie — popraw dane żądania. |
 | `method_not_allowed` | Ta operacja jest niedostępna. | Zależy od kontekstu (patrz moduł trasy). |
+| `mfa_enrollment_not_found` | Konfiguracja aplikacji uwierzytelniającej wygasła albo nie została rozpoczęta. Rozpocznij ją ponownie. | Nie — popraw dane żądania. |
 | `mfa_enrollment_required` | Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą. | Nie — popraw dane żądania. |
 | `mfa_key_missing` | Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem. | Nie — zależy od sesji i uprawnień. |
 | `mfa_locked` | Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
+| `mfa_not_enrolled` | Konto nie ma skonfigurowanej aplikacji uwierzytelniającej. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `mfa_required` | Potwierdź logowanie kodem z aplikacji uwierzytelniającej. | Nie — popraw dane żądania. |
 | `mfa_stale` | Ta operacja wymaga świeżego potwierdzenia kodem — podaj kod jeszcze raz. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `mfa_unavailable` | Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
@@ -420,9 +424,12 @@ przy przydziale, nie błąd.
 | `opening_balance_not_found` | Nie znaleziono bilansu otwarcia dla tego roku szkolnego. | Nie — popraw dane żądania. |
 | `outbox_not_found` | Nie znaleziono tej wiadomości w kolejce. | Nie — popraw dane żądania. |
 | `outbox_resolution_not_found` | Nie znaleziono tego rozstrzygnięcia w kampanii. Odśwież listę. | Nie — popraw dane żądania. |
+| `password_common` | To hasło jest zbyt łatwe do odgadnięcia. Wybierz inne, np. kilka niezwiązanych słów. | Nie — popraw dane żądania. |
+| `password_contains_email` | Hasło nie może zawierać adresu e-mail. | Nie — popraw dane żądania. |
 | `password_mismatch` | Hasła nie są takie same. | Nie — popraw dane żądania. |
 | `password_required` | Podaj hasło. | Nie — popraw dane żądania. |
 | `password_too_long` | Hasło jest za długie. | Zależy od kontekstu (patrz moduł trasy). |
+| `password_too_short` | Hasło musi mieć co najmniej 12 znaków. | Nie — popraw dane żądania. |
 | `password_unchanged` | Nowe hasło musi być inne niż obecne. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_allocation_already_reversed` | Ta część wpłaty została już cofnięta. | Nie — popraw dane żądania. |
 | `payment_allocation_exceeds_net` | Suma części wpłaty przekroczyłaby jej kwotę po korektach i zwrotach. Najpierw cofnij część. | Nie — popraw dane żądania. |

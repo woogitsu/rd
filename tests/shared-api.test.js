@@ -251,8 +251,13 @@ function serverErrorCodes() {
   const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]|\[\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]|\b(?:optionalText|text|requireId|reference|count)\([^()]*,\s*['"]([a-z][a-z0-9_]*)['"]\s*\)|\[\s*['"][a-z][a-z0-9_]*['"]\s*,\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]/g;
   // Kody zwracane przez funkcje pomocnicze (`return 'kod'`), których wzorce nie widzą: bramka MFA routera,
   // krok w górę MFA (freshMfaForbiddenCode, src/pg/authorization.js) i odmowa adresu wysyłki testowej
-  // (previewRecipientRefusal, src/email/brevo.js; trasa zwraca go jako 403, #160 etap 6).
-  const codes = new Set(['mfa_required', 'mfa_enrollment_required', 'mfa_stale', 'preview_recipient_not_allowed']);
+  // (previewRecipientRefusal, src/email/brevo.js; trasa zwraca go jako 403, #160 etap 6); od #160 etapu 11
+  // polityka haseł (checkPasswordPolicy, src/pg/password.js: password_too_short, password_common,
+  // password_contains_email) i brak czynnika w attemptFactor (src/pg/mfa.js, kod wybierany operatorem `?:`).
+  const codes = new Set([
+    'mfa_required', 'mfa_enrollment_required', 'mfa_stale', 'preview_recipient_not_allowed',
+    'password_too_short', 'password_common', 'password_contains_email', 'mfa_enrollment_not_found', 'mfa_not_enrolled',
+  ]);
   // Piąta reguła (#160 etap 7): kody reguł bazy (RAISE EXCEPTION w triggerach), które moduł zebrań przepuszcza
   // bez zmiany jako 409 — lista `DATABASE_CONFLICTS = new Set([...])` w src/pg/meetings.js (np. meeting_locked).
   const conflictList = /\bDATABASE_CONFLICTS\s*=\s*new Set\(\[([^\]]*)\]\)/g;

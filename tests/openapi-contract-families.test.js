@@ -323,7 +323,7 @@ test('kontrakt sesji: logowanie, stan sesji przed i po MFA, przydziały, wylogow
   const db = await createTestDb();
   const env = { db, MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'), LOGIN_EMAIL_DELAY_MS: '0', ...FAST_SCRYPT };
   const client = createContractClient({ spec, fetch: (req) => handlePgRequest(req, env) });
-  // Trasy logowania i MFA należą do innych modułów (bez schematów) — wołane bezpośrednio.
+  // Trasy logowania i MFA należą do innych modułów (kontrakt: tests/openapi-contract-auth.test.js) — tu wołane bezpośrednio.
   const post = (path, body, cookie) => handlePgRequest(request(path, { method: 'POST', body, cookie, headers: { 'x-rd-client-ip': '198.51.100.7' } }), env);
   const cookieFrom = (response) => response.headers.get('Set-Cookie').split(';', 1)[0];
   try {
