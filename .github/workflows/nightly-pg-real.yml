@@ -150,6 +150,9 @@ jobs:
           npm run test:pg-real -- --repeat=20
           tests/pg-real-double-click.test.js tests/pg-real-domain-locks.test.js
           tests/pg-real-record-locks.test.js tests/pg-real-replay-23505.test.js
-          tests/pg-real-payment-locks.test.js
+          tests/pg-real-payment-locks.test.js tests/pg-real-request-locks.test.js
+          tests/pg-real-auth-locks.test.js tests/pg-real-email-locks.test.js
+          tests/pg-real-guardian-verify-locks.test.js tests/pg-real-mfa-locks.test.js
+          tests/pg-real-webhook-locks.test.js
       # #111: podwójne przyjęcie zaproszenia (jedna rola, jedno already_used) 50 razy.
       - run: npm run test:pg-real -- --repeat=50 --name='zaproszenia' tests/pg-real-record-locks.test.js

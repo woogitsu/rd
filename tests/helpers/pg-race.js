@@ -29,15 +29,16 @@ export async function withReal(fn) {
 /**
  * A z barierą (`pauseAfter`), potem B. Zwraca wyniki obu, kody SQLSTATE
  * transakcji (`errors`, np. '23505') i listę czekających (`waits`, `waitingSql`).
- * `barrierExtra` trafia do `env` obu żądań (np. `storage` dla dokumentów).
+ * `extra` trafia do `env` obu żądań (np. `storage` dla dokumentów). `rewrite`
+ * (jak w `barrierEnv`) służy WYŁĄCZNIE kontroli pozytywnej: zmienia SQL obu żądań.
  */
-export async function race(db, { pauseAfter, first, second, extra = {} }) {
+export async function race(db, { pauseAfter, first, second, extra = {}, rewrite = null }) {
   const errors = [];
-  const gated = barrierEnv(db, { pauseAfter, errors, extra });
+  const gated = barrierEnv(db, { pauseAfter, errors, extra, rewrite });
   const a = first(gated.env);
   const early = await Promise.race([gated.reached.then(() => null), a.then((r) => r, (e) => e)]);
   assert.equal(early, null, `pierwsze żądanie zakończyło się bez dojścia do bariery: ${JSON.stringify(early?.body ?? String(early))}`);
-  const pending = second(barrierEnv(db, { errors, extra }).env);
+  const pending = second(barrierEnv(db, { errors, extra, rewrite }).env);
   let waiters = [];
   try {
     waiters = await waitForLockWaitersWithQuery(db, 1);
