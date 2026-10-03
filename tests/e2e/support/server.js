@@ -136,6 +136,35 @@ async function seedFamilies(db) {
   `);
 }
 
+// Klasa z kilkoma uczniami do testu wyszukiwania w families/ (#128, 320 px). Osobny rok i
+// klasa, żeby nie zmieniać liczności klas ani uczniów w danych innych testów. Imiona i
+// nazwiska wymyślone: „Łukasz” sprawdza dopasowanie „lukasz”, dwa „Testowy” — wiele trafień.
+const SEARCH_YEAR_ID = 'e2e-y-search';
+const SEARCH_CLASS_ID = 'e2e-c-search';
+const SEARCH_STUDENTS = [
+  ['Zofia', 'Łukaszewska-Próbna'], ['Łukasz', 'Testowy'], ['Jan', 'Testowy'], ['Maja', 'Przykładowa'],
+  ['Żaneta', 'Przykładowa'], ['Ignacy', 'Próbny'], ['Helena', 'Próbna'], ['Olek', 'Syntetyk'],
+];
+async function seedClassSearch(db) {
+  await seedSchoolYear(db, SEARCH_YEAR_ID, { startsOn: '2021-09-01', endsOn: '2022-08-31' });
+  await seedClass(db, SEARCH_CLASS_ID, SEARCH_YEAR_ID, '3C');
+  for (const [index, [firstName, lastName]] of SEARCH_STUDENTS.entries()) {
+    const n = index + 1;
+    await db.query(`INSERT INTO households (id) VALUES ($1)`, [`e2e-hs-${n}`]);
+    await db.query(
+      `INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed)
+       VALUES ($1, $2, 'Opiekun', $3, $4, true)`,
+      [`e2e-gs-${n}`, `e2e-hs-${n}`, lastName, `opiekun-search-${n}@example.invalid`],
+    );
+    await db.query(`INSERT INTO students (id, household_id, first_name, last_name) VALUES ($1, $2, $3, $4)`,
+      [`e2e-ss-${n}`, `e2e-hs-${n}`, firstName, lastName]);
+    await db.query(`INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ($1, $2, true, true)`,
+      [`e2e-ss-${n}`, `e2e-gs-${n}`]);
+    await db.query(`INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ($1, $2, $3, $4)`,
+      [`e2e-es-${n}`, `e2e-ss-${n}`, SEARCH_CLASS_ID, SEARCH_YEAR_ID]);
+  }
+}
+
 // Wydarzenie opublikowane (widoczne publicznie) i szkic, który NIGDY nie jest
 // zgłoszony — pilnuje, że site/ nie pokazuje danych niezatwierdzonych.
 const APPROVED_EVENT_TITLE = 'Zebranie otwarte do publikacji (syntetyczne)';
@@ -526,6 +555,11 @@ async function main() {
   await seedUser(db, 'e2e-treasurer-audit');
   await grantRole(db, 'e2e-treasurer-audit', 'treasurer', { schoolYearId: AUDIT_YEAR_ID });
   await seedAuditRead(db, storage, 'e2e-treasurer-audit');
+  // 3a''''. Przedstawiciel jedynej klasy 3C z ośmioma uczniami (#128: wyszukiwanie przy 320 px).
+  await seedClassSearch(db);
+  await seedUser(db, 'e2e-rep-search');
+  await grantRole(db, 'e2e-rep-search', 'representative', { classId: SEARCH_CLASS_ID, schoolYearId: SEARCH_YEAR_ID });
+  const repSearchCookie = await seedCookieSession(db, { userId: 'e2e-rep-search', mfa: false });
   const auditCookie = await seedCookieSession(db, { userId: 'e2e-audit', mfa: true });
   const treasurerAuditCookie = await seedCookieSession(db, { userId: 'e2e-treasurer-audit', mfa: true });
 
@@ -600,6 +634,10 @@ async function main() {
     audit: {
       userId: 'e2e-audit', cookie: auditCookie, treasurerCookie: treasurerAuditCookie, schoolYearId: AUDIT_YEAR_ID,
       documents: AUDIT_DOCS.map(({ id, title }) => ({ id, title })),
+    },
+    classSearch: {
+      userId: 'e2e-rep-search', cookie: repSearchCookie, schoolYearId: SEARCH_YEAR_ID, classId: SEARCH_CLASS_ID, className: '3C',
+      students: SEARCH_STUDENTS.map(([firstName, lastName]) => ({ firstName, lastName })),
     },
     newsTitles,
     newsLongWord: NEWS_LONG_WORD,

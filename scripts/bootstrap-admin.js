@@ -1,6 +1,6 @@
 // Pierwszy administrator na pustej bazie PostgreSQL (issue #187).
 //
-//   DATABASE_URL=… APP_ENV=staging npm run auth:bootstrap-admin -- <email> [--ttl-hours=24] [--allow-production]
+//   DATABASE_URL=… APP_ENV=staging npm run auth:bootstrap-admin -- <email> --expect-database=<nazwa bazy> [--ttl-hours=24] [--allow-production]
 //
 // Działa tylko, gdy nie ma aktywnego administratora ani ważnego zaproszenia
 // do roli admin. Token zaproszenia jest wypisywany RAZ na stdout (jedna linia
@@ -10,10 +10,11 @@
 
 import { appEnvWarning } from '../src/app-env.js';
 import { fileURLToPath } from 'node:url';
+import { assertConnectedDatabase, DatabaseIdentityError, requireExpectedDatabase } from '../src/database-identity.js';
 import { createPgDatabase } from '../src/db.js';
 import { BootstrapRefused, bootstrapAdmin } from '../src/pg/bootstrap-admin.js';
 
-const USAGE = 'Usage: npm run auth:bootstrap-admin -- <email> [--ttl-hours=24] [--allow-production]';
+const USAGE = 'Usage: npm run auth:bootstrap-admin -- <email> --expect-database=<database name> [--ttl-hours=24] [--allow-production]';
 
 const REFUSALS = {
   admin_exists: 'An active administrator already exists. Bootstrap refused; use the admin panel to invite further accounts.',
@@ -35,8 +36,18 @@ export async function runBootstrapCli({ argv, env, db, stdout = process.stdout, 
     stderr.write('DATABASE_URL is required. Nothing was changed.\n');
     return 1;
   }
+  // #166: nazwa bazy docelowej potwierdzona jawnie (adres i current_database()), zanim cokolwiek zostanie zapisane.
+  let expectedDatabase;
+  try {
+    expectedDatabase = requireExpectedDatabase({ url: db ? undefined : env.DATABASE_URL, args: argv });
+  } catch (error) {
+    if (!(error instanceof DatabaseIdentityError)) throw error;
+    stderr.write(`${error.message}\n`);
+    return 1;
+  }
   const database = db ?? createPgDatabase({ connectionString: env.DATABASE_URL, max: 1 });
   try {
+    await assertConnectedDatabase(database, expectedDatabase);
     const result = await bootstrapAdmin(database, {
       email, appEnv: env.APP_ENV, allowProduction: argv.includes('--allow-production'), ttlSeconds: ttlHours * 3600,
     });
@@ -51,6 +62,10 @@ export async function runBootstrapCli({ argv, env, db, stdout = process.stdout, 
     ].join('\n'));
     return 0;
   } catch (error) {
+    if (error instanceof DatabaseIdentityError) {
+      stderr.write(`${error.message}\n`);
+      return 1;
+    }
     if (error instanceof BootstrapRefused) {
       const suffix = error.code === 'pending_admin_invitation' ? ` (${error.detail.expiresAt}).` : '';
       if (error.code === 'production_requires_flag') { const w = appEnvWarning(env.APP_ENV); if (w) stderr.write(`${w}\n`); }

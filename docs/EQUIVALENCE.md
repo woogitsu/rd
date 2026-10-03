@@ -26,7 +26,10 @@ kontraktem referencyjnym, nie wdrożeniem Railway.
   bez wyłączenia scenariusz byłby niedeterministyczny względem zegara
   systemowego. Politykę bezczynności pokrywa osobno `tests/pg-auth.test.js`.
 - Pliki: `tests/api-parity-session.test.js`, `tests/pg-payments-api.test.js`
-  (wpłaty), `tests/d1-postgres-restore-compat.test.js` (odtworzenie),
+  (wpłaty), `tests/pg-ledger-api.test.js` i `tests/api-parity-ledger.test.js`
+  (księga; w drugim identyfikatory UUID są rosnące i deterministyczne w obu
+  przebiegach, bo wpisy z tą samą datą sortują się po `id`),
+  `tests/d1-postgres-restore-compat.test.js` (odtworzenie),
   wspólne narzędzia `tests/helpers/parity.js`.
 
 ## Wyniki: trasy
@@ -52,7 +55,10 @@ kontraktem referencyjnym, nie wdrożeniem Railway.
 | Awaria bazy: `/api/session`, `/api/access`, `/api/logout` z cookie | zgodne | `503 service_unavailable`; `/health` nadal `200`; bez cookie brak zapytania do bazy (`401`/`204`). Log nowego API zawiera tylko moduł i kod błędu, bez tokenu i e-maila |
 | `/api/events`, `/api/public/events`, `/api/meetings` | uzasadniona różnica | nowe funkcje (#12, #13), w Workerze `404`. `/api/public/events` ma celowo `Cache-Control: public, max-age=60` |
 | `/api/payments…` (tworzenie, ponowienie, konflikt klucza, korekty, przypisanie, lista, walidacja, odmowy i błędy) | zgodne | istniejący scenariusz krok po kroku w `tests/pg-payments-api.test.js`, teraz na wspólnym `tests/helpers/parity.js` |
-| `/api/ledger…` | w toku | porównanie księgi prowadzi osobne zadanie; w routerze PostgreSQL brak jeszcze tras księgi (#38) |
+| `/api/ledger…` (kategorie, podsumowanie, preliminarz, lista z kursorem i filtrami, tworzenie, ponowienie, konflikt klucza, wpis z wpłatą, próg 3000 EUR z uchwałą, korekty do zera, walidacja, odmowy) | zgodne | pełny scenariusz krok po kroku w `tests/pg-ledger-api.test.js` (#38); do tego `tests/api-parity-ledger.test.js` porównuje status, wszystkie nagłówki i ciało oraz granice ról (bez sesji, bez MFA, przedstawiciel klasy, konto bez roli, skarbnik innego roku, zarząd) |
+| `/api/ledger…` — konto z rolą finansową bez MFA | uzasadniona różnica | oba `403`; stary: `forbidden`, nowy: `mfa_enrollment_required` (nowy odróżnia brak MFA od braku roli) |
+| `POST /api/ledger/{id}/corrections` — przedstawiciel klasy, nieistniejący wpis | uzasadniona różnica | stary: `404 ledger_entry_not_found` (najpierw szuka wpisu); nowy: `403 forbidden` przed szukaniem, więc nie zdradza, czy wpis istnieje. Dla istniejącego wpisu oba `403 forbidden` |
+| `/api/ledger…` — pola `attachmentIds` i `attachments` we wpisach | uzasadniona różnica | rozszerzenia tylko w PostgreSQL (#87, #82); Worker ich nie zna; test równoważności pomija je w obu odpowiedziach, a same pola pokrywa `tests/pg-ledger-api.test.js` |
 
 Poziom Node (`src/node-app.js`) nie był tu porównywany: dla `/api/` ustawia
 zawsze `Cache-Control: no-store` (nadpisuje `public, max-age=60` z
@@ -84,8 +90,6 @@ otwarcia z korektą, łańcuch preliminarza, audyt) i odtwarza ją do PGlite ze
 
 ## Co pozostaje
 
-- **Księga** (`/api/ledger…`): porównanie starego i nowego API po dodaniu tras
-  księgi do routera PostgreSQL (#38; osobne zadanie).
 - **Import** uczniów i rodzin: brak trasy importu w obu API; porównanie wyników
   importu (1000+ syntetycznych uczniów, rodzeństwo, wspólna opieka) po #36.
 - **Dokumenty**: snapshot przenosi tylko metadane; transfer obiektów do

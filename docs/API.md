@@ -23,6 +23,7 @@ istniejącymi `GET /api/payments` i `GET /api/ledger`.
 | `GET /api/email/suppressions?schoolYearId=` (#543) | `created_at` malejąco, `email_hash` | 500 / 500 | rok szkolny |
 | `GET /api/meetings?schoolYearId=` | `scheduled_at` malejąco, `id` | 500 / 500 | rok szkolny |
 | `GET /api/admin/guardian-update-requests` (#140 pkt 5: każdy wiersz ma `verification`, `verificationReason`, `verificationDelivery`, `verificationExpiresAt`) | `created_at`, `id` rosnąco | 200 / 200 | `status` |
+| `GET /api/admin/guardian-verify-templates` (#159, #140 pkt 5: `currentTemplateId` to najnowsza zatwierdzona wersja z całej tabeli, także gdy leży poza stroną) | `version` malejąco | 100 / 100 | — |
 | `GET /api/admin/account-requests` | `created_at` malejąco, `id` | 200 / 200 | `status` |
 | `GET /api/admin/grant-requests` | `created_at` malejąco, `id` | 200 / 200 | `status` |
 | `GET /api/admin/data-requests` (#543) | `received_on`, `created_at`, `id` rosnąco | 500 / 500 | `status`, `kind` |

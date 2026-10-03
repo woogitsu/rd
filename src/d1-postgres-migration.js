@@ -398,10 +398,25 @@ async function compareRowFingerprints(client, expectedRows) {
   return fingerprints;
 }
 
+// #166, #191: baza docelowa musi być pusta we WSZYSTKICH tabelach (poza
+// schema_migrations, którą wypełnia migrator), a nie tylko w tabelach migawki.
+// Wiersz w tabeli spoza migawki (konto, kampania e-mail, powiązanie MFA, ślad
+// importu) oznacza bazę, która już działała; odtworzenie zmieszałoby dane albo
+// przypisało nowe wiersze do cudzych kluczy. Lista pochodzi z katalogu bazy,
+// więc nowa tabela z migracji jest sprawdzana bez zmiany tego pliku.
 async function ensureEmpty(client) {
-  for (const [table] of specs) {
-    const { rows } = await client.query(`SELECT count(*)::int AS count FROM "${table}"`);
-    if (Number(rows[0].count) !== 0) throw new Error(`Target table is not empty: ${table}`);
+  const { rows: tables } = await client.query(
+    `SELECT table_name FROM information_schema.tables
+      WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations'
+      ORDER BY table_name`,
+  );
+  // Tabele migawki muszą istnieć (inaczej brak migracji wyszedłby dopiero jako błąd INSERT).
+  const present = new Set(tables.map((row) => row.table_name));
+  const missing = SNAPSHOT_TABLES.filter((table) => !present.has(table));
+  if (missing.length) throw new Error(`Target schema is incomplete (run migrations first); missing tables: ${missing.join(', ')}`);
+  for (const { table_name: table } of tables) {
+    const { rows } = await client.query(`SELECT EXISTS (SELECT 1 FROM "${String(table).replaceAll('"', '""')}") AS present`);
+    if (rows[0].present === true) throw new Error(`Target table is not empty: ${table}`);
   }
 }
 

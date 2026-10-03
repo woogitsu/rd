@@ -77,6 +77,38 @@ test('restore is atomic, reconciled and recreates assignment events', async () =
   } finally { await db.close(); }
 });
 
+// #166, #191: ensureEmpty dotyczy WSZYSTKICH tabel (poza schema_migrations), nie tylko tabel migawki.
+test('#166: wiersz w tabeli spoza migawki (login_rate_limits) blokuje odtworzenie bez zapisu czegokolwiek', async () => {
+  const db = await emptyPostgres();
+  try {
+    const { rows: tables } = await db.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations'");
+    const outside = tables.map((row) => row.table_name).filter((name) => !SNAPSHOT_TABLES.includes(name));
+    assert.ok(outside.length > 20 && outside.includes('login_rate_limits'), `tabele spoza migawki: ${outside.length}`);
+    await db.query("INSERT INTO login_rate_limits (scope_type, scope_hash) VALUES ('email', repeat('a', 64))");
+    await assert.rejects(restoreSnapshot(db, syntheticSnapshot()), /Target table is not empty: login_rate_limits/);
+    const counts = await db.query('SELECT (SELECT count(*) FROM school_years)::int AS years, (SELECT count(*) FROM audit_events)::int AS audit');
+    assert.deepEqual(counts.rows[0], { years: 0, audit: 0 }, 'transakcja nie zostawia śladu');
+    await db.query('DELETE FROM login_rate_limits');
+    assert.equal((await restoreSnapshot(db, syntheticSnapshot())).counts.students, 1, 'po opróżnieniu odtworzenie przechodzi');
+  } finally { await db.close(); }
+});
+
+test('#166: schema_migrations nie liczy się jako dane, a niepełny schemat jest odrzucany czytelnym błędem', async () => {
+  const db = await emptyPostgres();
+  try {
+    // exec() nie tworzy schema_migrations (robi to migrator); odtwarzamy jej kształt z src/postgres-migrations.js.
+    await db.exec('CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), applied_seq INTEGER NOT NULL DEFAULT 0)');
+    await db.query("INSERT INTO schema_migrations (name, checksum) VALUES ('0001_x.sql', repeat('a', 64))");
+    assert.equal((await restoreSnapshot(db, syntheticSnapshot())).counts.students, 1);
+  } finally { await db.close(); }
+  const partial = new PGlite();
+  try {
+    await partial.exec('CREATE TABLE school_years (id text)');
+    await assert.rejects(restoreSnapshot(partial, syntheticSnapshot()), /Target schema is incomplete \(run migrations first\); missing tables: classes/);
+  } finally { await partial.close(); }
+});
+
 test('inconsistent assigned payment aborts without partial rows', async () => {
   const db = await emptyPostgres();
   try {

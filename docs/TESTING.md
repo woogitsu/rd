@@ -196,6 +196,14 @@ odmawia pod `node --test`), a przeglądarkowy spec podstawia odpowiedzi API prze
   wniosek z nowym adresem → pole kodu → ta sama treść dla złego kodu przy 400, 404 i 429 → sukces;
   pole kodu tylko przy `emailVerification: requested`; link zużyty albo zły to jedna treść; potwierdzenie
   nie niesie tokenu w adresie żądania (token jest w ciele).
+- `tests/e2e/families-class-search.spec.js` — przeglądarka, 320 px (#128): wpisywanie w pole „Szukaj ucznia”
+  na liście klasy (osobny rok `e2e-y-search`, klasa 3C z ośmioma wymyślonymi uczniami): zawężanie listy,
+  licznik w regionie `role="status"` `aria-live="polite"`, dopasowanie bez polskich znaków (także „ł”),
+  komunikat „Brak uczniów pasujących do …”, wpisany tekst jako tekst i brak poziomego przewijania także
+  przy długim zapytaniu bez spacji.
+- `tests/api-parity-ledger.test.js` — równoważność księgi Worker (D1) ↔ PostgreSQL (#41, część B): status,
+  wszystkie nagłówki i ciało po normalizacji oraz granice ról (bez sesji, bez MFA, przedstawiciel klasy,
+  konto bez roli, skarbnik innego roku, zarząd); różnice w `ALLOWED` opisuje `docs/EQUIVALENCE.md`.
 - `tests/families-guardian-verify-templates.test.js` — czyste funkcje widoku szablonu w `families/`,
   zgodność granic z API i migracją 0184 oraz prawdziwe API na PGlite: szkic, odmowy `self_approval_forbidden`,
   `forbidden` (admin), `mfa_stale` (sesja z MFA sprzed 20 minut), `verify_template_changed`, podwójne
@@ -331,6 +339,10 @@ bariery anulowania. Wpłaty mają kilka warstw blokad (API i triggery 0002/0038/
 nadal przechodzi, bo pozostałe warstwy trzymają blokadę.
 
 `tests/pg-real-app-role.test.js` (SR-05, #101, pomijany bez `RD_TEST_PG_URL`): rola `rd_app` z migracji 0170 — `TRUNCATE`, DDL, `DISABLE TRIGGER`, `session_replication_role` i `DELETE` na tabelach z historią kończą się `42501`; meta-test każdej tabeli i nowej tabeli (domyślne uprawnienia); wpłata i korekta przez `handlePgRequest` działają, nadpisanie wpłaty odrzuca trigger.
+
+Do tego samego pliku `pg-real-app-role` należą (#101): worker e-mail na `rd_app` (kampania od szkicu do kolejki przez API, potem `runEmailBatch`; ponowienie niczego nie wysyła) i `/health/ready` w produkcji (ostrzeżenie `readiness_database_role_privileged` przy właścicielu, brak przy `rd_app`; wariant na atrapach i PGlite: `tests/health-ready.test.js`).
+
+`tests/pg-real-operator-identity.test.js` (#166, #191, pomijany bez `RD_TEST_PG_URL`): skrypty operatora jako procesy na jednorazowej, pustej bazie z `APP_ENV=staging` w powłoce — `migrate-postgres` i `restore-postgres-snapshot --apply` bez `--expect-database` albo z inną nazwą nic nie zapisują, z właściwą działają; drugie odtworzenie i wiersz w tabeli spoza migawki (`login_rate_limits`) kończą się `Target table is not empty`. Jednostki, `verify-export`, `bootstrap-admin`, `mfa:rotate-key` i adresy bez bazy: `tests/database-identity.test.js` (PGlite, nieosiągalna baza); `ensureEmpty` na PGlite: `tests/d1-postgres-migration.test.js`.
 
 `tests/pg-real-tx-conflict.test.js` (#156, pomijany bez `RD_TEST_PG_URL`): dwie transakcje
 `REPEATABLE READ` czytają ten sam wiersz z migawki i obie go zwiększają; serwer zgłasza
