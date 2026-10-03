@@ -789,7 +789,8 @@ może porównywać `rows[0].n === 0` ani dodawać wartości `bigint` bez `toSafe
 (`FOR UPDATE` albo `pg_advisory_xact_lock` w jednej funkcji) w kopii kodu w katalogu
 tymczasowym i uruchamia wskazany plik testów na prawdziwym PostgreSQL; mutant musi dać
 czerwony test. Najpierw przebieg bez mutacji (musi być zielony). Kod repozytorium nie
-jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`.
+jest zmieniany. CI uruchamia to w jobie `test-pg-mutations` podzielonym na 3 części
+(`npm run test:pg-mutations -- --shard=i/3`; „Podział mutantów na części” niżej), nocny workflow — wszystkie naraz.
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
 Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisanie, części wpłaty i ich cofnięcie, storno przeniesienia kasa ↔ rachunek, przeksięgowanie wpisu księgi, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
@@ -816,6 +817,58 @@ Poza skanem zostają blokady doradcze bez mutanta (`promotions.js`, `anonymizati
 `invitation-batch.js`, `processing-restrictions.js`, `reconciliation.js` — `bank_statement_file_import`,
 `privacy-notice.js`, `email.js` — limit dostawcy), `LOCK TABLE` w `createOpening` i `bootstrap-admin.js`
 oraz blokady w wyzwalaczach migracji.
+
+### Podział mutantów na części (#111)
+
+Do #111 job `test-pg-real` uruchamiał po kolei testy na PostgreSQL i wszystkie mutanty; na GitHub trwał 8,3–9,3 min
+i wyznaczał czas PR (shardy `test` 2,2–5,4 min). Pomiar z kroków trzech przebiegów z 3 października 2026
+(runy 37120800949, 37121017225, 37121057725; `gh api repos/<repo>/actions/jobs/<id>` → `steps`):
+
+| krok jobu `test-pg-real` | przebiegi 1 / 2 / 3 |
+|---|---|
+| przygotowanie (kontener `postgres`, checkout, `npm ci`) | 21 / 23 / 26 s |
+| `npm run test:pg-real` (27 plików) | 127 / 127 / 106 s |
+| `npm run test:pg-mutations` (57 mutantów, 13 plików bez mutacji ok. 60 s) | 404 / 399 / 361 s |
+| cały job | 555 / 552 / 496 s |
+
+Kontrola mutacyjna to ok. 3/4 czasu jobu, więc biegnie teraz w osobnym jobie `test-pg-mutations` z macierzą `part: [1, 2, 3]`;
+każda część ma własną usługę `postgres` (ten sam digest), a `ci-ok` wymaga obu jobów. Job `test-pg-real` uruchamia już tylko
+`npm run test:pg-real`.
+
+- **Podział.** `npm run test:pg-mutations -- --shard=i/N` uruchamia część i/N; listę liczy
+  `scripts/lock-mutation-shards.js` wyłącznie z listy `MUTANTS` i N (bez stanu maszyny). Mutanty są ułożone grupami według
+  pliku testów (kolejność pierwszego wystąpienia), a ciąg jest pocięty na N kolejnych, niepustych kawałków o najmniejszym
+  najdłuższym szacunku (programowanie dynamiczne). Kawałki kolejne, bo każda część najpierw uruchamia bez mutacji pliki
+  swoich mutantów: plik testów jest przecięty najwyżej na granicy części, więc przebieg bez mutacji powtarza się najwyżej
+  N−1 razy. Szacunek części = jeden przebieg pliku na mutant + jeden przebieg bez mutacji na plik; czasy plików
+  (`TEST_SECONDS`) to średnie z tych trzech przebiegów, a plik spoza tabeli dostaje `DEFAULT_TEST_SECONDS` (5 s).
+  Podgląd: `node scripts/lock-mutation-shards.js --plan 3`; lista części: `npm run test:pg-mutations -- --list --shard=2/3`.
+  `--shard` nie łączy się z wyborem mutantów po id. Nocny workflow uruchamia wszystkie mutanty w jednym kroku (bez `--shard`).
+- **Strażnicy.** `tests/lock-mutations.test.js`: części 1..N (N = 1..8, także z nowym mutantem i nowym plikiem testów) są
+  rozłączne, niepuste, a ich suma to wszystkie mutanty; `shardMutants` zwraca część planu, a plan jest powtarzalny;
+  przebiegów bez mutacji jest najwyżej „pliki + N − 1”; `--shard` odrzuca zły numer; `ci.yml` ma macierz 1..N bez luk,
+  `--shard=${{ matrix.part }}/N` z N równym macierzy i `fail-fast: false`; CLI `--list --shard=i/N` dla każdej części CI
+  daje rozłączne listy o sumie `MUTANTS`; `test-pg-mutations` ma usługę o tym samym obrazie co `test-pg-real` i
+  `RD_TEST_PG_URL`; `test-pg-real` nie uruchamia już mutantów; `ci-ok` ma oba joby w `needs` i sprawdza ich wynik;
+  najdłuższa szacowana część CI mieści się w 125% średniej. `tests/ci-supply-chain.test.js`: `ci-ok` wymaga obu jobów,
+  a wszystkie usługi w `ci.yml` mają ten sam obraz przypięty do digestu.
+- **Szacunek i pomiar.** Plan dla N = 3 (57 mutantów, szacunek całości 384 s wobec zmierzonych 361–404 s):
+
+  | część | mutanty | pliki testów | szacunek |
+  |---|---|---|---|
+  | 1/3 | 11 | `pg-real-double-click` | 132 s |
+  | 2/3 | 24 | `pg-real-payment-locks` … `pg-real-budget-locks`, początek `pg-real-record-locks` | 132 s |
+  | 3/3 | 22 | reszta `pg-real-record-locks`, `pg-real-replay-23505` … `pg-real-email-locks` | 127 s |
+
+  Oczekiwany najdłuższy job PG na GitHub: ok. 130 s kroku + ok. 25 s przygotowania ≈ 2,6 min (`test-pg-real`: ok.
+  2,5 min), czyli poniżej najdłuższego shardu `test`; przed zmianą 8,3–9,3 min.
+  Lokalnie (kontener: 4 rdzenie, 16 GB, PostgreSQL 16 bez `RD_TEST_PG_URL`, czyli własny serwer `initdb` na każdy przebieg
+  pliku): `npm run test:pg-mutations -- --shard=3/3` — 6 plików bez mutacji, 22 mutanty zabite, 226 s; różnica względem
+  szacunku to głównie start własnego serwera przy każdym z 28 przebiegów (w CI serwer jest jeden, z usługi `postgres`).
+- **Kiedy zmienić N albo czasy.** Gdy podsumowanie przebiegu pokaże część `test-pg-mutations` dłuższą niż najdłuższy shard
+  `test` (np. po dodaniu kilku mutantów do `pg-real-double-click`, ok. 11 s na mutant), dopisz czas nowego pliku do
+  `TEST_SECONDS` albo zwiększ N — macierz `part` i `--shard=…/N` w `ci.yml` zmieniają się razem (pilnuje tego strażnik).
+  Każda dodatkowa część to osobny runner z ok. 25 s przygotowania i jednym dodatkowym przebiegiem bez mutacji.
 
 ### Inwentaryzacja blokad wierszy (`tests/lock-inventory.test.js`)
 
@@ -969,13 +1022,14 @@ czerwieni cztery testy równoległych zamknięć (dwie osoby, podwójne kliknię
 `rowCount`/`affectedRows` — kontrakt `src/db.js` zwraca tylko `{ rows }`, a PGlite
 dodaje `rowCount`, więc taki kod przechodził testy i psuł się na serwerze.
 
-### CI: job `test-pg-real`
+### CI: joby `test-pg-real` i `test-pg-mutations`
 
 CI działa na runnerach GitHub `ubuntu-latest` (repozytorium jest publiczne).
 Job `test-pg-real` (`.github/workflows/ci.yml`, wymagany przez `ci-ok`) uruchamia
 `npm run test:pg-real` z usługą `services: postgres` (obraz `postgres@sha256:…`
 przypięty do digestu — `tests/ci-supply-chain.test.js`; przy aktualizacji zmień
-digest obrazu `postgres:16`). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
+digest obrazu `postgres:16` we wszystkich jobach PG naraz). Job `test-pg-mutations` (też wymagany przez `ci-ok`)
+uruchamia kontrolę mutacyjną w 3 częściach, każdą z własną usługą `postgres` („Podział mutantów na części”). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
 `scripts/test-pg-real.js` nie stawia własnego serwera, tylko używa wskazanego;
 bez zmiennej działa jak wcześniej (`initdb` w katalogu tymczasowym).
 Zwykłe shardy (`test`) nadal biegną na PGlite i pomijają testy wyścigów.
@@ -1006,9 +1060,10 @@ przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
 `tests/ci-supply-chain.test.js` (dla wszystkich plików w `.github/workflows`);
 przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
-z 6 shardów wyznaczonych przez `scripts/ci-shard-files.js`; „Podział na shardy według czasu”). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27). Inwentaryzacja blokad dodała 15 mutantów
-(razem 57) i trzy pliki z barierą, a domknięcie jej luk — 6 mutantów (razem 63) i kolejne trzy pliki; pierwszy przebieg po
-inwentaryzacji (#720) trwał ok. 9 min, więc limit zostaje.
+z 6 shardów wyznaczonych przez `scripts/ci-shard-files.js`; „Podział na shardy według czasu”). Job `test-pg-real` miał limit 45 min
+(było 30; 42 mutanty zamiast 27), a po inwentaryzacji blokad (57 mutantów, potem 63 po domknięciu jej luk) trwał ok. 9 min.
+Po wydzieleniu mutantów (#111) `test-pg-real` i każda część `test-pg-mutations` mają limit 15 min (pomiar: krok testów
+106–127 s, szacunek części ok. 130–145 s; zapas wielokrotnie powyżej 20%).
 
 ## Pokrycie dziennikiem zdarzeń (#184)
 

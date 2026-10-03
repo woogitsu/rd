@@ -73,12 +73,23 @@ test('service and container images in ci.yml are pinned to a sha256 digest', () 
   for (const line of images) assert.match(line, /image:\s*[\w./-]+@sha256:[0-9a-f]{64}\s*$/, `image not pinned to a digest: ${line.trim()}`);
 });
 
-test('ci-ok requires test-pg-real (real PostgreSQL) and it uses the service via RD_TEST_PG_URL', () => {
+test('ci-ok requires test-pg-real and test-pg-mutations (real PostgreSQL) and they use the service via RD_TEST_PG_URL', () => {
   const ciOkMatch = workflow.match(/ci-ok:\s*\n\s*needs:\s*\[([^\]]+)\]/);
   assert.ok(ciOkMatch, 'ci-ok job with needs: [...] not found');
-  assert.ok(ciOkMatch[1].split(',').map((s) => s.trim()).includes('test-pg-real'), 'ci-ok must depend on test-pg-real');
+  const needs = ciOkMatch[1].split(',').map((s) => s.trim());
+  assert.ok(needs.includes('test-pg-real'), 'ci-ok must depend on test-pg-real');
+  // #111: kontrola mutacyjna blokad biegnie w osobnym jobie z macierzą części.
+  assert.ok(needs.includes('test-pg-mutations'), 'ci-ok must depend on test-pg-mutations');
   assert.match(workflow, /RD_TEST_PG_URL:\s*postgres:\/\/[^\s@]+@127\.0\.0\.1:5432\//);
   assert.match(workflow, /npm run test:pg-real/);
+  assert.match(workflow, /npm run test:pg-mutations -- --shard=/);
+});
+
+test('every PostgreSQL service in ci.yml uses the same pinned image digest (no drift between PG jobs)', () => {
+  const images = workflow.split('\n').filter((l) => /^\s*image:\s*/.test(l)).map((l) => l.trim());
+  assert.ok(images.length >= 2, 'expected services in test-pg-real and test-pg-mutations');
+  assert.equal(new Set(images).size, 1, `different images: ${[...new Set(images)].join(', ')}`);
+  assert.match(images[0], /^image:\s*postgres@sha256:[0-9a-f]{64}$/);
 });
 
 test('production dependencies are pinned exactly (no ^ or ~ ranges)', () => {
