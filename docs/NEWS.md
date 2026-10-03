@@ -55,9 +55,9 @@ Przedstawiciel nie widzi wpisów innych klas (404 bez ujawniania istnienia). Ska
 - `PATCH /api/news/:id` — nowa wersja; body z `revision`.
 - `POST /api/news/:id/submit|approve|publish|withdraw` — body z `revision` (i `reason` przy wycofaniu).
 - `GET /api/news-photos?status=pending|verified|revoked`, `GET /api/news-photos/:id` — rejestr zdjęć z odwołaniami do zgód.
-- `POST /api/news-photos` — rejestracja metadanych (`documentId`, `author`, `source`, `sourceDetail?`, `takenOn`, `licenseText`, `explicitLicenseGranted?`, `licenseDocumentRef?`, `rightsNote?`, `altText?`, `decorative?`, `depictsChildren`, `identifiableChildren?`, `identifiableAdults?`, `consents?`); wymaga `Idempotency-Key`. `altText` albo `decorative = true` jest **wymagane** — inaczej `422 alt_text_required` (#124).
+- `POST /api/news-photos` — rejestracja metadanych (`documentId`, `author`, `source`, `sourceDetail?`, `takenOn`, `licenseText`, `explicitLicenseGranted?`, `licenseDocumentRef?`, `rightsNote?`, `altText?`, `decorative?`, `depictsChildren`, `identifiableChildren?`, `identifiableAdults?`, `consents?`); wymaga `Idempotency-Key`. `altText` albo `decorative = true` jest **wymagane** — inaczej `422 alt_text_required` (#124). Pola tekstowe przechodzą bramkę danych osobowych ze znanymi imionami i nazwiskami z lat otwartych (#741, `confirmPersonalData`, patrz `docs/PII_CHECK.md`).
 - `POST /api/news-photos/:id/consents` — `{ subjectNo, subjectKind, consentDocumentRef }`; ten sam wpis ponownie = powtórka, inny pod tym samym numerem = `409 consent_conflict`.
-- `POST /api/news-photos/:id/verify` (body `{}`), `POST /api/news-photos/:id/revoke` (`{ reason }`).
+- `POST /api/news-photos/:id/verify` (body `{}`), `POST /api/news-photos/:id/revoke` (`{ reason, confirmPersonalData? }`).
 
 Źródła: `own_work`, `school_provided`, `parent_provided`, `licensed_third_party`, `public_website_copy`. Zmiany wymagają nagłówka `Origin` tej samej domeny (inaczej `403 invalid_origin`), `Content-Type: application/json` i body do 64 KiB.
 
