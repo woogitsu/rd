@@ -1,4 +1,4 @@
-// Kontrakt API (#160, etapy 2-13): schematy ciał żądań i odpowiedzi w docs/openapi.json
+// Kontrakt API (#160, etapy 2-14): schematy ciał żądań i odpowiedzi w docs/openapi.json
 // (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
 // (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js;
 // preliminarz, kasa i centra kosztów (ledger-budget, ledger-cash, ledger-cost-centers)
@@ -9,7 +9,9 @@
 // aktualności i galeria (news) w tests/openapi-contract-news.test.js; logowanie hasłem i MFA (login, mfa)
 // w tests/openapi-contract-auth.test.js; administracja kont i ról (admin) w tests/openapi-contract-admin.test.js;
 // historia obiektu, ścieżka kontroli KR, sprawozdanie roczne, eksporty, kartki i pulpity (audit-history, audit-reviews,
-// financial-reports, exports, print, board, representative) w tests/openapi-contract-reports.test.js.
+// financial-reports, exports, print, board, representative) w tests/openapi-contract-reports.test.js; wnioski
+// opiekunów, import, zamknięcie roku i informacja o przetwarzaniu danych (guardian-updates, import, year-close,
+// privacy-notice) w tests/openapi-contract-guardian-year.test.js.
 // Testy rejestru poniżej obejmują wszystkie pokryte moduły.
 //
 //  * rejestr pokrycia: każda trasa pokrytego modułu MA schemat; moduły bez schematów
@@ -39,7 +41,7 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 4;
+const MAX_UNCOVERED_MODULES = 0;
 // Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
 const POST_WITHOUT_BODY = new Set([
   'POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout',
@@ -62,6 +64,10 @@ const POST_WITHOUT_BODY = new Set([
   'POST /api/admin/invitations/{invitationId}/revoke', 'POST /api/admin/invitations/{invitationId}/reissue',
   'POST /api/admin/data-requests/{requestId}/export', 'POST /api/admin/data-requests/{requestId}/restrict',
   'POST /api/admin/data-requests/{requestId}/lift-restriction',
+  // Wnioski opiekunów i informacja o przetwarzaniu danych (#160 etap 14): decyzja o wniosku, zatwierdzenie i publikacja
+  // wersji wynikają ze ścieżki; trasy nie czytają ciała.
+  'POST /api/admin/guardian-update-requests/{requestId}/approve', 'POST /api/admin/guardian-update-requests/{requestId}/reject',
+  'POST /api/admin/privacy-notices/{id}/approve', 'POST /api/admin/privacy-notices/{id}/publish',
 ]);
 
 // Pliki pomocnicze trasy (ścieżki względem src/pg/), których kody błędów trasa zwraca bez zmiany:
@@ -75,6 +81,7 @@ const POST_WITHOUT_BODY = new Set([
 // odzyskiwania i limity (src/pg/mfa.js);
 // admin — moduły wniosków (grant-requests.js, account-recovery.js), partii zaproszeń, promocji, ograniczenia przetwarzania,
 // eksportu danych rodziny, anonimizacji, resetu hasła/MFA (login.js, LoginError) i kursor list;
+// guardian-updates — kursor list (kolejka wniosków i wersje szablonu, #160 etap 14).
 // audit-reviews — zapis uwag KR i mapowanie reguł bazy (src/pg/audit-reviews.js); financial-reports — migawki sprawozdania
 // (src/pg/report-snapshots.js: łańcuch korekt, cztery oczy, kody reguł bazy).
 const ROUTE_HELPER_SOURCES = {
@@ -87,6 +94,7 @@ const ROUTE_HELPER_SOURCES = {
   email: ['../email/content.js', '../email/brevo.js', 'list-cursor.js'],
   events: ['events.js', 'list-cursor.js'],
   'financial-reports': ['report-snapshots.js'],
+  'guardian-updates': ['list-cursor.js'],
   login: ['login.js', 'password.js'],
   meetings: ['meetings.js', 'list-cursor.js'],
   mfa: ['mfa.js'],
