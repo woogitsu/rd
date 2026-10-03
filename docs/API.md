@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-11)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-12)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -224,7 +224,8 @@ schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
 `tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
 `tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
-`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js` i `tests/openapi-contract-auth.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js` i
+`tests/openapi-contract-admin.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
@@ -233,14 +234,14 @@ uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i t
 do publikacji i odwołania z zadaniami wolontariuszy, zapisami i widokiem publicznym, aktualności z galerią — zgody na
 wizerunek, weryfikacja, cofnięcie praw, plik zdjęcia i widok publiczny tylko z zatwierdzonymi danymi, logowanie hasłem
 z limitem prób, zaproszenia, reset i zmiana hasła, zapis i weryfikacja MFA z kodami odzyskiwania, sesje własne,
-zamknięty rok, odmowy i błędy) przechodzą
+administracja kont i ról z czterema oczami, przeglądem dostępu, dziennikami i żądaniami osób, zamknięty rok, odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (206 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news`; etap 11 (13): `login` (6), `mfa` (7) |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (252 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news`; etap 11 (13): `login` (6), `mfa` (7); etap 12 (46): `admin` |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `print`, `privacy-notice`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -547,6 +548,58 @@ Cechy modułów etapu 11 (`login` — logowanie hasłem, stan sesji ekranu logow
   którego PGlite nie odtwarza (jest w schemacie, bez testu kontraktu); lista zwolnień w sekcji „Bramka MFA” w
   `docs/AUTH.md` pomija `/api/invitations/preview`, `/api/sessions` i `/api/sessions/{id}/revoke` (zwolnienie sesji
   opisuje sekcja #150), choć `MFA_GATE_EXEMPT_EXACT`/`MFA_GATE_EXEMPT_PREFIXES` je obejmują.
+
+Cechy modułu etapu 12 (`admin` — konta, przydziały ról, wnioski o rolę chronioną, zaproszenia i partie, lata i klasy,
+promocja, dzienniki, przegląd dostępu, żądania osób, retencja, anonimizacja i stan operacyjny; opis stanu, nie zmiana tras;
+zasady w `docs/ACCOUNTS.md`, `docs/AUTHORIZATION.md`, `docs/DATA_REQUESTS.md`):
+
+- Specyfikacja obejmuje 46 operacji z macierzy tras. Każda — także odczyt — wymaga roli `admin` z potwierdzonym MFA
+  (wariant zachowawczy D-08/D-09): zarząd, skarbnik, przedstawiciel, Komisja Rewizyjna i dyrekcja → `403 forbidden`,
+  admin bez MFA → bramka routera (`mfa_enrollment_required`/`mfa_required`). Krok w górę MFA (`403 mfa_stale`, #150) mają
+  reset hasła i MFA, zatwierdzenie wniosków o reset i o rolę, nadanie roli, zaproszenie i jego ponowne wydanie, partie
+  zaproszeń (także podgląd), przedłużenie przydziałów przedstawicieli, eksport danych rodziny i anonimizacja (także podgląd).
+- **Tokeny i pola tajne**: token zaproszenia i resetu hasła jest w odpowiedzi WYŁĄCZNIE tej, która go tworzy (zaproszenie,
+  ponowne wydanie, zapis partii, zatwierdzenie wniosku, reset hasła); listy zaproszeń i wniosków, odtworzenie partii i
+  wnioski `202` go nie mają. Żadna odpowiedź nie zawiera hasha hasła ani sekretu MFA (schemat `AdminUser` ma tylko
+  `mfaEnrolled`). Lista kont pokazuje adres e-mail i nazwę wyświetlaną wyłącznie administratorowi.
+- **Cztery oczy** (#146): rola chroniona (`admin`, `board`, `treasurer`) przy drugim aktywnym administratorze — nadanie,
+  zaproszenie i ponowne wydanie zaproszenia dają `202` z wnioskiem (`AdminGrantRequestPending`), reset hasła/MFA konta
+  chronionego — `202` z wnioskiem (`AdminRecoveryRequestPending`); zatwierdza inna osoba (`403 grant_four_eyes_required`,
+  `recovery_four_eyes_required` dla wnioskodawcy i adresata), drugie zatwierdzenie → `409 grant_request_closed`/
+  `recovery_request_closed`. Zatwierdzenie zwraca `oneOf`: przydział albo zaproszenie z tokenem; token resetu albo wynik
+  resetu MFA. Samonadanie → `409 cannot_grant_self` (przydział, zaproszenie na własny adres, wiersz partii).
+- **Dyrekcja tylko z rokiem**: przydział i zaproszenie `principal` bez roku → `422 school_year_required` (także ponowne
+  wydanie dawnego zaproszenia bez roku); przegląd dostępu pokazuje dawne aktywne przydziały dyrekcji bez roku w każdym roku
+  z `schoolYearId: null`, `proposal: revoke`, `reason: year_scope_required` — nic nie jest odbierane automatycznie.
+- **Idempotencja**: `Idempotency-Key` mają wyłącznie zapis promocji uczniów i zapis partii zaproszeń (wymagany; 201, a
+  ponowienie 200 z polem `replayed`, bez nagłówka `Idempotency-Replayed`; ten sam klucz z innym planem → `409
+  idempotency_key_reused`, zmiana od podglądu → `409 plan_stale`/`invitation_batch_stale`) oraz rejestracja żądania osoby
+  (klucz opcjonalny: `201` z `Idempotency-Replayed: false` tylko przy kluczu, bez klucza bez nagłówka — generator ma do tego
+  `replayed: 'false'` z `replayedOptional`; ponowienie `200` + `true`, inna treść `409 idempotency_conflict`). Pozostałe
+  zapisy są idempotentne po stanie (`changed: false`, `created: false`, ten sam otwarty wniosek, kopiowanie klas i
+  przedłużenie przedstawicieli `200` bez nowych wierszy). Odrzucenie wniosku o rolę przyjmuje żądanie bez treści i bez
+  `Content-Type` — w specyfikacji `requestBody.required: false` (wpis `bodyOptional: true`, etap 12).
+- Listy z kursorem (`GET /users`, `/grants`, `/invitations`, `/account-requests`, `/grant-requests`, `/data-requests`,
+  `/anonymizations`, `/audit`) mają `nextCursor`, `truncated`, `limit` i kursor związany z filtrem; dziennik odczytu
+  (`/access-log`) ma własny kursor bez `truncated` i `limit` (koniec listy to `nextCursor: null`), niezwiązany z filtrem.
+  Zły identyfikator w ścieżce → `400 invalid_id` (po roli, przed odczytem obiektu). Eksport danych rodziny ma dwa formaty
+  (`format=json|csv`, `formatsResponse`); paczka JSON zawiera dane osobowe i jest opisana schematem `AdminFamilyExport` z
+  ogólnymi tabelami (`tables`, `lookups`), a skrót SHA-256 jest też w nagłówku `X-Export-Manifest-Sha256`.
+- Kody przekazywane przez `optionalId(…, 'kod')` (`invalid_actor_id`, `invalid_class_id`, `invalid_guardian_id`,
+  `invalid_student_id`) były dotąd poza katalogiem — detektor kodów (identyczny w `tests/pg-api-errors-catalog.test.js` i
+  `tests/shared-api.test.js`) zna od etapu 12 ten helper; kody są w `docs/API_ERRORS.md` i `shared/messages.js`.
+- Rozbieżności i uwagi (opis, trasy bez zmian; zbiorczo w #736): **`POST /api/admin/promotions/representatives/apply` nie
+  sprawdza samonadania** — administrator, który był przedstawicielem klasy roku źródłowego, przedłuża przydział SAM SOBIE
+  (nowy `role_grants` z `granted_by` = on sam), choć `POST /grants` i partia zaproszeń odrzucają to `cannot_grant_self`
+  (rola niechroniona, ale omija zasadę z #146); `GET /api/admin/audit/entity/{entityType}/{entityId}` jest trasą modułu,
+  ale nie ma jej w macierzy tras, więc nie ma jej w specyfikacji; zapis partii zaproszeń i tworzenie klas nie mapują w kodzie
+  trasy błędu `school_year_closed` z triggera zamrożenia (pojedyncze zaproszenie i przydział mapują) — reakcji na zamknięty
+  rok nie sprawdzono, więc kodu nie ma w ich schematach; wzorzec klucza
+  promocji i partii (`readIdempotencyKey`: 8-128 znaków, może zaczynać się od `_`) jest luźniejszy niż `IdempotencyKey`
+  w schemacie; kody nieosiągalne bez zegara albo przeplotu transakcji (`recovery_request_expired`, `grant_request_expired`,
+  `data_request_export_in_progress`, `anonymization_row_mismatch`) oraz `role_pending_decision` (dziś żadna rola nie ma
+  stanu `pending_decision`) są w schematach, ale nie w teście kontraktu; dziennik odczytu nie ma `truncated`/`limit` jak
+  pozostałe listy (#159).
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
