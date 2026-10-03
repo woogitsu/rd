@@ -227,7 +227,7 @@ test('errorMessage: polskie teksty dla statusów, surowy kod tylko jako dopisek 
   }
 });
 
-// Kody zwracane przez API PostgreSQL: RequestError('…'), XError(413, '…'), json({ error: '…' }), code: '…'.
+// Kody zwracane przez API PostgreSQL: RequestError('…'), XError(413, '…'), json({ error: '…' }), code: '…', text(…, '…').
 function serverErrorCodes() {
   const files = [];
   const walk = (dir) => {
@@ -239,9 +239,11 @@ function serverErrorCodes() {
   };
   walk(join(ROOT, 'src/pg'));
   files.push(join(ROOT, 'src/documents.js'), join(ROOT, 'src/storage.js'));
-  const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]|\[\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]/g;
+  // Czwarta reguła (#160 etap 4): kod jako ostatni argument helpera długości tekstu trasy,
+  // np. text(data.note, 3, 500, 'invalid_note') — wcześniej niewykrywany (invalid_note, invalid_notes).
+  const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]|\[\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]|\b(?:optionalText|text)\([^()]*,\s*['"]([a-z][a-z0-9_]*)['"]\s*\)/g;
   const codes = new Set(['mfa_required', 'mfa_enrollment_required']);
-  for (const file of files) for (const match of readFileSync(file, 'utf8').matchAll(pattern)) codes.add(match[1] ?? match[2] ?? match[3]);
+  for (const file of files) for (const match of readFileSync(file, 'utf8').matchAll(pattern)) codes.add(match[1] ?? match[2] ?? match[3] ?? match[4]);
   return [...codes].sort();
 }
 
