@@ -670,26 +670,28 @@ piątej próby i potwierdza adres mimo wyczerpanego limitu (wyzwalacz 0184 nie w
 `guardian-verify-confirm`.
 
 `tests/pg-real-mfa-locks.test.js` (#208, dawne luki inwentaryzacji, pomijany bez `RD_TEST_PG_URL`): blokady MFA.
-Para `lockUser`/`activeFactors` (`mfa.js`): przy dwóch weryfikacjach tego samego kodu TOTP w dwóch sesjach każda z
-blokad osobno wystarcza (druga weryfikacja czeka i dostaje `400`, kod przyjęty raz) — mutant jednej z nich pada tam
-tylko na miejscu czekania, a usunięcie obu naraz pokazuje kontrola pozytywna w tym pliku (`rewrite` w `race`: ten
-sam kod przyjęty dwa razy). Każda blokada ma też własny scenariusz: podwójne „Włącz MFA” przy pierwszym zapisie
-czynnika (bez `lockUser` nie ma czego blokować w `activeFactors`, drugie żądanie dostaje 23505 na
-`user_mfa_factors_one_pending` zamiast zastąpienia czynnika oczekującego — mutant `mfa-lock-user`) oraz rotacja
-klucza w chwili, gdy weryfikacja odczytała czynnik (bez blokady czynnika rotacja bierze wiersz pierwsza, a jej
-`INSERT` przez klucz obcy czeka na `lockUser` weryfikacji — zakleszczenie 40P01 zamiast czekania; mutant
-`mfa-active-factors`). Rotacja w trakcie weryfikacji (`rotateOneAccount`) czeka na blokadę czynnika i przenosi
-zużyty krok; bez blokady nowy wiersz dostaje krok sprzed weryfikacji i ten sam kod przechodzi drugi raz (mutant
-`mfa-key-rotation`). Reset MFA przez administratora w trakcie ponownego zapisu czynnika czeka na blokadę konta i
+Każda operacja na czynnikach blokuje najpierw wiersz konta, potem wiersz czynnika: weryfikacja i zapis czynnika
+(`lockUser`, potem `activeFactors` w `mfa.js`), reset MFA (`adminResetMfaInTx`) i rotacja klucza (`lockAccount`,
+potem czynnik w `rotateOneAccount`). Blokady czynnika są więc drugą warstwą (wyjątki „zagnieżdżona”), a dowodem
+jest blokada konta. Podwójne „Włącz MFA” przy pierwszym zapisie czynnika: drugie żądanie czeka na blokadę konta i
+zastępuje czynnik oczekujący (bez `lockUser` nie ma czego blokować w `activeFactors`, drugie żądanie dostaje 23505
+na `user_mfa_factors_one_pending` — mutant `mfa-lock-user`). Dwie weryfikacje tego samego kodu TOTP: druga czeka i
+dostaje `400`, kod przyjęty raz; usunięcie obu blokad naraz pokazuje kontrola pozytywna (`rewrite` w `race`: ten sam
+kod przyjęty dwa razy). Rotacja w trakcie weryfikacji czeka na blokadę konta i przenosi zużyty krok (kontrola
+pozytywna: bez obu blokad rotacji ten sam kod przechodzi drugi raz). Rotacja, która wyłączyła już stary wiersz, a nie
+wstawiła nowego: weryfikacja, ponowny zapis czynnika i reset MFA czekają na blokadę konta i po jej zatwierdzeniu
+widzą nowy wiersz (weryfikacja `200`, zapis dodaje czynnik oczekujący obok obróconego, reset wyłącza obrócony
+czynnik), bez błędów transakcji przy `retries: 0`. Bez blokady konta w rotacji (mutant `mfa-key-rotation-account`)
+wraca dawna odwrotna kolejność (czynnik, potem konto przez klucz obcy `INSERT`): zakleszczenie 40P01, przy
+`retries: 0` weryfikacja dostaje `503 retry_later`, a z ponowieniami `src/db.js` kończy się poprawnie po ok. 1 s
+(`deadlock_timeout`). Tak działał kod przed ujednoliceniem kolejności (luka znaleziona w #723). Weryfikacja czekająca
+na wiersz czynnika zamiast konta (np. bez `lockUser`) dostaje po rotacji `409 mfa_not_enrolled`: stary wiersz jest
+już wyłączony, a nowego nie ma w migawce czekającego zapytania; z kompletem blokad czeka na konto i czyta czynniki
+nowym zapytaniem. Reset MFA przez administratora w trakcie ponownego zapisu czynnika czeka na blokadę konta i
 wyłącza też nowy czynnik oczekujący; bez niej `UPDATE` resetu czeka tylko na wiersz wyłączany przez zapis czynnika,
 nowego wiersza nie ma w jego migawce — reset kończy się `changed: false` (bez wylogowania i zdarzenia), a czynnik
 przetrwa reset (mutant `mfa-admin-reset`). Podwójny reset sam w sobie jest bezpieczny (warunkowe `UPDATE … AND
-disabled_at IS NULL`). Znane, nienaprawione w tym zakresie: kolejność blokad w `rotateOneAccount` (czynnik, potem
-przez klucz obcy konto) jest odwrotna niż w `mfa.js` i `adminResetMfaInTx` (konto, potem czynnik). Gdy rotacja
-wyłączyła już stary wiersz, a nie wstawiła nowego, weryfikacja, zapis czynnika albo reset MFA biorące w tej chwili
-blokadę konta kończą się zakleszczeniem (40P01) także z kompletem blokad. `src/db.js` ponawia 40P01, więc stan
-końcowy jest poprawny, ale jedna operacja czeka ok. 1 s (`deadlock_timeout`) i powtarza się. Naprawa (blokada konta
-na początku `rotateOneAccount`) zmienia rolę blokad czynnika (staną się drugą warstwą) — osobny zakres.
+disabled_at IS NULL`).
 
 `tests/pg-real-webhook-locks.test.js` (#208, dawna luka inwentaryzacji, pomijany bez `RD_TEST_PG_URL`): zdarzenia
 dostawcy (atrapa webhooka Brevo, worker z atrapą transportu). Twarde odbicie zgłoszone, gdy worker zapisuje wynik
@@ -701,7 +703,7 @@ test dokumentuje tę gwarancję. Mutant: `email-webhook-outbox`.
 
 Każdy z mutantów plików powyżej (od `pg-real-request-locks`) i `ledger-category-deactivate` pada także na samym
 skutku (sprawdzone jednorazowo z wyłączonymi asercjami miejsca czekania w `tests/helpers/pg-race.js`), a nie tylko
-na tym, gdzie czeka drugie żądanie. `mfa-active-factors` pada na zakleszczeniu (40P01), pozostałe na danych albo
+na tym, gdzie czeka drugie żądanie. `mfa-key-rotation-account` pada na zakleszczeniu (40P01), pozostałe na danych albo
 odpowiedzi.
 
 `tests/pg-real-record-locks.test.js` (#208, #111, pomijany bez `RD_TEST_PG_URL`): bariera dla kolejnych blokad
@@ -811,7 +813,9 @@ Inwentaryzacja blokad dodała mutanty z `tests/pg-real-request-locks.test.js`,
 `tests/pg-real-auth-locks.test.js`, `tests/pg-real-email-locks.test.js` i `ledger-category-deactivate`
 (opisy wyżej) oraz blokady z istniejącymi testami z barierą: `lockGrantRequest` (`grant-request-lock`,
 `pg-real-double-click`) i `createSession`. Domknięcie luk inwentaryzacji dodało `guardian-verify-confirm`,
-`mfa-lock-user`, `mfa-active-factors`, `mfa-key-rotation`, `mfa-admin-reset` i `email-webhook-outbox`. Blokady wierszy spoza listy mają wpis w `LOCK_EXCEPTIONS` — tabela niżej.
+`mfa-lock-user`, `mfa-active-factors`, `mfa-key-rotation`, `mfa-admin-reset` i `email-webhook-outbox`; ujednolicenie
+kolejności blokad MFA (konto, potem czynnik) zastąpiło `mfa-active-factors` i `mfa-key-rotation` mutantem
+`mfa-key-rotation-account` (blokady czynnika są teraz zagnieżdżone). Blokady wierszy spoza listy mają wpis w `LOCK_EXCEPTIONS` — tabela niżej.
 Poza skanem zostają blokady doradcze bez mutanta (`promotions.js`, `anonymization.js`,
 `invitation-batch.js`, `processing-restrictions.js`, `reconciliation.js` — `bank_statement_file_import`,
 `privacy-notice.js`, `email.js` — limit dostawcy), `LOCK TABLE` w `createOpening` i `bootstrap-admin.js`
@@ -830,7 +834,8 @@ i powodem — nowa blokada bez mutanta i bez wyjątku oblewa test. Kategorie wyj
 - **zagnieżdżona** — ta sama transakcja wcześniej bierze blokadę nadrzędną z mutantem (`outer`), przez
   którą przechodzi każdy zapis chronionej tabeli; usunięcie samej wewnętrznej nie zmienia wyniku
   (mutant równoważny). Test sprawdza, że funkcja (albo każdy, kto woła pomocnika z `{ lock: true }`)
-  woła funkcję mutanta nadrzędnego;
+  woła funkcję mutanta nadrzędnego; nieeksportowany pomocnik bez tej opcji (`activeFactors`) — że każda
+  funkcja modułu, która go woła, wcześniej woła funkcję mutanta nadrzędnego;
 - **ograniczenie** — serializację zapewnia baza: indeks unikalny (+ odtworzenie 23505), wyzwalacz
   migracji albo warunkowy UPDATE; bez blokady zmienia się co najwyżej odpowiedź (kod błędu, stan w
   metadanych audytu), bez podwójnego zapisu i utraconej aktualizacji. Test sprawdza, że
@@ -839,10 +844,10 @@ i powodem — nowa blokada bez mutanta i bez wyjątku oblewa test. Kategorie wyj
   skutek.
 
 Funkcja z blokadami kilku tabel wymaga mutanta na konkretną tabelę (`table`), żeby dowód dotyczył
-jednej blokady. Stan: 84 blokady wierszy, 57 z mutantem (63 mutanty, w tym blokady doradcze), 27 wyjątków:
-8 zagnieżdżonych i 19 ograniczeń; luk nie ma. Sześć dawnych luk (`confirmCode` w `guardian-updates.js`,
+jednej blokady. Stan: 85 blokad wierszy, 56 z mutantem (62 mutanty, w tym blokady doradcze), 29 wyjątków:
+10 zagnieżdżonych i 19 ograniczeń; luk nie ma. Sześć dawnych luk (`confirmCode` w `guardian-updates.js`,
 `adminResetMfaInTx`, `lockUser`/`activeFactors` w `mfa.js`, `rotateOneAccount`, `recordWebhookEvent`) ma testy z
-barierą w `tests/pg-real-guardian-verify-locks.test.js`, `tests/pg-real-mfa-locks.test.js` i
+barierą (blokady czynnika w `activeFactors` i `rotateOneAccount` są zagnieżdżone pod blokadą konta) w `tests/pg-real-guardian-verify-locks.test.js`, `tests/pg-real-mfa-locks.test.js` i
 `tests/pg-real-webhook-locks.test.js` (opisy wyżej, w „Testy wyścigów”).
 Tabelę poniżej generuje `node scripts/lock-inventory.js --markdown`; test wymaga, żeby była równa
 wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
@@ -872,9 +877,10 @@ wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
 | `meetings.js` `withdrawAgendaItem` | `meeting_agenda_items` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): Wycofanie punktu porządku obrad wywołuje wcześniej lockMeeting; jedyny zapis withdrawn_at jest w tej funkcji, więc blokada punktu jest drugą warstwą (mutant równoważny). |
 | `meetings.js` `reorderAgendaItems` | `meeting_agenda_items` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): Zmiana kolejności wywołuje wcześniej lockMeeting; pozycje zmienia wyłącznie ta funkcja, więc blokada punktów jest drugą warstwą (mutant równoważny). |
 | `meetings.js` `loadNotice` | `meeting_notices` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): loadNotice(…, { lock: true }) wołają tylko approveMeetingNotice i createNoticeCampaignDraft, obie po lockMeeting; zawiadomienia powstają (createNoticeDraft) też pod lockMeeting. |
-| `mfa-key-rotation.js` `rotateOneAccount` | `user_mfa_factors` | FOR UPDATE | mutant `mfa-key-rotation` (`tests/pg-real-mfa-locks.test.js`) |
+| `mfa-key-rotation.js` `lockAccount` | `users` | FOR UPDATE | mutant `mfa-key-rotation-account` (`tests/pg-real-mfa-locks.test.js`) |
+| `mfa-key-rotation.js` `rotateOneAccount` | `user_mfa_factors` | FOR UPDATE | wyjątek, zagnieżdżona (pod `mfa-key-rotation-account`): Rotacja zaczyna od lockAccount (wiersz konta FOR UPDATE), tak jak weryfikacja i zapis czynnika (lockUser) oraz reset MFA; każdy zapis user_mfa_factors przechodzi przez blokadę konta, więc blokada czynnika jest drugą warstwą (mutant równoważny). Bez obu blokad rotacja przenosi krok sprzed weryfikacji (kontrola pozytywna w tests/pg-real-mfa-locks.test.js). |
 | `mfa.js` `lockUser` | `users` | FOR UPDATE | mutant `mfa-lock-user` (`tests/pg-real-mfa-locks.test.js`) |
-| `mfa.js` `activeFactors` | `user_mfa_factors` | FOR UPDATE | mutant `mfa-active-factors` (`tests/pg-real-mfa-locks.test.js`) |
+| `mfa.js` `activeFactors` | `user_mfa_factors` | FOR UPDATE | wyjątek, zagnieżdżona (pod `mfa-lock-user`): activeFactors wołają tylko enrollFactor, attemptFactor i revokeAllOwnSessions, każda zaraz po lockUser (wiersz konta FOR UPDATE). Każdy zapis user_mfa_factors (zapis i potwierdzenie czynnika, reset MFA w adminResetMfaInTx, rotacja klucza po lockAccount) bierze wcześniej blokadę konta, więc blokada czynnika jest drugą warstwą (mutant równoważny). |
 | `news.js` `lockPost` | `news_posts` | FOR UPDATE | mutant `news-lock` (`tests/pg-real-domain-locks.test.js`) |
 | `news.js` `lockPhoto` | `news_photos` | FOR UPDATE | mutant `news-photo-lock` (`tests/pg-real-record-locks.test.js`) |
 | `processing-restrictions.js` `changeProcessingRestriction` | `data_subject_requests` | FOR UPDATE | mutant `processing-restriction-request` (`tests/pg-real-request-locks.test.js`) |
@@ -1007,7 +1013,8 @@ przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
 przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
 z 6 shardów wyznaczonych przez `scripts/ci-shard-files.js`; „Podział na shardy według czasu”). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27). Inwentaryzacja blokad dodała 15 mutantów
-(razem 57) i trzy pliki z barierą, a domknięcie jej luk — 6 mutantów (razem 63) i kolejne trzy pliki; pierwszy przebieg po
+(razem 57) i trzy pliki z barierą, a domknięcie jej luk — 6 mutantów (razem 63) i kolejne trzy pliki (ujednolicenie
+kolejności blokad MFA: razem 62); pierwszy przebieg po
 inwentaryzacji (#720) trwał ok. 9 min, więc limit zostaje.
 
 ## Pokrycie dziennikiem zdarzeń (#184)
