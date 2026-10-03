@@ -254,13 +254,13 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-6)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-8)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
 etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
-etap 6 — `email`; razem 107 operacji)
+etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; razem 157 operacji)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
@@ -268,7 +268,8 @@ mają schematy ciał żądań i odpowiedzi
   dopisaną trasę bez schematu), każdy schemat ma trasę, moduły macierzy = pokryte + jawnie niepokryte, a lista
   `UNCOVERED_MODULES` nie rośnie (sufit `MAX_UNCOVERED_MODULES`, obniżany w kolejnych PR-ach);
 - kody błędów w schematach należą do katalogu `docs/API_ERRORS.md` i występują w źródle trasy (dla `reconciliation`
-  także w parserach wyciągów `src/pg/bank/*.js`, `ROUTE_HELPER_SOURCES`);
+  także w parserach wyciągów `src/pg/bank/*.js`, dla `meetings` w module domenowym `src/pg/meetings.js`, dla `documents`
+  w kontroli struktury pliku `src/documents.js` i kursorze list, `ROUTE_HELPER_SOURCES`);
 - **prawdziwe odpowiedzi** (PGlite, dane syntetyczne) przez `tests/helpers/contract-client.js` i walidator
   `tests/helpers/json-schema.js` (bez nowej zależności; nieznane słowo kluczowe schematu rzuca wyjątek, więc nie
   przepuszcza po cichu): utworzenie, ponowienie z tym samym kluczem (`Idempotency-Replayed`), korekta częściowa,
@@ -402,12 +403,104 @@ plikach (`ROUTE_HELPER_SOURCES`), a detektor kodów `tests/pg-api-errors-catalog
 (identyczny w obu plikach) skanuje `src/email/content.js` i zna kody `mfa_stale` i `preview_recipient_not_allowed`
 zwracane przez funkcje pomocnicze.
 
+Prawdziwe odpowiedzi etapu 7 (moduł `meetings`, 28 operacji) sprawdza `tests/openapi-contract-meetings.test.js` (ten sam
+`createContractClient`, PGlite, dane syntetyczne `@example.invalid`, imiona opiekunów syntetyczne). **Żadnej wysyłki:**
+z zawiadomienia powstaje wyłącznie szkic kampanii (`sent: false`, kolejka `email_outbox` pusta), test niczego nie
+zatwierdza w module e-mail, a pułapka sieci (`networkGuardCalls()`) kończy się zerem. Scenariusz:
+
+- zebranie ogólne, zarządu i klasowe: utworzenie z ponowieniem (`Idempotency-Replayed`), `idempotency_conflict`, błędy
+  reguł (`quorum_rule_source_required`, `invalid_quorum_rule`, `invalid_notice_rule`, `invalid_reference`), lista z kursorem
+  (`invalid_limit`, `invalid_cursor`); edycja z rewizją (podwójne kliknięcie bez nowej wersji, `revision_conflict`,
+  `invalid_revision`, `meeting_status_transition_invalid`);
+- porządek obrad: punkty z ponowieniem, `agenda_position_taken`, bramka danych osobowych (`422`), wycofanie punktu
+  z ponowieniem, zmiana kolejności (te same numery pozycji, ponowienie `replayed: true`, `invalid_agenda_order`);
+- zawiadomienie: szkic i jego ponowienie, cztery oczy (`notice_four_eyes_required`), `notice_up_to_date`,
+  **szkic kampanii bez wysyłki** dla rodzin roku, rodzin klasy (`class_households`) i kont zebrania zarządu
+  (`meeting_invitees`), plik kalendarza (`text/calendar`, `notice_calendar_unavailable` dla szkicu i starszej wersji);
+  zmiana terminu przez `PATCH` po zatwierdzeniu → `use_reschedule_endpoint`; **zmiana terminu** z powodem (szkic
+  zawiadomienia `reschedule`, ponowienie, `reschedule_no_change`, `revision_conflict`, `invalid_reason`), po której podgląd
+  kampanii w module e-mail ostrzega `notice_outdated`, a szkic zmiany terminu po zmianie kolejności — `409 notice_outdated`
+  przy zatwierdzeniu; nowsza wersja (`update`) i `notice_not_latest`;
+- **odwołanie** z powodem (szkic zawiadomienia o odwołaniu, ponowienie, inny powód `meeting_cancelled`, zapisy po
+  odwołaniu `409 meeting_cancelled`), publiczne zawiadomienia z kursorem (wyłącznie zebrania ogólne, odwołanie z pustym
+  porządkiem);
+- zebranie odbyte: **obecność dwojga opiekunów jednego dziecka** (dwa wpisy, ponowienie poprawia ten sam wiersz,
+  `invalid_reference`), quorum z ponowieniem i `idempotency_conflict` po zmianie obecności, `quorum_requires_held_meeting`;
+- **uchwały z wersjami**: projekt z podpowiedzią numeru, edycja z rewizją, rozstrzygnięcie (`resolution_number_required`,
+  `vote_record_required`, `resolution_votes_exceed_present_voters`), `resolution_final_immutable`, korekta jako nowa
+  rewizja (ponowienie, `concurrent_version`), nieaktualne quorum (`resolution_quorum_check_stale`), uchwała zmieniająca
+  (`resolution_amends_requires_adopted`, `invalid_relation_kind`, `resolution_number_taken`), wycofanie projektu,
+  wykonanie uchwały (także po zatwierdzeniu protokołu; `resolution_not_decided`), rejestr z filtrami i wyszukanie po
+  numerze (skarbnik);
+- protokół: wersje, `minutes_four_eyes_required`, `minutes_open_resolutions` z liczbą projektów, lista kontrolna,
+  `minutes_not_latest_version`, `minutes_not_approved`, zatwierdzenie z ponowieniem, blokada zebrania (`meeting_locked`),
+  widoczność dla rodziców i publiczna (protokoły udostępnione przedstawicielowi, publiczne bez logowania),
+  `minutes_contain_personal_data` dla poprawionej wersji ze znanym imieniem i nazwiskiem;
+- granice ról: brak sesji `401`; przedstawiciel 1A — zebranie klasy 1B (i każde inne) `404 meeting_not_found`, listy
+  i rejestr `403`, zapisy `403 forbidden`; zarząd z przydziałem 1A — pusta lista i `404` dla zebrania 1B; Komisja
+  Rewizyjna i dyrekcja (bez MFA) — odczyt zebrania z listą obecności jak KR (D-09), zapisy `403 forbidden`; skarbnik —
+  tylko wyszukanie uchwały; zarząd bez MFA `403 mfa_enrollment_required`, a przy pustym `MFA_REQUIRED_ROLES` —
+  `403 mfa_required` modułu; obcy `Origin` `403 invalid_origin`;
+- błędy `400` (`invalid_json`, identyfikatory ścieżki), `404`, `413`, `415`, `422` (`personal_data_forbidden`,
+  `possible_personal_data` i potwierdzenie) oraz **zamknięty rok** przez trasy `year-close` (zapisy → `409
+  school_year_closed`, odczyt działa; przydziały roku wygasają, więc zapisuje zarząd z przydziałem bez roku);
+- pominięcie każdego wymaganego pola ciała → `400`, każda odpowiedź sukcesu ze schematu zwalidowana na prawdziwej
+  odpowiedzi, a osobny test sprawdza w specyfikacji, które zapisy mają `Idempotency-Key`, a które ponowienie sygnalizują
+  polem `replayed`.
+
+Kody reguł bazy przekazywane przez moduł zebrań (lista `DATABASE_CONFLICTS` w `src/pg/meetings.js`) i kody
+identyfikatorów ścieżki (`requireId(…, 'invalid_meeting_id')`) wykrywa od etapu 7 detektor kodów (identyczny
+w `tests/pg-api-errors-catalog.test.js` i `tests/shared-api.test.js`); są w `docs/API_ERRORS.md` i `shared/messages.js`.
+
+Prawdziwe odpowiedzi etapu 8 (moduł `documents`, 22 operacje) sprawdza `tests/openapi-contract-documents.test.js` (ten sam
+`createContractClient`, PGlite, **magazyn plików w pamięci** `createMemoryStorage()` jak w `tests/pg-documents.test.js`,
+pliki syntetyczne: PDF z tekstem testowym, PNG i JPEG z `tests/helpers/synthetic-images.js`; pułapka sieci kończy się zerem).
+Macierz tras rozdziela `/api/documents/{id}` na cztery rodzaje, więc odczyty i zapisy dokumentu wskazują szablon operacji
+opcją `template` klienta, a schemat metadanych przypina `document.kind` do rodzaju (kontrola pozytywna: zły szablon jest
+błędem). Klient przyjmuje ciało binarne (`Uint8Array`) i wymaga, by jego `Content-Type` był opisany w `requestBody`
+(kontrola pozytywna: `text/html`). Scenariusz:
+
+- przesłanie PDF, PNG i JPEG każdego rodzaju (`financial`, `board`, `class`, `council_shared`), ponowienie tym samym kluczem
+  (`200`, `replayed: true`, bez nagłówka `Idempotency-Replayed`, bez drugiego obiektu w magazynie), `idempotency_conflict`,
+  dowody powiązane z wpisem księgi i z wpłatą (`invalid_link`), błędy `invalid_kind`, `invalid_school_year`, `invalid_class`,
+  `idempotency_key_required`, `empty_document`, **walidacja typu i rozmiaru pliku** (`415 unsupported_media_type` dla HTML
+  i sygnatury niezgodnej z nagłówkiem, `415 document_active_content`, `415 document_malformed`, `413 document_too_large`),
+  `503 storage_unavailable` (brak magazynu) i `503 upload_busy` (zajęte miejsce uploadu, `Retry-After`);
+- lista z kursorem (strony po 4 aż do `nextCursor: null`, ta sama kolejność co jedna strona), filtry rodzaju, klasy, stanu,
+  kategorii, wyszukiwania, dat i `validation=outdated`, sortowanie po dacie (bez kursora), przestarzały `offset` i błędy
+  (`invalid_limit`, `invalid_cursor` — także kursor innego filtra, `invalid_request`, `invalid_document_date`, …);
+- opis z wersjami dla każdego rodzaju (ponowienie, konflikt klucza, historia `descriptionHistory` od najnowszej) i jego błędy
+  (`invalid_title`, `invalid_category`, `invalid_document_date`, `invalid_description`, `invalid_request`, `invalid_json`,
+  `400 invalid_content_type`, `413 request_too_large`, bramka danych osobowych `422` z potwierdzeniem);
+- **treść tylko po autoryzacji każdego żądania**: pobranie każdego typu pliku każdego rodzaju (każdy typ treści ze
+  specyfikacji zwalidowany), podgląd obrazu `disposition=inline`, bajty PDF `purpose=preview`, **PDF z `disposition=inline`
+  → `400 pdf_inline_not_allowed` (#705)**, `invalid_disposition`, brak sesji i wygasła sesja `401`, plik sprzed bieżących
+  reguł z aktywną treścią (`409 document_preview_blocked`, pobranie działa), brak obiektu w magazynie
+  (`409 document_content_missing`, także przy ponowieniu przesłania) i niezgodna suma kontrolna (`503 service_unavailable`);
+- zastąpienie i unieważnienie każdego rodzaju (ponowienie kluczem i tą samą zmianą innym kluczem, „zastępuje”/„zastąpiony
+  przez” w metadanych, unieważniony plik nadal do pobrania), `document_status_conflict`,
+  `document_status_replacement_not_active`, `invalid_replacement_document`, `invalid_reason`, `idempotency_conflict`, `422`;
+- granice ról: brak sesji `401` na każdej operacji; przedstawiciel klasy wobec dokumentu zarządu, finansowego i innej klasy
+  (`404`, przesłanie `403`), przedstawiciel czyta dokument Rady, ale go nie opisuje ani nie zastępuje (`404`); zarząd
+  z przydziałem klasy (tylko swoja klasa); dyrekcja (`403` listy, `404` dokumentu); Komisja Rewizyjna z flagą
+  `AUDIT_LEDGER_READ` (tylko faktura bez powiązania z wpłatą, opis bez wolnego tekstu, żadnego zapisu), bez MFA
+  (`403 mfa_enrollment_required`) i bez flagi (`403`/`404`); zarząd bez MFA w bramce routera (`mfa_enrollment_required`
+  i `mfa_required` dla konta z czynnikiem) na każdej operacji, skarbnik bez MFA przy pustym `MFA_REQUIRED_ROLES` (`404`
+  dowodu, `403` przesłania); obcy `Origin` `403 invalid_origin` na każdym zapisie;
+- **zamknięty rok** przez trasy `year-close`: przesłanie, opis i zastąpienie → `409 school_year_closed`, unieważnienie
+  nadal `201`, treść do pobrania; pominięcie każdego wymaganego pola ciała → `400` i każda odpowiedź sukcesu ze schematu
+  (także każdy typ treści pliku) zwalidowana na prawdziwej odpowiedzi.
+
+`413 request_too_large` przesłania (serwer Node przed trasą) i `400 document_preview_unsupported` (nieosiągalne dla
+dokumentów z API) są w schemacie, ale nie w tym teście (rozbieżności opisuje `docs/API.md`, „Cechy modułu etapu 8”).
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
 `tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`, jak
 `tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js`,
-`tests/openapi-contract-reconciliation.test.js` i `tests/openapi-contract-email.test.js`).
+`tests/openapi-contract-reconciliation.test.js`, `tests/openapi-contract-email.test.js`,
+`tests/openapi-contract-meetings.test.js` i `tests/openapi-contract-documents.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 

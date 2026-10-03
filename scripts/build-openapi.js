@@ -8,7 +8,7 @@
 //   npm run openapi:build -- --check  # 0 = aktualny, 1 = trzeba regenerować
 //
 // Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga z preliminarzem, kasą i centrami
-// kosztów, rodziny, sesja, uzgodnienia wyciągów z raportem KR); pozostałe są
+// kosztów, rodziny, sesja, uzgodnienia wyciągów z raportem KR, kampanie e-mail, zebrania, dokumenty); pozostałe są
 // jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
 // tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
 // „do zatwierdzenia” przez zarząd/szkołę.
@@ -166,6 +166,15 @@ function schemaParameters(parameters, entry) {
 function applySchema(operation, entry) {
   if (entry.body) {
     operation.requestBody = { required: true, content: { 'application/json': { schema: entry.body } } };
+  }
+  // Ciało inne niż JSON (#160 etap 8): przesłanie dokumentu to surowe bajty pliku — mapa typ treści → schemat.
+  if (entry.bodyContent) {
+    if (entry.body) throw new Error('wpis trasy ma jednocześnie `body` i `bodyContent`');
+    operation.requestBody = {
+      required: true,
+      ...(entry.bodyDescription ? { description: entry.bodyDescription } : {}),
+      content: Object.fromEntries(Object.entries(entry.bodyContent).map(([type, schema]) => [type, { schema }])),
+    };
   }
   for (const [status, spec] of Object.entries(entry.responses)) operation.responses[status] = schemaResponse(spec);
   for (const [status, codes] of Object.entries(entry.errors ?? {})) {

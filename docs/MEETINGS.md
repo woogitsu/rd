@@ -162,6 +162,10 @@ Zamknięty rok blokuje zapis jak dotychczas (trigger `a0_year_freeze`) — flaga
 
 Wszystkie mutacje wymagają nagłówka `Origin` zgodnego z serwerem. Odmowy reguł bazy (np. zablokowane zebranie, `minutes_must_start_as_draft`, `meetings_cannot_be_deleted`, zapis w zamkniętym roku — `school_year_closed`) dają `409` z kodem reguły, nie `503`. Trasy zarządzania zebraniem nadal odpowiadają `403` dla zebrania spoza zakresu (SR-07 w docs/SECURITY_REVIEW.md). Tworzenie wymaga `Idempotency-Key` (8–128 znaków); powtórzenie tego samego żądania zwraca pierwotny obiekt z `Idempotency-Replayed: true`, a inne dane z tym samym kluczem dają `409 idempotency_conflict`.
 
+Schematy żądań i ścisłe schematy odpowiedzi wszystkich tras modułu są od #160 etapu 7 w `docs/openapi.json`
+(`src/pg/schemas/meetings.js`, cechy modułu w docs/API.md, „Schematy żądań i odpowiedzi”); prawdziwe odpowiedzi
+sprawdza `tests/openapi-contract-meetings.test.js`.
+
 | Metoda i ścieżka | Funkcja |
 |---|---|
 | `GET /api/meetings?schoolYearId=` | `listMeetings` |
