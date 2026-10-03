@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-9)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-10)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -220,22 +220,23 @@ schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
 `tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
-`tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`
-i `tests/openapi-contract-events.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
+`tests/openapi-contract-events.test.js` i `tests/openapi-contract-news.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
 dopasowania z cofnięciem, raport Komisji Rewizyjnej, zebranie z porządkiem obrad, zawiadomieniem, obecnością,
 uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i treścią po autoryzacji, wydarzenia od szkicu
-do publikacji i odwołania z zadaniami wolontariuszy, zapisami i widokiem publicznym, zamknięty rok,
+do publikacji i odwołania z zadaniami wolontariuszy, zapisami i widokiem publicznym, aktualności z galerią — zgody na
+wizerunek, weryfikacja, cofnięcie praw, plik zdjęcia i widok publiczny tylko z zatwierdzonymi danymi, zamknięty rok,
 odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (172 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (193 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news` |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `print`, `privacy-notice`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -440,6 +441,67 @@ Cechy modułu etapu 9 (`events`, wydarzenia, zadania i zapisy wolontariuszy — 
   zadania, zapis i wycofanie zapisu → `409 school_year_closed`; odczyty i lista publiczna działają. Odwołanie zadania jest
   zamrożone od `postgres/migrations/0186_event_tasks_year_freeze_update.sql` (#80: trigger `a0_year_freeze` na `event_tasks`
   obejmuje `INSERT` i `UPDATE`; wcześniej tylko `INSERT` i odwołanie przechodziło z `200`).
+
+Cechy modułu etapu 10 (`news`, aktualności i galeria z prawami do zdjęć — opis stanu, nie zmiana tras):
+
+- Specyfikacja obejmuje 21 operacji z macierzy tras: wpisy (lista roku, szkic, odczyt z historią wersji, zmiana, `submit`,
+  `approve`, `publish`, `withdraw`), rejestr zdjęć (lista, rejestracja, odczyt z odwołaniami do zgód, `consents`, `verify`,
+  `revoke`, `file`), wycofanie jednej zgody (`POST /api/news-photo-consents/{consentDocumentRef}/withdraw`) i pięć tras
+  publicznych (`GET /api/public/news`, `GET /api/public/news/{postId}`, `GET /api/public/school-years`,
+  `GET /api/public/news-photos/{photoId}/web|thumb`). Lata z treściami publicznymi należą do tego modułu, choć obejmują też
+  wydarzenia, zawiadomienia i protokoły.
+- `Idempotency-Key` (wymagany) mają szkic wpisu, rejestracja zdjęcia i przesłanie pliku zdjęcia: `201` z
+  `Idempotency-Replayed: false`, ponowienie `200` z `true` (plik: ten sam klucz albo te same bajty dla zdjęcia, które ma
+  już warianty; inne bajty → `409 photo_file_exists`, korekta = nowe zdjęcie). Odwołanie do zgody nie ma klucza ani
+  nagłówka: `201 { replayed: false }`, ten sam wpis ponownie `200 { replayed: true }`, inny pod tym samym numerem
+  `409 consent_conflict`. `PATCH`, kroki przebiegu, weryfikacja, cofnięcie praw i wycofanie zgody — zawsze `200` bez
+  nagłówka, z polem `replayed`. Weryfikacja wymaga ciała `{}` (puste ciało → `400 invalid_json`), wycofanie zgody nie czyta
+  ciała.
+- Przesłanie pliku: surowe bajty `image/png` albo `image/jpeg` (`requestBody` z dwoma typami treści), do 10 MiB
+  (`413 photo_file_too_large`), typ zgodny z sygnaturą i strukturą (`415 unsupported_media_type`, `photo_file_malformed`),
+  `400 empty_photo_file`, `503 upload_busy` (z `Retry-After`) i `503 storage_unavailable`. Odpowiedź to dwa warianty JPEG bez
+  metadanych (`files[]`: `web`, `thumb`); oryginał nie jest przechowywany. Publiczny odczyt pliku: `image/jpeg` wyłącznie
+  dla zdjęcia z `news_photo_is_public` (zweryfikowane, zgody obejmują `rada_website`, niewygasłe i niewycofane, opublikowana
+  wersja niewycofanego wpisu); inaczej identyczne `404 photo_not_found`; niezgodny SHA-256 obiektu → `409
+  photo_file_integrity_mismatch`, brak magazynu → `503 service_unavailable`.
+- Widok publiczny czyta wyłącznie `public_news`: zdjęcie niezweryfikowane blokuje zatwierdzenie i publikację
+  (`409 photo_rights_unverified`), zdjęcie ze zgodą bez zakresu `rada_website` jest weryfikowalne, ale nie trafia do
+  `photos[]` ani do publicznego pliku; wycofanie zgody i cofnięcie praw (`photo_revoked`) ukrywają zdjęcie przy następnym
+  żądaniu (także w już opublikowanej wersji), a zmiana wpisu z cofniętym zdjęciem → `409 photo_revoked`. Tekst
+  alternatywny (#124) jest w schemacie żądania rejestracji jako `anyOf` (`altText` albo `decorative: true`, inaczej
+  `422 alt_text_required`); zdjęcie dekoracyjne ma publicznie `altText: ""`.
+- Weryfikacja zdjęcia: cztery oczy (`409 four_eyes_required`), zdjęcie z dziećmi bez zgody dziecka (`409
+  child_consent_required`) i zgody nie pokrywające rozpoznawalnych osób (`409 consent_missing`); po weryfikacji zgód nie
+  można dopisać (`409 consents_locked`). Kody reguł bazy (`DB_ERRORS` w `src/pg/news.js`: `photo_rights_unverified`,
+  `child_consent_required`, `consent_missing`) oraz kody z `reference(…)`/`count(…)` (`invalid_license_document_ref`,
+  `invalid_identifiable_children`, `invalid_identifiable_adults`) są od etapu 10 w `docs/API_ERRORS.md` i w
+  `shared/messages.js` — detektor kodów zna trójki `['komunikat', 'kod', status]` i te dwa helpery (przy okazji wykrył
+  `next_school_year_not_open` i `year_close_not_in_progress` z mapowania błędów `year-close`, też dopisane).
+- Bramka danych osobowych (#152): tytuł i treść wpisu (ze znanymi imionami i nazwiskami roku), powód wycofania, pola
+  tekstowe zdjęcia (autor, opis źródła, licencja, notatka, `altText`) i powód cofnięcia praw → `422 personal_data_forbidden`
+  albo `possible_personal_data` z `categories`.
+- Wpis spoza zakresu (przedstawiciel innej klasy, zarząd z przydziałem klasy, Komisja Rewizyjna, dyrekcja, skarbnik): odczyt,
+  zmiana i każdy krok → `404 post_not_found` jak nieznany (SR-07); lista roku i szkic poza zakresem → `403 forbidden`;
+  krok bez prawa przy widocznym wpisie (zatwierdzenie i publikacja przez przedstawiciela lub admina, wycofanie
+  opublikowanego przez przedstawiciela) → `403 forbidden`. Rejestr zdjęć (wszystkie trasy `news-photos` i wycofanie zgody)
+  — wyłącznie admin i zarząd z przydziałem bez klasy (weryfikacja, cofnięcie i wycofanie zgody: tylko zarząd), inni → `403
+  forbidden`. Wymóg MFA modułu (`403 mfa_required`) przy zatwierdzeniu i publikacji widać tylko wtedy, gdy bramka routera
+  przepuści sesję bez MFA.
+- Listy: `GET /api/public/news` (`limit` 1-50, domyślnie 20, kursor związany z filtrem roku) i `GET /api/news-photos` (`limit`
+  1-200, domyślnie 200, kursor związany ze `status`) mają kursor; lista wpisów roku nie jest stronicowana.
+- **Zamknięty rok** (trasy `year-close`): nowy wpis → `409 school_year_closed` (trigger `a0_year_freeze` na `INSERT` do
+  `news_posts`, 0130); zmiana, przebieg i wycofanie istniejącego wpisu zamkniętego roku przechodzą — wariant zachowawczy
+  opisany w migracji (wycofanie publikacji, np. po wycofaniu zgody na wizerunek, musi działać zawsze). Zdjęcia nie należą do
+  roku. Schemat wymienia `school_year_closed` tylko przy utworzeniu.
+- Rozbieżności i uwagi (opis, trasy bez zmian): `415 photo_file_active_content` z kodu trasy jest nieosiągalny (kontrola
+  struktury PNG/JPEG zwraca wyłącznie `document_malformed`), więc nie ma go ani w schemacie, ani w katalogu; `createdAt`
+  wariantu pliku jest `null` tylko przy odtworzeniu po przegranym wyścigu dwóch przesłań (ten odczyt pomija kolumnę) — w
+  schemacie `nullable`; zgłoszenie (`submit`) nie zwraca `invalid_transition` ani `403 forbidden` (każdy, kto widzi wpis,
+  może go zgłosić; zgłoszenie zgłoszonego to odtworzenie); zły identyfikator w ścieżce (`invalid_post_id`, `invalid_photo_id`,
+  `invalid_consent`) daje `400` także osobie bez uprawnienia — format jest sprawdzany po sesji, ale przed rolą (bez
+  ujawniania istnienia obiektu). Pola tekstowe zdjęcia
+  przechodzą bramkę danych osobowych bez listy znanych imion i nazwisk (zdjęcie nie należy do roku), więc imię i nazwisko
+  dziecka w `altText` nie wywoła ostrzeżenia `known_name`, a `altText` jest publiczny (ryzyko opisane w raporcie etapu 10).
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
