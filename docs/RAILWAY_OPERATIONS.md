@@ -1160,7 +1160,7 @@ bez potrzeby dostępu do Railway:
   General → Fork pull request workflows). Opisy poniżej o runnerze self-hosted
   są historyczne i dotyczą wyłącznie takiego runnera, gdyby był używany
   do prywatnych repozytoriów.
-- Usługa PostgreSQL w jobie `test-pg-real` jest efemeryczna, dostępna tylko na
+- Usługa PostgreSQL w jobach `test-pg-real` i `test-pg-mutations` jest efemeryczna, dostępna tylko na
   runnerze; jej hasło (`rd_ci_only`) nie jest sekretem i nie chroni żadnych
   danych.
 
@@ -1184,7 +1184,16 @@ jednym shardzie zmierzona i opisana tutaj.
 - **Czas.** Dla trzech kolejnych przebiegów PR na tej samej gałęzi (bez zmian między nimi) odczytaj czasy jobów:
   `gh run view <id> --json jobs --jq '.jobs[] | [.name, .startedAt, .completedAt] | @tsv'`. Czas przebiegu to różnica
   między najwcześniejszym `startedAt` a `completedAt` jobu `ci-ok`. Dla zapasu porównaj najdłuższy shard z limitem
-  20 min (`test`) i job `test-pg-real` z limitem 45 min: wynik powyżej 80% limitu oznacza zbyt mały zapas.
+  20 min (`test`), a joby `test-pg-real` i każdą część `test-pg-mutations` z limitem 15 min: wynik powyżej 80% limitu
+  oznacza zbyt mały zapas. Czasy kroków jobu (np. osobno testy i przygotowanie):
+  `gh api repos/<repo>/actions/jobs/<job id> --jq '.steps[] | [.name, .started_at, .completed_at] | @tsv'`.
+- **Joby na prawdziwym PostgreSQL (#111).** Po #722 shardy `test` trwały 2,2–5,4 min, a czas PR wyznaczał job
+  `test-pg-real` (8,3–9,3 min w trzech przebiegach z 3 października 2026: przygotowanie 21–26 s, `npm run test:pg-real`
+  106–127 s, kontrola mutacyjna 361–404 s). Kontrola mutacyjna biegnie teraz w osobnym jobie `test-pg-mutations` w 3
+  częściach (`--shard=i/3`, każda z własną usługą `postgres`, wszystkie wymagane przez `ci-ok`); szacunek części
+  127–132 s, oczekiwany najdłuższy job PG ok. 2,6 min zamiast ok. 9 min. Podział, strażnicy i pomiar lokalny:
+  `docs/TESTING.md`, „Podział mutantów na części”. Czas na GitHub po tej zmianie jeszcze niezmierzony; trzy przebiegi
+  wpisać tutaj.
 - **Stan pomiarów (podział według czasu, #111).** GitHub po #717 (dane z #111, czasy jobów `test` 1/6–6/6):
   185, 218, 206, 152, 165 i **467 s**; przed #717: 229, 271, 322, 210, 495, 186 s. Wąskim gardłem był shard 6/6
   (`--test-shard` dał mu `pg-authz-matrix`, ok. 400 s w jednym procesie). Po podziale według wag, macierzy uprawnień w
