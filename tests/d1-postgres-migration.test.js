@@ -8,6 +8,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { checkSnapshot, createSnapshot, restoreSnapshot, SNAPSHOT_FORMAT, SNAPSHOT_TABLES, snapshotChecksum, verifySnapshot } from '../src/d1-postgres-migration.js';
 import { createPgliteTestDb } from './helpers/pg.js';
+import { PGlite } from '@electric-sql/pglite';
 
 function syntheticSnapshot() {
   const tables = Object.fromEntries(SNAPSHOT_TABLES.map((table) => [table, []]));
