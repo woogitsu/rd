@@ -500,8 +500,8 @@ Cechy modułu etapu 10 (`news`, aktualności i galeria z prawami do zdjęć — 
   może go zgłosić; zgłoszenie zgłoszonego to odtworzenie); zły identyfikator w ścieżce (`invalid_post_id`, `invalid_photo_id`,
   `invalid_consent`) daje `400` także osobie bez uprawnienia — format jest sprawdzany po sesji, ale przed rolą (bez
   ujawniania istnienia obiektu). Pola tekstowe zdjęcia
-  przechodzą bramkę danych osobowych bez listy znanych imion i nazwisk (zdjęcie nie należy do roku), więc imię i nazwisko
-  dziecka w `altText` nie wywoła ostrzeżenia `known_name`, a `altText` jest publiczny (ryzyko opisane w raporcie etapu 10).
+  (w tym publiczny `altText`) i powód cofnięcia praw przechodzą bramkę danych osobowych z listą znanych imion i nazwisk
+  ze wszystkich otwartych lat szkolnych (#741, `loadKnownNamesForOpenYears`, `docs/PII_CHECK.md`), bo zdjęcie nie należy do roku.
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.

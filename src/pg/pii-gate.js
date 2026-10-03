@@ -2,7 +2,8 @@
 // niezmiennych (wpisu nie da się potem poprawić ani usunąć; trafia do eksportu
 // rocznego i kopii zapasowych). Opiera się na src/pg/pii-check.js — wzorce,
 // bez nazw własnych (nazwisk nie da się wiarygodnie wykryć; wyjątek: miejsca,
-// które już przekazują listę znanych imion i nazwisk z roku szkolnego).
+// które przekazują listę znanych imion i nazwisk z roku szkolnego wpisu albo,
+// dla pól bez roku — zdjęcia, #741 — ze wszystkich lat otwartych).
 //
 // Wariant zachowawczy (do decyzji zarządu/IOD, patrz docs/PII_CHECK.md):
 //   * wzorce JEDNOZNACZNE — e-mail, IBAN (BE/PL, mod-97), numer rejestru
@@ -152,18 +153,55 @@ export function piiAuditMetadata(gate) {
   return gate?.piiConfirmed ? { piiConfirmed: true, piiCategories: gate.piiCategories } : {};
 }
 
-/** Znani uczniowie i opiekunowie zapisani w danym roku szkolnym (imię, nazwisko). */
-export async function loadKnownNames(executor, schoolYearId) {
-  const { rows } = await executor.query(
-    `SELECT first_name, last_name FROM students
-      WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+// Uczniowie zapisani w latach z podzbioru `yearSet` (wyrażenie SQL zwracające
+// identyfikatory lat) i opiekunowie ich gospodarstw. Jedno zapytanie dla obu
+// wariantów (rok wpisu / wszystkie lata otwarte); UNION usuwa powtórzenia, np.
+// tego samego ucznia zapisanego w dwóch otwartych latach albo rodzeństwo z
+// tymi samymi opiekunami. `yearSet` to wyłącznie stałe z tego modułu.
+function knownNamesSql(yearSet) {
+  return `WITH enrolled AS (
+       SELECT DISTINCT student_id FROM enrollments WHERE school_year_id IN (${yearSet})
+     )
+     SELECT first_name, last_name FROM students
+      WHERE id IN (SELECT student_id FROM enrolled)
      UNION
      SELECT g.first_name, g.last_name FROM guardians g
       WHERE g.household_id IN (
-        SELECT household_id FROM students
-         WHERE id IN (SELECT student_id FROM enrollments WHERE school_year_id = $1)
+        SELECT household_id FROM students WHERE id IN (SELECT student_id FROM enrolled)
+      )`;
+}
+
+const KNOWN_NAMES_FOR_YEAR_SQL = knownNamesSql('$1');
+
+// Rok „otwarty” = bez wiersza w school_year_closures albo w trakcie zamykania
+// ('closing'); zamknięty = status 'closed' (0017_year_close.sql, ta sama
+// definicja co school_year_assert_open).
+const KNOWN_NAMES_FOR_OPEN_YEARS_SQL = knownNamesSql(
+  `SELECT y.id FROM school_years y
+      WHERE NOT EXISTS (
+        SELECT 1 FROM school_year_closures c WHERE c.school_year_id = y.id AND c.status = 'closed'
       )`,
-    [schoolYearId],
-  );
+);
+
+function toKnownNames(rows) {
   return rows.map((row) => ({ firstName: row.first_name, lastName: row.last_name }));
+}
+
+/** Znani uczniowie i opiekunowie zapisani w danym roku szkolnym (imię, nazwisko). */
+export async function loadKnownNames(executor, schoolYearId) {
+  const { rows } = await executor.query(KNOWN_NAMES_FOR_YEAR_SQL, [schoolYearId]);
+  return toKnownNames(rows);
+}
+
+/**
+ * #741: znani uczniowie i opiekunowie ze WSZYSTKICH lat szkolnych, które nie są
+ * zamknięte — dla pól bez roku szkolnego (zdjęcia aktualności: `alt_text`,
+ * `author`, `source_detail`, `license_text`, `rights_note`, `revocation_reason`).
+ * Lata zamknięte są pomijane: uczeń nadal w szkole ma zapis w roku otwartym
+ * (promocja tworzy zapis w następnym roku), a archiwum zamkniętych lat
+ * powiększałoby listę i liczbę fałszywych alarmów bez końca. Jedno zapytanie.
+ */
+export async function loadKnownNamesForOpenYears(executor) {
+  const { rows } = await executor.query(KNOWN_NAMES_FOR_OPEN_YEARS_SQL);
+  return toKnownNames(rows);
 }
