@@ -1,8 +1,9 @@
-// Kontrakt API (#160, etapy 2-4): schematy ciał żądań i odpowiedzi w docs/openapi.json
+// Kontrakt API (#160, etapy 2-5): schematy ciał żądań i odpowiedzi w docs/openapi.json
 // (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
 // (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js;
 // preliminarz, kasa i centra kosztów (ledger-budget, ledger-cash, ledger-cost-centers)
-// w tests/openapi-contract-ledger-extra.test.js.
+// w tests/openapi-contract-ledger-extra.test.js; uzgodnienia wyciągów i raport KR (reconciliation)
+// w tests/openapi-contract-reconciliation.test.js.
 // Testy rejestru poniżej obejmują wszystkie pokryte moduły.
 //
 //  * rejestr pokrycia: każda trasa pokrytego modułu MA schemat; moduły bez schematów
@@ -32,9 +33,12 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 20;
+const MAX_UNCOVERED_MODULES = 19;
 // Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
 const POST_WITHOUT_BODY = new Set(['POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout']);
+
+// Pliki pomocnicze trasy, których kody błędów trasa zwraca bez zmiany (parsery wyciągów banku).
+const ROUTE_HELPER_SOURCES = { reconciliation: ['bank/common.js', 'bank/coda.js', 'bank/camt053.js'] };
 
 const openApiPath = (route) => route.path.split('?')[0].replace(/:([A-Za-z]\w*)/g, '{$1}');
 const routeKey = (route) => `${route.method} ${openApiPath(route)}`;
@@ -148,7 +152,10 @@ test('rejestr: kody błędów w schematach są w katalogu docs/API_ERRORS.md i w
   const problems = [];
   let codesChecked = 0;
   for (const module of SCHEMA_MODULES) {
-    const source = [await readFile(new URL(`../src/pg/routes/${module.name}.js`, import.meta.url), 'utf8'), ...shared].join('\n');
+    // Moduł z parserami poza plikiem trasy (#160 etap 5: kody plików CODA/CAMT.053 rzuca src/pg/bank/*.js).
+    const helpers = await Promise.all((ROUTE_HELPER_SOURCES[module.name] ?? [])
+      .map((file) => readFile(new URL(`../src/pg/${file}`, import.meta.url), 'utf8')));
+    const source = [await readFile(new URL(`../src/pg/routes/${module.name}.js`, import.meta.url), 'utf8'), ...helpers, ...shared].join('\n');
     for (const [key, entry] of Object.entries(module.routes)) {
       for (const [status, codes] of Object.entries(entry.errors ?? {})) {
         for (const code of codes) {
