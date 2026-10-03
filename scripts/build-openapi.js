@@ -9,7 +9,7 @@
 //
 // Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga z preliminarzem, kasą i centrami
 // kosztów, rodziny, sesja, uzgodnienia wyciągów z raportem KR, kampanie e-mail, zebrania, dokumenty, wydarzenia, aktualności,
-// administracja kont i ról); pozostałe są
+// administracja kont i ról, logowanie i MFA); pozostałe są
 // jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
 // tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
 // „do zatwierdzenia” przez zarząd/szkołę.
@@ -102,6 +102,7 @@ const RESPONSE_TEXT = {
   413: 'Żądanie albo wynik za duży (kod z katalogu).',
   415: 'Nieobsługiwany typ treści (kod z katalogu).',
   422: 'Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).',
+  429: 'Zbyt wiele prób (kod z katalogu; nagłówek Retry-After).',
   503: 'Usługa chwilowo niedostępna (kod z katalogu).',
 };
 
@@ -183,14 +184,19 @@ function applySchema(operation, entry) {
   for (const [status, spec] of Object.entries(entry.responses)) operation.responses[status] = schemaResponse(spec);
   for (const [status, codes] of Object.entries(entry.errors ?? {})) {
     const existing = operation.responses[status];
+    if (existing?.$ref) throw new Error(`kody błędów dla statusu ${status} wskazującego wspólną odpowiedź (${existing.$ref})`);
     const response = existing ?? { description: RESPONSE_TEXT[status] ?? 'Błąd (kod z katalogu).', content: errorContent() };
     response['x-rd-error-codes'] = uniqSorted([...(response['x-rd-error-codes'] ?? []), ...codes]);
+    // Opis błędu właściwy trasie (#160 etap 11), np. 401 logowania to złe dane logowania, a nie brak sesji.
+    if (entry.errorDescriptions?.[status]) response.description = entry.errorDescriptions[status];
     // Pusta lista: status wynika z macierzy tras, ale trasa go nie zwraca (np. 403 dla tras sesji).
     if (!response['x-rd-error-codes'].length) {
       response.description = 'Status z macierzy tras (x-rd-deny-status); trasa go nie zwraca, więc lista kodów jest pusta.';
     }
     operation.responses[status] = response;
   }
+  const orphanedDescriptions = Object.keys(entry.errorDescriptions ?? {}).filter((status) => !entry.errors?.[status]?.length);
+  if (orphanedDescriptions.length) throw new Error(`opis błędu bez kodów dla statusu: ${orphanedDescriptions.join(', ')}`);
   operation.responses = sortKeys(operation.responses);
 }
 

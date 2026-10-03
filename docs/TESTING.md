@@ -254,13 +254,14 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-10)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-12)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
 etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
-etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; etap 9 — `events`; etap 10 — `news`; razem 193 operacje)
+etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; etap 9 — `events`; etap 10 — `news`; etap 11 — `login`,
+`mfa`; etap 12 — `admin`; razem 252 operacje)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
@@ -270,7 +271,9 @@ mają schematy ciał żądań i odpowiedzi
 - kody błędów w schematach należą do katalogu `docs/API_ERRORS.md` i występują w źródle trasy (dla `reconciliation`
   także w parserach wyciągów `src/pg/bank/*.js`, dla `meetings` w module domenowym `src/pg/meetings.js`, dla `documents`
   w kontroli struktury pliku `src/documents.js` i kursorze list, dla `events` w module domenowym `src/pg/events.js`,
-  dla `news` w module domenowym `src/pg/news.js` i kursorze list, `ROUTE_HELPER_SOURCES`);
+  dla `news` w module domenowym `src/pg/news.js` i kursorze list, dla `login` w `src/pg/login.js` i polityce haseł
+  `src/pg/password.js`, dla `mfa` w `src/pg/mfa.js`, dla `admin` w modułach wniosków, partii zaproszeń, promocji, RODO,
+  anonimizacji, resetu kont (`src/pg/login.js`) i kursorze list, `ROUTE_HELPER_SOURCES`);
 - **prawdziwe odpowiedzi** (PGlite, dane syntetyczne) przez `tests/helpers/contract-client.js` i walidator
   `tests/helpers/json-schema.js` (bez nowej zależności; nieznane słowo kluczowe schematu rzuca wyjątek, więc nie
   przepuszcza po cichu): utworzenie, ponowienie z tym samym kluczem (`Idempotency-Replayed`), korekta częściowa,
@@ -585,6 +588,121 @@ wymaga `altText` albo `decorative: true`. Scenariusz:
 - pominięcie każdego wymaganego pola ciała → `400` i każda odpowiedź sukcesu ze schematu (także plik `image/jpeg`)
   zwalidowana na prawdziwej odpowiedzi.
 
+Prawdziwe odpowiedzi etapu 11 (moduły `login`, 6 operacji, i `mfa`, 7 operacji) sprawdza
+`tests/openapi-contract-auth.test.js` (ten sam `createContractClient`, PGlite, dane syntetyczne `@example.invalid`, hasła
+generowane w teście, scrypt o najniższym koszcie `SCRYPT_COST_LOG2=15`). Trasy niczego nie wysyłają (reset hasła to token
+od administratora, bez e-maila), więc nie ma atrapy transportu, a pułapka sieci kończy się zerem. Kody TOTP liczy test z
+sekretu zwróconego przy zapisie (`totp(base32Decode(secret), …)`, jak `tests/pg-mfa.test.js`); adres klienta podaje nagłówek
+`x-rd-client-ip` (w produkcji ustawia go serwer Node), a scenariusze limitów mają osobne adresy. Osobny test sprawdza w
+specyfikacji, że **schematy odpowiedzi nie mają pól tajnych** (hasło, hash, token, sekret, kod, cookie, IP, User-Agent) poza
+jednorazowym sekretem TOTP i URI `otpauth://` przy zapisie MFA oraz kodami odzyskiwania przy potwierdzeniu, że pola z
+hasłem, tokenem i kodem w żądaniach mają `writeOnly: true`, że trasy bez sesji mają puste `security`, a żaden zapis nie
+używa `Idempotency-Key`. Każdy scenariusz sprawdza też, że żadna prawdziwa odpowiedź nie zawiera użytego hasła ani tokenu
+(sekret TOTP i kody odzyskiwania — tylko w odpowiedziach zapisu i potwierdzenia). Scenariusz:
+
+- **logowanie**: sukces (sesja bez MFA w cookie `HttpOnly`, bez identyfikatora konta i ról w treści; adres wielkimi
+  literami ze spacjami), **nieznany adres, złe hasło, konto wyłączone, konto bez hasła i adres w złym formacie dają
+  identyczną odpowiedź** (status, treść i nagłówki — bez wyroczni istnienia konta); **limit prób**: para (adres, IP) —
+  piąty błąd `429 too_many_attempts` z `Retry-After`, ta sama sekwencja dla nieistniejącego konta, w czasie blokady
+  poprawne hasło z tego IP też `429`, z innego IP `200`; 20 błędów z jednego IP → `429`; **pełna kolejka scrypt** →
+  `503 login_busy` z `Retry-After: 5` bez liczenia próby; logowanie działa w oknie serwisowym (`read_only`);
+- **stan sesji i zmiana hasła**: `GET /api/auth/state` (bez sesji `401`, `hasPassword`, stan MFA sesji po samym haśle);
+  zmiana: `invalid_current_password`, polityka (`password_too_short`, `password_too_long`, `password_common`,
+  `password_contains_email`), `password_unchanged`, sukces z rotacją (stare cookie i inne sesje → `401`), podwójne
+  kliknięcie, limit błędnych obecnych haseł (`429`); **bramka MFA routera**: zarząd bez czynnika `403
+  mfa_enrollment_required`, konto z czynnikiem po samym haśle `403 mfa_required`, po potwierdzeniu MFA `200`;
+- **zaproszenia**: podgląd (zamaskowany adres, rola, klasa, rok, bez sesji, **token nie jest zużyty**), przyjęcie:
+  `password_mismatch` (także bez powtórzenia), polityka haseł, `invalid_display_name`, sukces `201` z cookie; **ponowne
+  użycie tokenu i podgląd po przyjęciu → `400 invalid_invitation`** (ten sam kod co token nieznany — kodu `already_used`
+  nie ma), wygasłe zaproszenie, istniejące konto (`accountExists: true`, złe obecne hasło `401 invalid_credentials`,
+  dobre → `201`, `created: false`), dyrekcja bez roku `422 school_year_required` (zaproszenie niezużyte), limit IP
+  błędnych tokenów (`429` także dla ważnego tokenu);
+- **reset hasła tokenem**: polityka nowego hasła bez zużycia tokenu, token zastąpiony nowszym, nieznany i w złym formacie
+  → `400 invalid_token`; sukces `{ ok: true }` bez cookie, wszystkie sesje konta wycofane, **token użyty** i **token
+  wygasły** → `invalid_token`, stare hasło `401`, nowe `200`; pełna kolejka scrypt `503 login_busy` bez zużycia tokenu;
+  limit IP (`429`);
+- **MFA**: bez sesji `401` na każdej trasie; `409 mfa_enrollment_not_found` i `409 mfa_not_enrolled` przed zapisem; brak
+  klucza `503 mfa_unavailable`; zapis (ponowny zastępuje oczekujący sekret), potwierdzenie (stary sekret → `invalid_code`;
+  10 kodów odzyskiwania, rotacja sesji); **ten sam kod TOTP co przy potwierdzeniu odrzucony w nowej sesji**, następny
+  przyjęty i znów odrzucony w kolejnej sesji; kod odzyskiwania małymi literami bez myślników przyjęty, **ponownie
+  odrzucony**; piąty błąd w sesji `429 mfa_locked` z `Retry-After` (w czasie blokady poprawny kod i kod odzyskiwania też
+  `429`); zapis czynnika z sesji po samym haśle `403 mfa_required`, z MFA sprzed ponad 15 min `403 mfa_stale`; **wymiana
+  czynnika**: potwierdzenie z sesji po samym haśle `403 mfa_required`, świeżą sesją `200`, stare kody odzyskiwania
+  unieważnione; rotacja klucza: czynnik zaszyfrowany kluczem spoza pierścienia `503 mfa_key_missing`, kod odzyskiwania
+  działa bez klucza;
+- **sesje własne**: lista tylko własnych sesji (bez IP i User-Agent), cofnięcie innej własnej sesji (cookie żądania bez
+  zmian), **cudza, nieistniejąca i już cofnięta sesja → identyczne `404 not_found`**, cofnięcie bieżącej czyści cookie
+  (ponowienie `401`), `revoke-all` — `scope: all` dla konta bez czynnika i `current` dla sesji po samym haśle konta z
+  czynnikiem (#189);
+- błędy wspólne każdego zapisu z ciałem: obcy i brakujący `Origin` (`403 invalid_origin`), `415`, `413`, niepoprawny JSON
+  (także `[]`, `null` i puste ciało) i pominięcie każdego wymaganego pola → `400 invalid_json`; hasło ponad 1024 bajty →
+  `password_too_long`; każda odpowiedź sukcesu ze schematów obu modułów zwalidowana na prawdziwej odpowiedzi.
+
+`409 conflict` przyjęcia zaproszenia i zmiany hasła (zmiana stanu konta między sprawdzeniem hasła a zapisem) jest w
+schemacie, ale nie w tym teście — PGlite wykonuje transakcje po kolei, więc tego przeplotu nie da się odtworzyć bez
+prawdziwego PostgreSQL.
+
+Prawdziwe odpowiedzi etapu 12 (moduł `admin`, 46 operacji) sprawdza `tests/openapi-contract-admin.test.js` (ten sam
+`createContractClient`, PGlite, dane syntetyczne `@example.invalid`, imiona syntetyczne). Moduł niczego nie wysyła (tokeny
+zaproszeń i resetu wracają tylko w odpowiedzi), pułapka sieci kończy się zerem. Osobny test sprawdza w specyfikacji, że klucz
+idempotencji mają tylko zapis promocji, zapis partii (wymagany) i rejestracja żądania osoby (opcjonalny), nagłówek
+`Idempotency-Replayed` — tylko rejestracja żądania osoby (`201` z `false` i `required: false`, `200` z `true`), odrzucenie
+wniosku ma `requestBody.required: false`, schematy list, wniosków, kont, przydziałów i odtworzenia partii nie mają pola
+`token`, `mfa_stale` ma dokładnie 12 operacji kroku w górę MFA, a próbki odmów obejmują każdą operację modułu. Scenariusz:
+
+- **granice ról na każdej z 46 operacji**: brak sesji `401`; zarząd, skarbnik, przedstawiciel klasy, Komisja Rewizyjna i
+  dyrekcja `403 forbidden`; admin bez czynnika `403 mfa_enrollment_required`, z czynnikiem po samym haśle `403 mfa_required`;
+  obcy `Origin` na każdym zapisie `403 invalid_origin`; odmowy niczego nie zapisują;
+- **konta**: lista z kursorem (strony po 4 = jedna strona, `invalid_limit`, `invalid_cursor`), wyłączenie z wycofaniem sesji,
+  włączenie, ponowienia `changed: false`, `cannot_disable_self`, `user_not_found`, `invalid_id`; wylogowanie; reset hasła
+  (token raz, nowy unieważnia poprzedni; konto chronione `202` z wnioskiem, ponowienie ten sam wniosek; `invalid_ttl`,
+  `user_disabled`, `mfa_stale`, `400 invalid_json`, `415`, `413`); reset MFA (konto bez roli chronionej od razu, ponowienie
+  `changed: false`; chronione `202`; `confirmation_required`, `cannot_reset_own_mfa`, `user_disabled`);
+- **wnioski o reset (cztery oczy)**: lista z kursorem związanym ze statusem, wnioskodawca nie zatwierdza
+  (`recovery_four_eyes_required`), `mfa_stale`, zatwierdzenie przez drugiego administratora (token resetu; wynik resetu MFA),
+  podwójne kliknięcie `recovery_request_closed`, odrzucenie (także wycofanie przez wnioskodawcę);
+- **przydziały z audytem**: przedstawiciel z klasą (rok z klasy), podwójne kliknięcie `200` bez nowego przydziału, **zakaz
+  samonadania** (`409 cannot_grant_self` także dla roli niechronionej), **dyrekcja bez roku `422 school_year_required`** i z
+  rokiem `201`, `class_scope_not_supported`, `class_required`, `class_not_found`, `class_not_in_school_year`,
+  `school_year_not_found`, `invalid_expires_at`, `user_not_found`, `user_disabled`, `invalid_role`, `invalid_user_id`,
+  `invalid_class_id`; zdarzenia `role_grant.created`/`role_grant.revoked` z aktorem i obiektem w dzienniku; cofnięcie z
+  ponowieniem, `last_admin_grant`, `grant_not_found`; lista z kursorem związanym z filtrem i jej błędy;
+- **wniosek o rolę chronioną zatwierdzany przez drugą osobę**: przydział zarządu (`202`, wnioskodawca i adresat nie
+  zatwierdzają — `grant_four_eyes_required`, `mfa_stale`, zatwierdzenie `granted_by` = zatwierdzający, drugie
+  `grant_request_closed`), zaproszenie do zarządu z tokenem dla zatwierdzającego, **ponowne wydanie** takiego zaproszenia
+  (`202` z `replacesInvitationId`, po zatwierdzeniu nowy token), odrzucenie z powodem, bramka danych osobowych (`422
+  personal_data_forbidden`, `possible_personal_data`), `invalid_reason`, odrzucenie bez treści; lista bez tokenów;
+- **zaproszenia**: utworzenie (adres znormalizowany, token raz), `invitation_pending`, dyrekcja z rokiem, `cannot_grant_self`
+  (własny adres), `school_year_required`, `invalid_email`, `invalid_ttl`, `invalid_role`, klasy; **ponowne wydanie**
+  (`replacesInvitationId`, stare → `invitation_not_pending`, dawne zaproszenie dyrekcji bez roku → `422
+  school_year_required`); wycofanie z ponowieniem, przyjęte zaproszenie `invitation_already_accepted`; lista bez tokenów z
+  kursorem;
+- **partie zaproszeń**: podgląd (numery linii, kody wierszy: `invalid_row_format`, `invalid_email`, `class_not_found`,
+  `duplicate_row`, `cannot_grant_self`, `representative_already_assigned`, `invitation_pending`), zapis z kluczem (token na
+  wiersz), **ponowienie tym samym kluczem** (`200`, te same zaproszenia bez tokenów), `idempotency_key_reused`,
+  `invitation_batch_stale`, `invitation_batch_invalid`, `invitation_batch_empty`, `too_many_rows`, brak klucza;
+- **lata, klasy i promocja**: nowy rok i klasy (`school_year_exists`, `class_exists`, `duplicate_name`, daty), kopiowanie
+  klas (`201`, ponowienie `200`), promocja uczniów z kluczem (ponowienie `replayed: true` bez nowych przypisań,
+  `idempotency_key_reused`, `plan_stale`, `nothing_to_promote`) i błędy mapy klas; **przedłużenie przydziałów
+  przedstawicieli** (`201`, powtórzenie `200` `created: 0`, `confirmation_required`, `plan_stale`, `nothing_to_extend`,
+  `mfa_stale`) i obsada klas;
+- **żądania osób**: rejestracja z kluczem (`Idempotency-Replayed: false`), ponowienie (`200`, `true`), `idempotency_conflict`,
+  bez klucza bez nagłówka, błędy podmiotu i dat; przejścia stanu tylko do przodu; **eksport JSON i CSV** po weryfikacji
+  tożsamości (skrót w nagłówku, ten sam skrót przy powtórzeniu; `data_request_identity_not_verified`,
+  `data_request_kind_not_exportable`, `data_request_closed`, `invalid_format`, `mfa_stale`); ograniczenie przetwarzania i
+  jego zdjęcie jako nowe zapisy z historią (`data_request_kind_not_restrictable`, `data_request_subject_not_restrictable`,
+  `data_request_closed`); rejestr z kursorem związanym z filtrem;
+- **anonimizacja**: podgląd bez danych osobowych, wykonanie `201`, ponowienie `200 replayed`, lista przebiegów; błędy żądania
+  (`kind_not_erasable`, `identity_not_verified`, `subject_mismatch`, `closed`), `retention_policy_missing`,
+  `anonymization_plan_changed`, `confirmation_required` i formaty pól;
+- **dziennik odczytu z kursorem**: odczyt karty przez przedstawiciela (także `not_found`) i eksport, strony po 1 = jedna
+  strona, filtry i ich błędy, bez imion i adresów; **przegląd dostępu**: rok zakończony (`school_year_ended`), dyrekcja bez
+  roku w przeglądzie każdego roku (`year_scope_required`), przegląd niczego nie odbiera; wygaszenie kadencji z ponowieniem
+  i `school_year_not_finished`; **dziennik zdarzeń** z kursorem związanym z filtrem, `denialCount` przy `access.denied`,
+  ślady `audit.viewed`, `access_log.viewed`, `access_review.viewed`; raport retencji i stan operacyjny bez adresów;
+- pominięcie każdego wymaganego pola ciała → `400` (pusta mapa klas → `422 class_map_required`) i każda odpowiedź sukcesu ze
+  schematu (oba formaty eksportu) zwalidowana na prawdziwej odpowiedzi.
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
@@ -592,7 +710,8 @@ zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, us
 `tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js`,
 `tests/openapi-contract-reconciliation.test.js`, `tests/openapi-contract-email.test.js`,
 `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
-`tests/openapi-contract-events.test.js` i `tests/openapi-contract-news.test.js`).
+`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js` i
+`tests/openapi-contract-admin.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 

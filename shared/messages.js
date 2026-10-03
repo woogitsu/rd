@@ -90,6 +90,9 @@ export const MESSAGES = Object.freeze({
   mfa_unavailable: "Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem.",
   mfa_key_missing: "Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem.",
   mfa_locked: "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
+  // #160 etap 11: kody zwracane przez src/pg/mfa.js i politykę haseł (src/pg/password.js) bez wzorca detektora.
+  mfa_enrollment_not_found: "Konfiguracja aplikacji uwierzytelniającej wygasła albo nie została rozpoczęta. Rozpocznij ją ponownie.",
+  mfa_not_enrolled: "Konto nie ma skonfigurowanej aplikacji uwierzytelniającej.",
   // #150 (SR-10, krok w górę): dla operacji krytycznych (np. eksport roczny)
   // MFA musi być potwierdzone od niedawna, nie tylko kiedyś w tej sesji.
   mfa_stale: "Ta operacja wymaga świeżego potwierdzenia kodem — podaj kod jeszcze raz.",
@@ -106,6 +109,9 @@ export const MESSAGES = Object.freeze({
   password_mismatch: "Hasła nie są takie same.",
   password_required: "Podaj hasło.",
   password_too_long: "Hasło jest za długie.",
+  password_too_short: "Hasło musi mieć co najmniej 12 znaków.",
+  password_common: "To hasło jest zbyt łatwe do odgadnięcia. Wybierz inne, np. kilka niezwiązanych słów.",
+  password_contains_email: "Hasło nie może zawierać adresu e-mail.",
   password_unchanged: "Nowe hasło musi być inne niż obecne.",
   invalid_display_name: "Nazwa wyświetlana może mieć najwyżej 100 znaków.",
   not_found: "Nie znaleziono zasobu albo nie masz do niego dostępu.",
