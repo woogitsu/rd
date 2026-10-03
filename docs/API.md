@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-12)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-13)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -224,8 +224,8 @@ schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
 `tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
 `tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
-`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js` i
-`tests/openapi-contract-admin.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js`,
+`tests/openapi-contract-admin.test.js` i `tests/openapi-contract-reports.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
@@ -234,14 +234,16 @@ uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i t
 do publikacji i odwołania z zadaniami wolontariuszy, zapisami i widokiem publicznym, aktualności z galerią — zgody na
 wizerunek, weryfikacja, cofnięcie praw, plik zdjęcia i widok publiczny tylko z zatwierdzonymi danymi, logowanie hasłem
 z limitem prób, zaproszenia, reset i zmiana hasła, zapis i weryfikacja MFA z kodami odzyskiwania, sesje własne,
-administracja kont i ról z czterema oczami, przeglądem dostępu, dziennikami i żądaniami osób, zamknięty rok, odmowy i błędy) przechodzą
+administracja kont i ról z czterema oczami, przeglądem dostępu, dziennikami i żądaniami osób, historia obiektu, ścieżka
+kontroli KR, sprawozdanie roczne z migawkami, eksport roczny i lista klasy, kartki, pulpity zarządu i przedstawiciela,
+zamknięty rok, odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (252 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news`; etap 11 (13): `login` (6), `mfa` (7); etap 12 (46): `admin` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (274 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news`; etap 11 (13): `login` (6), `mfa` (7); etap 12 (46): `admin`; etap 13 (22): `audit-history` (4), `audit-reviews` (5), `financial-reports` (6), `exports` (2), `print` (1), `board` (3), `representative` (1) |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `guardian-updates`, `import`, `privacy-notice`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -600,6 +602,51 @@ zasady w `docs/ACCOUNTS.md`, `docs/AUTHORIZATION.md`, `docs/DATA_REQUESTS.md`):
   `data_request_export_in_progress`, `anonymization_row_mismatch`) oraz `role_pending_decision` (dziś żadna rola nie ma
   stanu `pending_decision`) są w schematach, ale nie w teście kontraktu; dziennik odczytu nie ma `truncated`/`limit` jak
   pozostałe listy (#159).
+
+Cechy modułów etapu 13 (`audit-history` — historia obiektu; `audit-reviews` — ścieżka kontroli Komisji Rewizyjnej;
+`financial-reports` — sprawozdanie roczne, przepływy i migawki; `exports` — eksport roczny i lista klasy; `print` — dane
+kartek; `board` i `representative` — pulpity; opis stanu, nie zmiana tras; zasady w `docs/AUTHORIZATION.md`,
+`docs/EXPORT.md`, `docs/RECONCILIATION.md`):
+
+- Specyfikacja obejmuje 22 operacje z macierzy tras. Zakresy odczytu ról „tylko do odczytu”: Komisja Rewizyjna czyta i
+  prowadzi wyłącznie ścieżkę kontroli (`audit-reviews`), dyrekcja wyłącznie zbiorcze sumy (`GET /api/reports/annual`,
+  `GET /api/reports/cash-flow`, z MFA); obie role dostają `403 forbidden` na historii obiektu, migawkach, eksportach,
+  kartkach i pulpitach. Przedstawiciel widzi tylko klasy z własnych przydziałów (kartki `classId` wymagany — `400
+  class_required`, cudza klasa `403`; lista klasy z MFA; pulpit bez parametru klasy, przydział innego roku → `classes: []`).
+- **Bez nagłówka `Idempotency-Replayed`**: `Idempotency-Key` (wymagany) mają wyłącznie zapisy ścieżki KR; ponowienie tym
+  samym kluczem i treścią → `200` z polem `replayed: true`, inna treść → `409 idempotency_conflict`. Migawki sprawozdania
+  nie mają klucza — ta sama treść księgi to ta sama migawka (`200`, `replayed: true`), powtórne zatwierdzenie → `200`.
+  Zamknięcie wątku KR i zatwierdzenie migawki przyjmują żądanie bez treści (`bodyOptional`, `requestBody.required: false`).
+- **Pliki i formaty**: `format=html` sprawozdania i migawki (dokument do druku z CSP), lista klasy `json|csv|xlsx`
+  (`formatsResponse`), eksport zarządu jako osobne ścieżki `export.csv`/`export.xlsx` (`fileResponse`). Eksport roczny to
+  załącznik JSON (`ExportYearlyBundle`: `files` ścieżka → JSONL z PEŁNYMI danymi rodzin i finansów, `manifest` z
+  kolumnami, liczbami wierszy, sumami kwot i skrótami), lista klasy JSON — `ClassRoster` (e-mail opiekuna tylko przy
+  zgodzie opiekuna i relacji, bez wpłat i identyfikatorów rodzin). **Kartki (`GET /api/print/cards`) to JSON** dla panelu
+  `print/`, nie HTML ani PDF: bez danych opiekunów, `recordedNetCents` tylko przy roli finansowej z MFA (pole pomijane, nie
+  null), `skippedRestricted` — sama liczba rodzin z ograniczeniem przetwarzania w zakresie wydruku.
+- Krok w górę MFA (`403 mfa_stale`): eksport roczny i zatwierdzenie migawki. Cztery oczy (`403 four_eyes_required`):
+  zatwierdzenie migawki przez autora i odpowiedź KR złożona przez autora pytania (konflikt ról audit + skarbnik). Zamknięty
+  rok: zapisy KR i zatwierdzenie migawki → `409 school_year_closed`, odczyt zostaje; eksport archiwum przez zarząd roku
+  następnego (`year_close.archive_read` w dzienniku).
+- Rozbieżności i uwagi (opis, trasy bez zmian): **walidacja przed sesją** — brak/zły `schoolYearId` sprawozdania,
+  przepływów i listy migawek, ciało zapisu i zatwierdzenia migawki, ciało eksportu rocznego, `classId`/`format` listy klasy
+  i identyfikator roku w ścieżce KR dają `400` także bez sesji (zamiast `401`; pozostałe moduły etapu sprawdzają sesję
+  najpierw); zły identyfikator uwagi KR w ścieżce → `400 audit_review_not_found` (kod „nie znaleziono” ze statusem 400);
+  **wyrocznie istnienia sprzeczne z SR-07** (niski poziom ryzyka, identyfikatory losowe, treść nie wycieka): odczyt migawki
+  innego roku przez zarząd/skarbnika z przydziałem tylko na inny rok → `403`, a nieistniejącej → `404` (historia obiektu
+  daje w obu przypadkach `404`); lista klasy dla zarządu innego roku → `403` dla istniejącej klasy, `404 class_not_found`
+  dla nieistniejącej; pytanie KR do wpisu księgi albo uzgodnienia → `404 audit_review_target_not_found` vs `201`, choć
+  `audit` bez flagi AUDIT_LEDGER_READ nie czyta księgi; trasa historii przyjmuje dowolny segment rodzaju obiektu, a
+  nieznany (`400 invalid_entity_type`) leży poza czterema operacjami specyfikacji; historia obiektu nie używa
+  `mfaAwareForbiddenCode`, więc przy `MFA_REQUIRED_ROLES` bez zarządu/skarbnika odmowa z braku MFA byłaby `forbidden`
+  (dziś kody MFA daje bramka routera); komentarz macierzy przy `board.overview` mówi, że przydział zarządu do klasy nie
+  otwiera widoku, a `allow` i trasa dają mu `200` z `scope: classes` (zachowanie zgodne z `docs/AUTHORIZATION.md`); pulpit
+  przedstawiciela liczy gospodarstwa po wszystkich bieżących członkostwach, a pulpit zarządu — po gospodarstwach głównych
+  (przy opiece dzielonej liczby dla tej samej klasy mogą się różnić); w zamkniętym roku zapis migawki o niezmienionej treści
+  to ponowienie `200`, a `409 school_year_closed` daje tylko pierwsza migawka roku. Kody nieosiągalne bez przeplotu
+  transakcji, obejścia triggera albo dużych danych (`409 export_in_progress`, `409 conflict` migawek, `409
+  report_snapshot_content_exists`, `500 report_snapshot_integrity_failed` — test w `tests/pg-report-snapshots.test.js`,
+  `413 too_many_rows` powyżej 5000 wierszy kartek) są w schematach, ale nie w teście kontraktu.
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
