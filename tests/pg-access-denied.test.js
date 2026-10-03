@@ -265,7 +265,7 @@ test('families: audit role on the class list and a class-scoped board adding a h
   assert.equal((await db.query('SELECT count(*)::int AS n FROM student_households')).rows[0].n, 0);
 }));
 
-test('events: representative creating an event for a class outside the assignment; double click → one event, counter 2', async () => withDb(async (db, env) => {
+test('events: representative creating an event for a class outside the assignment; double click (PGlite: ponowienie po kolei) → one event, counter 2', async () => withDb(async (db, env) => {
   await seedClass(db, { id: 'c-1b' });
   const cookie = await representative(db, 'rep-ev');
   const create = (classId, key) => statusOf(env, '/api/events', {
