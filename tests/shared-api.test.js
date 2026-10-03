@@ -239,9 +239,9 @@ function serverErrorCodes() {
   };
   walk(join(ROOT, 'src/pg'));
   files.push(join(ROOT, 'src/documents.js'), join(ROOT, 'src/storage.js'));
-  const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]/g;
+  const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]|\[\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]/g;
   const codes = new Set(['mfa_required', 'mfa_enrollment_required']);
-  for (const file of files) for (const match of readFileSync(file, 'utf8').matchAll(pattern)) codes.add(match[1] ?? match[2]);
+  for (const file of files) for (const match of readFileSync(file, 'utf8').matchAll(pattern)) codes.add(match[1] ?? match[2] ?? match[3]);
   return [...codes].sort();
 }
 
