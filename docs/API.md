@@ -151,8 +151,9 @@ Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCur
 
 ## Monitoring kolejki kodów weryfikacyjnych (#140 pkt 5)
 
-Trasy się nie zmieniają (nowych ścieżek nie ma, więc `docs/openapi.json` jest bez zmian — te trasy
-nie mają jeszcze schematów odpowiedzi, patrz „Schematy żądań i odpowiedzi” niżej). Zmieniły się kształty trzech odczytów
+Trasy się nie zmieniają (nowych ścieżek nie ma; od #160 etapu 6 kształt `GET /api/email/worker-status` opisuje
+schemat `EmailWorkerStatus`, dwa pozostałe odczyty nie mają jeszcze schematów odpowiedzi, patrz „Schematy żądań
+i odpowiedzi” niżej). Zmieniły się kształty trzech odczytów
 techniczno-operacyjnych; wszystkie niosą wyłącznie liczby, znaczniki czasu i kody — bez adresów,
 kodów weryfikacyjnych, skrótów i identyfikatorów wniosków:
 
@@ -193,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-4)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-6)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -204,7 +205,8 @@ Plik nie jest edytowany ręcznie; role w `x-rd-roles` pozostają założeniami D
 Schemat modułu eksportuje `name`, `components` (schematy współdzielone) i `routes`:
 `{ 'POST /api/payments': { body, idempotencyKey, query, responses, errors } }`. Generator dołącza do
 operacji `requestBody`, parametry (zapytanie, `Idempotency-Key`), odpowiedzi sukcesu z kształtem
-(200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; eksporty CSV/XLSX z typem pliku;
+(200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; zapis bez klucza, który wysyła nagłówek
+`true` tylko przy ponowieniu, ma w specyfikacji nagłówek z `required: false` — helper `replayedOnRetry`, etap 6; eksporty CSV/XLSX z typem pliku;
 trasa z kilkoma formatami wybieranymi parametrem `format` ma mapę `content` typ treści → schemat, helper
 `formatsResponse` w `src/pg/schemas/common.js`; wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
 per status, wyłącznie z katalogu. Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
@@ -213,8 +215,8 @@ elementy (`Id`, kwoty w eurocentach, daty) są w `src/pg/schemas/common.js`. Sch
 (`additionalProperties: false`): nowe pole w odpowiedzi trasy wymaga świadomej zmiany schematu;
 schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 
-Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js` i
-`tests/openapi-contract-ledger-extra.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
+`tests/openapi-contract-ledger-extra.test.js` i `tests/openapi-contract-email.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, zamknięty rok, odmowy i błędy) przechodzą
@@ -223,8 +225,8 @@ tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (63 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4) |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `email`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `reconciliation`, `representative`, `year-close` |
+| Pokryte (93 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 6 (30): `email` |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `reconciliation`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -253,6 +255,30 @@ Cechy modułów etapu 4 (preliminarz, kasa, centra kosztów — opis stanu, nie 
   zwraca `openingBalance: null`, `adjustments: []`, `current: null`; bilans przeniesiony zamknięciem roku ma
   `carriedFromSchoolYearId`. Kwota kasy w bilansie (`cashCents`) jest w schemacie liczbą ze znakiem, bo bilans
   przeniesiony z zamknięcia roku kopiuje stan kasy; ręczny bilans przyjmuje tylko `cashCents ≥ 0`.
+
+Cechy modułu etapu 6 (`email`, kampanie e-mail — opis stanu, nie zmiana tras):
+
+- `Idempotency-Key` mają tylko szkic kampanii, kampania uzupełniająca, wysyłka testowa i wpis ewidencji limitu
+  (`201` z `Idempotency-Replayed: false`, ponowienie `200` z `true`). Zatwierdzenie, kolejka, pauza, wznowienie,
+  anulowanie i zdjęcie pauzy dostawcy nie mają klucza: pierwsze wykonanie zwraca `200` **bez** nagłówka, a ponowienie
+  rozpoznane po stanie obiektu — `200` z `true` (w specyfikacji nagłówek `required: false`). Rozstrzygnięcie wiersza
+  „do sprawdzenia” i jego zatwierdzenie: `201` bez nagłówka, ponowienie `200` z `true`; wniosek o zdjęcie blokady:
+  `201`, ponowienie `200`, bez nagłówka; `PUT` kampanii: zawsze `200` (ta sama treść = odtworzenie). Ponowienie szkicu
+  uzupełniającego zwraca samo `campaign`, bez `eligibleHouseholds` i `pendingApprovals` z odpowiedzi `201`.
+- Migawka i kolejka: jedna wiadomość na rodzinę (klucz `campaign:<id>:household:<id>`, dla kont `…:user:<id>`);
+  rodzeństwo i dwoje opiekunów jednej rodziny dostają jedną wiadomość (kontakt główny), adres użyty już dla innej
+  rodziny — wykluczenie `duplicate_address`. Wysyłka do obojga opiekunów wymaga decyzji D-17 (`docs/EMAIL.md`).
+- Listy kampanii, odbiorców, „do sprawdzenia”, wyłączeń i ewidencji limitu mają kursor (`limit`, `cursor` →
+  `nextCursor`, `truncated`, `limit`). Lista odbiorców zawiera pełny adres (weryfikacja przed zatwierdzeniem,
+  odczyt w dzienniku); lista „do sprawdzenia”, lista wyłączeń i próbka podglądu — wyłącznie adres maskowany.
+- Mapy liczników (`exclusions`, `outbox`, `staleRecipients`, `lastProviderEvent`, `resolutions`) mają zamknięty słownik
+  kluczy: nowy powód wykluczenia albo stan kolejki wymaga świadomej zmiany schematu.
+- `POST …/test-send` może zwrócić `502` z kodem błędu transportu dostawcy (`src/email/brevo.js`, np.
+  `provider_rejected_400`); te kody nie należą do katalogu `docs/API_ERRORS.md`, więc specyfikacja tego statusu
+  nie opisuje (rozbieżność do uporządkowania osobno). Webhook i wypisanie są publiczne: `401 invalid_signature`,
+  `503 webhook_not_configured` i `429 rate_limited` są w specyfikacji jako kody tych tras.
+- `409 school_year_closed` (zamknięty rok, trigger zamrożenia) jest w schematach zapisów kampanii, ale nie w teście
+  kontraktu (reakcję triggera sprawdzają testy zamknięcia roku).
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.

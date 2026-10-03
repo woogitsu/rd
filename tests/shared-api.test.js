@@ -238,11 +238,16 @@ function serverErrorCodes() {
     }
   };
   walk(join(ROOT, 'src/pg'));
-  files.push(join(ROOT, 'src/documents.js'), join(ROOT, 'src/storage.js'));
+  // #160 etap 6: parser treści kampanii e-mail (ContentError i kody `code: 'invalid_subject'` zwracane
+  // przez trasy src/pg/routes/email.js bez zmiany).
+  files.push(join(ROOT, 'src/documents.js'), join(ROOT, 'src/storage.js'), join(ROOT, 'src/email/content.js'));
   // Czwarta reguła (#160 etap 4): kod jako ostatni argument helpera długości tekstu trasy,
   // np. text(data.note, 3, 500, 'invalid_note') — wcześniej niewykrywany (invalid_note, invalid_notes).
   const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]|\[\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]|\b(?:optionalText|text)\([^()]*,\s*['"]([a-z][a-z0-9_]*)['"]\s*\)/g;
-  const codes = new Set(['mfa_required', 'mfa_enrollment_required']);
+  // Kody zwracane przez funkcje pomocnicze (`return 'kod'`), których wzorce nie widzą: bramka MFA routera,
+  // krok w górę MFA (freshMfaForbiddenCode, src/pg/authorization.js) i odmowa adresu wysyłki testowej
+  // (previewRecipientRefusal, src/email/brevo.js; trasa zwraca go jako 403, #160 etap 6).
+  const codes = new Set(['mfa_required', 'mfa_enrollment_required', 'mfa_stale', 'preview_recipient_not_allowed']);
   for (const file of files) for (const match of readFileSync(file, 'utf8').matchAll(pattern)) codes.add(match[1] ?? match[2] ?? match[3] ?? match[4]);
   return [...codes].sort();
 }

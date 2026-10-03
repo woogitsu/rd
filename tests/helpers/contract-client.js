@@ -5,7 +5,8 @@
 //   * parametry zapytania są opisane w operacji,
 //   * status odpowiedzi jest opisany, a treść JSON zgodna ze schematem tej odpowiedzi
 //     (pliki: zgodny Content-Type; przy kilku formatach schemat wybiera Content-Type odpowiedzi),
-//     nagłówek Idempotency-Replayed zgodny ze specyfikacją,
+//     nagłówek Idempotency-Replayed zgodny ze specyfikacją (brak nagłówka dozwolony tylko, gdy specyfikacja
+//     ma `required: false` — zapis bez klucza, który wysyła `true` wyłącznie przy ponowieniu, #160 etap 6),
 //   * kod błędu należy do `x-rd-error-codes` danego statusu.
 // Zebrane trójki `METODA /ścieżka status` (`client.validated`) pozwalają testowi sprawdzić,
 // że każda odpowiedź sukcesu opisana w schematach została choć raz zwalidowana na prawdziwej odpowiedzi;
@@ -46,9 +47,10 @@ export function createContractClient({ spec, fetch }) {
   /**
    * @param {string} method
    * @param {string} path ścieżka z zapytaniem
-   * @param {{ cookie?: string, body?: unknown, key?: string, expect: number, invalidRequest?: boolean, origin?: string|false }} options
+   * @param {{ cookie?: string, body?: unknown, key?: string, expect: number, invalidRequest?: boolean, origin?: string|false,
+   *   headers?: Record<string, string> }} options `headers` — dodatkowe nagłówki (np. sekret webhooka, Content-Type)
    */
-  async function call(method, path, { cookie, body, key, expect, invalidRequest = false, origin } = {}) {
+  async function call(method, path, { cookie, body, key, expect, invalidRequest = false, origin, headers: extraHeaders = {} } = {}) {
     assert.ok(Number.isInteger(expect), 'call: podaj oczekiwany status (expect)');
     const url = new URL(path, 'https://rd.test');
     const { path: template, operation } = findOperation(method, url.pathname);
@@ -69,7 +71,7 @@ export function createContractClient({ spec, fetch }) {
       }
     }
 
-    const headers = key ? { 'Idempotency-Key': key } : {};
+    const headers = { ...extraHeaders, ...(key ? { 'Idempotency-Key': key } : {}) };
     const response = await fetch(request(path, { method, cookie, body, headers, origin }));
     const contentType = response.headers.get('Content-Type') ?? '';
     const isJson = contentType.includes('application/json');
@@ -84,7 +86,8 @@ export function createContractClient({ spec, fetch }) {
     const replayedHeader = response.headers.get('Idempotency-Replayed');
     const replayedSpec = described.headers?.['Idempotency-Replayed'];
     if (replayedSpec) {
-      assert.ok(replayedSpec.schema.enum.includes(replayedHeader),
+      const absentAllowed = replayedHeader === null && replayedSpec.required === false;
+      assert.ok(absentAllowed || replayedSpec.schema.enum.includes(replayedHeader),
         `${method} ${template} ${response.status}: nagłówek Idempotency-Replayed „${replayedHeader}” niezgodny ze specyfikacją`);
     } else {
       assert.equal(replayedHeader, null, `${method} ${template} ${response.status}: odpowiedź ma Idempotency-Replayed, a specyfikacja go nie opisuje`);

@@ -124,3 +124,10 @@ export const formatsResponse = (description, content) => ({ description, content
 
 /** Odpowiedź JSON z nagłówkiem `Idempotency-Replayed` (`'true'` dla 200 odtworzenia, `'false'` dla 201). */
 export const replayed = (value, description, schema) => ({ description, schema, replayed: value });
+
+/**
+ * Odpowiedź zapisu bez klucza idempotencji (#160 etap 6): pierwsze wykonanie nie wysyła nagłówka
+ * `Idempotency-Replayed`, a ponowienie (podwójne kliknięcie rozpoznane po stanie obiektu) wysyła `true`
+ * z tym samym statusem i kształtem.
+ */
+export const replayedOnRetry = (description, schema) => ({ description, schema, replayed: 'true', replayedOptional: true });

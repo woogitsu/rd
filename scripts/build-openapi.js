@@ -126,6 +126,14 @@ function schemaResponse(spec) {
       },
     };
   }
+
+  // Nagłówek tylko przy ponowieniu (#160 etap 6): zapis bez klucza idempotencji (np. zatwierdzenie
+  // kampanii e-mail) przy pierwszym wykonaniu odpowiada bez nagłówka, a ponowienie wysyła `true`.
+  if (spec.replayedOptional) {
+    response.headers['Idempotency-Replayed'].required = false;
+    response.headers['Idempotency-Replayed'].description = 'true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; '
+      + 'brak nagłówka: zapis wykonany teraz.';
+  }
   return response;
 }
 

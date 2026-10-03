@@ -541,6 +541,11 @@ export const MESSAGES = Object.freeze({
   preview_account_limit: "Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro.",
   preview_campaign_limit: "Wyczerpano limit wiadomości testowych dla tej kampanii.",
   sending_disabled: "Wysyłka e-mail jest wyłączona w tym środowisku.",
+  // #160 etap 6: kody kampanii e-mail widoczne dopiero po rozszerzeniu detektora kodów.
+  invalid_subject: "Temat wiadomości musi mieć od 3 do 200 znaków w jednej linii.",
+  invalid_placeholder: "Treść zawiera nieznany znacznik w nawiasach klamrowych (dozwolone: {rok}, {rodzina}, {komunikat}, {rachunek}, {odbiorca}; w temacie tylko {rok}).",
+  payment_reference_missing: "Rodzina nie ma aktywnej komunikacji strukturalnej w roku kampanii — wiadomość z {komunikat} nie zostanie wysłana.",
+  preview_recipient_not_allowed: "Adres nie jest na liście skrzynek testowych Rady albo należy do opiekuna — wiadomość testowa nie zostanie wysłana.",
   class_map_required: "Podaj jawną mapę klas (klasa źródłowa → klasa docelowa albo null dla klasy końcowej). Bez mapy nic nie jest przenoszone.",
   invalid_class_map: "Mapa klas jest niepoprawna (identyfikatory klas, nazwy do 60 znaków, najwyżej 200 wpisów).",
   same_school_year: "Rok źródłowy i docelowy muszą być różne.",
