@@ -6,11 +6,10 @@ name: Nightly real PostgreSQL
 #   nightly-pg-real-app-role  ten sam zestaw na roli aplikacji `rd_app` (SR-05, #101 pkt 3): szuka
 #                             ukrytych zależności od uprawnień właściciela (bez plików, które
 #                             wyłączają triggery w danych testowych albo czytają
-#                             pg_stat_activity — biegną w jobie wyżej). Przebieg DIAGNOSTYCZNY:
-#                             część testów sprawdza niezmienność tabel bezpośrednim UPDATE/DELETE
-#                             albo zakłada obiekty w schemacie public, czego rd_app nie może, więc
-#                             lista niezgodnych plików trafia do podsumowania joba, a krok nie
-#                             oblewa workflow, dopóki nie zostaną sklasyfikowane (docs/TESTING.md);
+#                             pg_stat_activity — biegną w jobie wyżej). Przebieg BLOKUJĄCY: każda
+#                             operacja właściciela w testach idzie przez ownerDb/assertOwnerGuard
+#                             (tests/helpers/pg.js; klasyfikacja w docs/TESTING.md), więc błąd na
+#                             rd_app to brak uprawnienia aplikacji albo nowy test pisany pod właściciela;
 #   nightly-concurrency       N-krotne powtórzenie testów z barierą (wyścigi, blokady, 23505)
 #                             i 50 powtórzeń podwójnego przyjęcia zaproszenia.
 # Osobny workflow: nie jest wymaganym checkiem i nie wchodzi w `ci-ok` (ci.yml).
@@ -93,12 +92,11 @@ jobs:
       # Rola aplikacji bez własności tabel (migracja 0170): połączenia testów startują z `-c role=rd_app`,
       # a baza i szablon migracji powstają rolą właściciela. Pliki wymagające uprawnień właściciela
       # albo pg_read_all_stats skrypt pomija i wypisuje (biegną w jobie nightly-pg-real).
-      # continue-on-error: lista niezgodnych plików jest jeszcze nieklasyfikowana (docs/TESTING.md),
-      # więc krok nie oblewa workflow; wynik jest w podsumowaniu joba i w logu kroku.
+      # Bez continue-on-error (#101): niezgodności są sklasyfikowane (docs/TESTING.md), więc błąd
+      # oblewa workflow. `shell: bash` w Actions to `bash -eo pipefail`, więc `tee` nie ukrywa kodu wyjścia.
       - name: Zestaw na roli rd_app
         id: app-role
         shell: bash
-        continue-on-error: true
         run: npm run test:pg-real -- --all 2>&1 | tee rd-app-role.log
         env:
           RD_TEST_PG_APP_ROLE: rd_app

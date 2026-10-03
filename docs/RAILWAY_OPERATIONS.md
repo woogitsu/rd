@@ -192,7 +192,7 @@ słowem „sekret” oznacza zmienną ustawianą wyłącznie w Railway.
 | `NODE_TEST_CONTEXT` | testy | nie (ustawia `node --test`) | brak | wyłącza opóźnienia i pętle czasowe w testach |
 | `RD_TEST_PG_URL` | testy, `restore:drill:local` | nie | brak | prawdziwy PostgreSQL do testów `test:pg-real` (baza testowa) |
 | `RD_TEST_PG_BACKEND` | testy | nie | `pglite` | `real` uruchamia testy na prawdziwym PostgreSQL |
-| `RD_TEST_PG_APP_ROLE` | testy, `test:pg-real` | nie | brak | nazwa roli bez własności tabel (np. `rd_app`), którą testy na prawdziwym PostgreSQL wykonują aplikację; nocny przebieg diagnostyczny `nightly-pg-real-app-role` |
+| `RD_TEST_PG_APP_ROLE` | testy, `test:pg-real` | nie | brak | nazwa roli bez własności tabel (np. `rd_app`), którą testy na prawdziwym PostgreSQL wykonują aplikację; nocny przebieg blokujący `nightly-pg-real-app-role` (operacje właściciela w testach: `ownerDb` w `tests/helpers/pg.js`) |
 | `PG_BIN` | `test:pg-real` | nie | `pg_config --bindir` | katalog z `initdb` i `pg_ctl` |
 | `E2E_PORT` | testy e2e | nie | zob. `playwright.config.js` | port serwera testów przeglądarkowych |
 | `PLAYWRIGHT_BROWSERS_PATH` | testy e2e | nie | domyślna Playwright | katalog przeglądarek |

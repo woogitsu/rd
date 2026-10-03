@@ -637,6 +637,8 @@ właśnie tą rolą, której używa aplikacja.
 | `privacy-inventory` | sztuczna migracja bez wpisu w spisie | A | `ALTER TABLE guardians ADD COLUMN` przez `ownerDb`; spis kolumn czyta rola aplikacji |
 
 Po zmianach wszystkie 40 plików przechodzi lokalnie na `rd_app` i bez roli (prawdziwy PostgreSQL 16) oraz na PGlite.
+Cały zestaw z przebiegu `--all` na `rd_app` (288 plików bez 54 pominiętych) przeszedł lokalnie plik po pliku, dlatego
+nocny job `nightly-pg-real-app-role` jest blokujący.
 
 `scripts/test-pg-real.js`: `initdb` w katalogu tymczasowym → serwer na losowym porcie
 (wyłącznie `127.0.0.1`, uwierzytelnianie `trust`, `fsync=off`) → `node --test
@@ -1193,15 +1195,14 @@ Nocny przebieg (#111, #101): osobny workflow `.github/workflows/nightly-pg-real.
 
 - `nightly-pg-real` (120 min): `npm run test:pg-real -- --all` (cały zestaw `tests/*.test.js` na prawdziwym
   PostgreSQL) i `npm run test:pg-mutations`;
-- `nightly-pg-real-app-role` (120 min): ten sam zestaw z `RD_TEST_PG_APP_ROLE=rd_app` (punkt 3 z #101). To przebieg
-  DIAGNOSTYCZNY (`continue-on-error`): lokalna próba 18 plików na roli `rd_app` dała 12 plików z błędem, bo testy
-  sprawdzają niezmienność tabel bezpośrednim `UPDATE`/`DELETE` (rola dostaje `permission denied`, a nie komunikat
-  triggera: `audit_events`, `payment_corrections`, `ledger_corrections`, `user_mfa_factors`, `password_reset_tokens`,
-  `access_denial_windows`…), zakładają obiekty w schemacie `public` (`permission denied for schema public`:
-  `pg-real-type-parity`, testy „audit events are atomic…”) albo zmieniają tabele (`must be owner of table`). To nie są
-  błędy aplikacji, tylko testy napisane pod właściciela. Lista niezgodnych plików trafia do podsumowania joba
-  (`### Przebieg na roli rd_app`); kryterium „pełny zestaw testów przechodzi na `rd_app`” z #101 jest otwarte do czasu
-  sklasyfikowania tej listy (test zgodny z rolą albo jawna lista wyjątków z uzasadnieniem, jak `TRIGGER_BYPASS_ALLOWED`);
+- `nightly-pg-real-app-role` (120 min): ten sam zestaw z `RD_TEST_PG_APP_ROLE=rd_app` (punkt 3 z #101). Przebieg
+  BLOKUJĄCY (bez `continue-on-error`; pilnuje tego `tests/nightly-workflow.test.js`). Niezgodności z ostatniego
+  przebiegu diagnostycznego (65 testów w 40 plikach) są sklasyfikowane w sekcji „Klasyfikacja niezgodności z rolą
+  `rd_app`”: operacje właściciela w testach idą przez `ownerDb`/`assertOwnerGuard`, a braku uprawnienia aplikacji nie
+  znaleziono. Nowy błąd na tej roli oznacza więc albo brak uprawnienia, którego aplikacja potrzebuje (migracja z
+  `GRANT` i wpis w `postgres/README.md`), albo test, który wykonuje operację właściciela połączeniem aplikacji.
+  Lista plików z błędem i plików pominiętych (właściciel/`pg_read_all_stats`) trafia do podsumowania joba
+  (`### Przebieg na roli rd_app`). Pominięte pliki (54) nie mają dowodu na `rd_app`, biegną w jobie właściciela;
 - `nightly-concurrency` (90 min): 20 powtórzeń plików z barierą (`pg-real-double-click`, `pg-real-domain-locks`,
   `pg-real-record-locks`, `pg-real-replay-23505`, `pg-real-payment-locks`, `pg-real-request-locks`, `pg-real-auth-locks`,
   `pg-real-email-locks`, `pg-real-guardian-verify-locks`, `pg-real-mfa-locks`, `pg-real-webhook-locks`) i 50 powtórzeń podwójnego przyjęcia zaproszenia

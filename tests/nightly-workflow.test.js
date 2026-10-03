@@ -3,7 +3,7 @@
 //  - powtórzenia (`--repeat=N --name=wzorzec plik`) wskazują istniejący plik i wzorzec, który
 //    pasuje do dokładnie jednego tytułu testu (węższy wzorzec = 0 testów = cichy zielony przebieg);
 //  - każdy plik z listy powtórzeń istnieje i czyta RD_TEST_PG_URL (inaczej bez bazy byłby pomijany);
-//  - przebieg na roli `rd_app` ustawia RD_TEST_PG_APP_ROLE i używa `--all`;
+//  - przebieg na roli `rd_app` ustawia RD_TEST_PG_APP_ROLE, używa `--all` i jest blokujący (bez continue-on-error);
 //  - każdy job ma własny limit czasu i usługę postgres z przypiętym digestem (resztę pilnuje
 //    tests/ci-supply-chain.test.js).
 import test from 'node:test';
@@ -30,6 +30,13 @@ test('przebieg na roli rd_app: pełny zestaw (--all) z RD_TEST_PG_APP_ROLE=rd_ap
   assert.match(body, /RD_TEST_PG_APP_ROLE: rd_app/);
   // Zwykły przebieg pełnego zestawu nie dostaje roli aplikacji (to przebieg właściciela).
   assert.doesNotMatch(jobs.get('nightly-pg-real'), /RD_TEST_PG_APP_ROLE/);
+  // #101: przebieg na rd_app jest blokujący — niezgodności są sklasyfikowane (docs/TESTING.md), więc
+  // powrót do trybu diagnostycznego wymaga świadomej zmiany tego testu. Krok z `| tee` musi mieć
+  // `shell: bash` (w Actions: `bash -eo pipefail`), inaczej kod wyjścia testów ginie w potoku.
+  assert.doesNotMatch(body, /^\s*continue-on-error:/m);
+  const step = /- name: Zestaw na roli rd_app\n([\s\S]*?)(?=\n {6}- |$)/.exec(body)?.[1] ?? '';
+  assert.match(step, /npm run test:pg-real -- --all/);
+  assert.match(step, /^ {8}shell: bash$/m, 'krok z `| tee` wymaga shell: bash (pipefail)');
 });
 
 test('powtórzenia współbieżności: pliki istnieją, czytają RD_TEST_PG_URL, a --name pasuje do dokładnie jednego testu', () => {
