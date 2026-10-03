@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  COUNT_LABELS, HISTORY_PATH, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows,
+  COUNT_LABELS, HISTORY_PATH, HISTORY_REASON_LABELS, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows,
   historySummary, planRows, previewBody, previewSummary, resultMessage, retainedNote, totalCount,
 } from '../admin/anonymization.js';
 
@@ -129,4 +129,10 @@ test('ekran: sekcja w panelu, wywołanie podglądu i wykonania, blokada podwójn
   assert.match(main, /promptAction\(executeConfirmation/);
   assert.match(main, /if \(anon\.busy/);
   assert.doesNotMatch(main, /localStorage|sessionStorage/);
+});
+
+test('historia opisuje przebiegi ponowione po odtworzeniu kopii, ale formularz ich nie oferuje (migracja 0185)', () => {
+  assert.match(HISTORY_REASON_LABELS.restore_reapply, /Ponowione po odtworzeniu kopii/);
+  assert.deepEqual(Object.keys(HISTORY_REASON_LABELS).sort(), [...Object.keys(REASON_LABELS), 'restore_reapply'].sort());
+  assert.throws(() => previewBody({ reasonCode: 'restore_reapply', householdId: 'h-1' }), /powód/);
 });

@@ -51,7 +51,7 @@ import {
   statusConfirmation, subjectOf,
 } from "./data-requests.js";
 import {
-  HISTORY_PATH, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows, historySummary,
+  HISTORY_PATH, HISTORY_REASON_LABELS, REASON_LABELS, canExecute, executeBlocker, executeBody, executeConfirmation, historyRows, historySummary,
   planRows, previewBody, previewSummary, resultMessage, retainedNote,
 } from "./anonymization.js";
 import { api as apiRequest } from "../shared/api.js";
@@ -1651,7 +1651,7 @@ function renderAnonHistory() {
     const actor = cell(accountName(row.actorId, state.users));
     if (row.actorId) actor.title = row.actorId;
     tr.append(cell(formatDateTime(row.occurredAt)), run, household,
-      cell(REASON_LABELS[row.reasonCode] ?? row.reasonCode), cell(row.total === null ? "—" : String(row.total), "num"), digest, actor);
+      cell(HISTORY_REASON_LABELS[row.reasonCode] ?? row.reasonCode), cell(row.total === null ? "—" : String(row.total), "num"), digest, actor);
     return tr;
   }));
 }

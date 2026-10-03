@@ -426,5 +426,9 @@
   {
     "name": "0184_guardian_update_verification.sql",
     "sha256": "385f8ed46174e13d8524a818e536a881f5c2a8fa0bc8a7b8f6b6de834cedeb5f"
+  },
+  {
+    "name": "0185_anonymization_reapply.sql",
+    "sha256": "3bf397b24c4d9b4aa2ea76458a70ae21b2a55efd26ef9c761282df00b43e3f0a"
   }
 ]

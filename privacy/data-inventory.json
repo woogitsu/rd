@@ -300,6 +300,17 @@
       "free_text": false,
       "exportable": false,
       "data_type": "ARRAY"
+    },
+    "source_run": {
+      "personal": "pseudonymous",
+      "subject": "board_member",
+      "category": "identyfikacja",
+      "purpose": "dane źródłowego przebiegu z dziennika poza bazą przy ponownym zastosowaniu po odtworzeniu kopii (identyfikatory, kod powodu, skrót planu, wykonawca)",
+      "retention_category": null,
+      "visible_to": [],
+      "free_text": false,
+      "exportable": false,
+      "data_type": "jsonb"
     }
   },
   "audit_events": {

@@ -39,7 +39,7 @@
 
 Administrator/zarząd wstawia wiersz `retention_policies` (dziś: bezpośrednio
 w bazie przez administratora technicznego — panel do tego nie jest częścią
-tego PR, patrz „Czego nie obejmuje”) z `data_category`, jednym z
+tego mechanizmu, patrz „Czego to jeszcze NIE obejmuje”) z `data_category`, jednym z
 `retain_for`/`retain_until_rule`, `decision_ref` wskazującym uchwałę i, jeśli
 zatwierdzenie jest oddzielone od wpisania, `approved_by` innej osoby. Wiersz
 sam w sobie **niczego nie usuwa** — to wyłącznie rejestr.
@@ -169,7 +169,9 @@ mieć wyłącznie rola aplikacji.
   `truncated`): `id`, `householdId`, `reasonCode`, `dataSubjectRequestId`,
   `retentionPolicyIds`, `planSha256`, `counts`, `totalChanged` (suma liczników),
   `executedBy`, `executedAt` — dokładnie to, co przechowuje tabela. Odczyt nie
-  zapisuje zdarzenia audytu.
+  zapisuje zdarzenia audytu. `reasonCode` jest dodatkowo `restore_reapply` dla
+  przebiegu ponowionego skryptem po odtworzeniu kopii (migracja 0185, niżej);
+  `executedBy` to wtedy osoba, która uruchomiła ponowienie.
 - `audit_events`: `household.anonymization_previewed` (domena `privacy`, obiekt
   `household`; każdy podgląd, z aktorem, czasem, kodem powodu, `planSha256` i
   licznikami) oraz `household.anonymized` (domena `privacy`, obiekt
@@ -181,14 +183,117 @@ mieć wyłącznie rola aplikacji.
 ### Kopie zapasowe i paczki eksportu (dług anonimizacji)
 
 Przebieg zmienia tylko bieżącą bazę. Kopie zapasowe i wcześniej pobrane
-paczki roczne ([`docs/EXPORT.md`](EXPORT.md)) zawierają dane sprzed przebiegu.
-Procedura założona do czasu D-04/D-07: (1) po odtworzeniu kopii bazy
-administrator porównuje ją z dziennikiem operacji przechowywanym POZA bazą
-(eksport `anonymization_runs`/zdarzeń `household.anonymized` — w kopii sprzed
-przebiegu tych wierszy jeszcze nie ma) i ponawia przebiegi dla wskazanych
-gospodarstw; (2) paczki roczne pobrane przed przebiegiem trzeba zniszczyć u
-odbiorcy — serwer ich nie przechowuje. Skrypt `scripts/reapply-anonymization.js`
-i automatyczne ponowienie przy odtworzeniu **nie są zrobione** (follow-up #91).
+paczki roczne ([`docs/EXPORT.md`](EXPORT.md)) zawierają dane sprzed przebiegu,
+a w kopii sprzed przebiegu nie ma jeszcze wiersza `anonymization_runs` (paczka
+roczna w ogóle go nie niesie: tabela jest w `EXPORT_EXCLUDED_TABLES`). Po
+odtworzeniu baza nie wie więc, co zanonimizowano. Do tego służy dziennik
+przechowywany **poza bazą** i skrypt ponownego zastosowania (migracja 0185).
+Opis procedury krok po kroku dla operatora:
+[`docs/RAILWAY_OPERATIONS.md`](RAILWAY_OPERATIONS.md), „Po odtworzeniu: ponowne
+zastosowanie anonimizacji”.
+
+**Dziennik poza bazą** — `npm run anonymization:export-log -- --out=<nowy-plik.json>`
+(`scripts/export-anonymization-log.js`, format `rd-anonymization-log` v1:
+`src/pg/anonymization-log.js`). Plik zawiera dla każdego przebiegu wyłącznie:
+`runId`, `householdId`, `reasonCode`, `dataSubjectRequestId` (albo `null`),
+`retentionPolicyIds`, `planSha256`, `executedAt` (mikrosekundy, UTC) i
+`executedBy` — identyfikatory techniczne, kody i skróty, bez imion, e-maili,
+tekstów i liczników osób. Odczyt odrzuca każde dodatkowe pole i każdą wartość
+spoza wzorca identyfikatora (np. z „@” albo spacją), a suma `runsSha256`
+wykrywa przypadkowe uszkodzenie lub ręczną edycję. Skrypt nie nadpisuje
+istniejącego pliku (eksport z bazy odtworzonej ze starej kopii mógłby zgubić
+przebiegi), tworzy plik z prawami 0600 i nic nie wypisuje o adresie bazy.
+Eksportuj po **każdym** przebiegu; kolejne pliki zapisuj pod nowymi nazwami —
+ponowienie przyjmuje wiele plików i łączy je po `runId`.
+
+**Ponowne zastosowanie** — `npm run anonymization:reapply -- --log=<plik.json>
+[--log=…] --actor=<userId> [--dry-run] [--allow-production]`
+(`scripts/reapply-anonymization.js`, `src/pg/anonymization-reapply.js`):
+
+- `--actor` jest wymagany: aktywny administrator odtworzonej bazy (konto bez
+  wyłączenia z nieodwołanym przydziałem `admin`). Po odtworzeniu z paczki
+  rocznej konta nie wracają — najpierw bootstrap pierwszego administratora (#187).
+- Wpisy są stosowane w kolejności wykonania pierwotnego, wszystkie w **jednej**
+  transakcji (błąd wycofuje całość). `--dry-run` wykonuje tę samą pracę i ją
+  wycofuje, więc podgląd jest dokładny także dla osób wspólnych kilku gospodarstw;
+  zostaje po nim tylko zdarzenie audytu `household.anonymization_previewed` z
+  kodem `restore_reapply`.
+- Zmiany wylicza ten sam plan co przebieg z trasy (`planAnonymization`; te same
+  tabele, kolumny i wartości zastępcze, ta sama furtka `rd.anonymization_run`;
+  bez `DISABLE TRIGGER`). Kwot, dat, statusów, `household_id`, księgi i `email_hash`
+  skrypt nie rusza.
+- **Idempotencja**: wpis, którego `runId` jest już w `anonymization_runs`
+  (`already_recorded`), pomijany; gospodarstwo, którego nie ma w odtworzonej bazie
+  (`household_missing`), pomijane bez błędu; gospodarstwo z pustym planem
+  (już zanonimizowane, `nothing_to_change`) pomijane bez wiersza i bez zdarzenia —
+  tak jak `replayed` z trasy.
+- **Zapis**: wiersz `anonymization_runs` z `reason_code = restore_reapply`,
+  identyfikatorem równym `runId` przebiegu pierwotnego i danymi pierwotnego
+  przebiegu w `source_run` oraz zdarzenie audytu `household.anonymized` z
+  aktorem uruchamiającym ponowienie, czasem i metadanymi (`sourceReasonCode`,
+  `sourcePlanSha256`, `sourceExecutedAt`, `sourceExecutedBy`; bez danych
+  osobowych). Kolejny eksport dziennika z takiej bazy zapisuje te przebiegi w
+  terminach pierwotnych, więc jest równoważny wcześniejszemu. Trasa
+  `POST /api/admin/anonymizations` nadal przyjmuje tylko `retention_policy` i
+  `data_subject_request`.
+- Poza testami i stagingiem wymaga `--allow-production` (`APP_ENV=production` albo
+  nierozpoznane/brak); podgląd go nie wymaga. Wynik na stdout (JSON: wynik per
+  przebieg, `planMatchesSource`, liczniki, `retained`) i komunikaty na stderr nie
+  zawierają danych osobowych.
+
+Założenia (do potwierdzenia D-01/D-04/D-07/IOD, nie rozstrzygnięcia prawne):
+
+- Ponowienie **nie jest nową decyzją**: zatwierdzenie (polityka D-04 albo żądanie
+  D-07 i plan) zapadło przy przebiegu pierwotnym i jest w dzienniku, więc skrypt nie
+  sprawdza ponownie polityk ani żądania (w odtworzonej bazie mogą nie istnieć).
+  Skutek: dziennik jest tu jedyną bramką. Suma kontrolna nie jest podpisem i nie
+  dowodzi pochodzenia pliku; kto i gdzie przechowuje dziennik oraz kto może
+  uruchomić ponowienie — D-01/D-20, kod tego nie rozstrzyga.
+- Skrót planu z dziennika (`planSha256`) nie jest warunkiem wykonania: baza z kopii
+  ma inny stan niż baza w chwili przebiegu. `planMatchesSource: false` to
+  informacja do przeglądu, nie błąd.
+- Ponowienie obejmuje wszystko, co w gospodarstwie wymaga zmiany w chwili
+  ponowienia — zachowawczo względem prywatności (jeśli kopia zawiera dane dopisane
+  po przebiegu pierwotnym, także one zostaną zanonimizowane).
+- Dziennik, który nie obejmuje przebiegów wykonanych po jego eksporcie, nie pomoże
+  w ich ponowieniu: częstotliwość eksportu i miejsce przechowywania to decyzja
+  operacyjna (zalecenie: po każdym przebiegu).
+
+Paczki roczne pobrane przed przebiegiem i kopie u odbiorców (serwer ich nie
+przechowuje) nadal trzeba zniszczyć ręcznie. Kopie zapasowe są przechowywane przez
+czas ustalony w D-04 (kod nie zakłada okresu); stara kopia przywrócona po latach
+zawiera dane sprzed przebiegów, więc ponowienie jest częścią każdego odtworzenia,
+a nie tylko świeżej kopii.
+
+## Propozycja do zatwierdzenia (raport kandydatów z polityki)
+
+`npm run anonymization:proposals [-- --json]`
+(`scripts/anonymization-proposals.js`, `src/pg/anonymization-proposals.js`) —
+raport **tylko do odczytu** (transakcja `READ ONLY`): niczego nie zmienia, nie
+zapisuje wiersza `anonymization_runs`, zdarzenia audytu ani wpisu w kolejce, nie ma
+harmonogramu (żaden plik usługi Railway go nie uruchamia) i nie ma ścieżki
+wykonania. Zgodnie ze wskazaniem z 2026-10-02 (D-04, „bez automatycznego usuwania”)
+administrator przegląda listę i **ręcznie** wykonuje wybrane gospodarstwa istniejącą
+trasą `POST /api/admin/anonymizations` albo ekranem „Anonimizacja” (podgląd, potem
+`confirm` i `expectedPlanSha256`).
+
+- Kandydat = gospodarstwo spełniające warunki trybu `retention_policy` (te same
+  funkcje co trasa: obowiązujące, zatwierdzone polityki `retain_for` dla czterech
+  kategorii i upłynięty najdłuższy okres od końca ostatniego roku szkolnego
+  gospodarstwa), którego plan ma coś do zmiany.
+- **Bez kompletu polityk (D-04 nieustalone, rejestr pusty) raport mówi „brak
+  polityk”** i nikogo nie wskazuje; polityki niezatwierdzone albo tylko opisowe
+  (`retain_until_rule`) dają „polityki niezatwierdzone” / „bez okresu retain_for”.
+  Kod nie ma wartości domyślnej okresu.
+- Wynik: identyfikatory gospodarstw, `planSha256`, liczniki per tabela i liczba osób
+  wspólnych z innymi gospodarstwami (`retained`). Bez imion, e-maili i tekstów.
+  Plan dotyczy bieżącego stanu — po przebiegu dla innego gospodarstwa (opieka
+  dzielona) może się zmienić, więc przed wykonaniem zawsze jest świeży podgląd.
+- Raport nie zapisuje zdarzenia audytu (jak `GET /api/admin/retention/preview`);
+  wykonanie przebiegu zostawia zwykły ślad (`household.anonymization_previewed`,
+  `household.anonymized`).
+- Wprowadzenie automatycznego wykonania albo zadania okresowego wymagałoby decyzji
+  zarządu i IOD (D-04, D-01) oraz osobnej zmiany; ten raport jej nie zastępuje.
 
 ## Dziennik odczytów i historia sprostowań (wskazanie D-04 z 2026-10-02)
 
@@ -214,19 +319,29 @@ ani IOD i wymaga formalnego potwierdzenia w D-04.
   `retention_policies` i tak niczego by nie usunął, bo kod nie ma zadania
   okresowego.
 - Gdyby zarząd i IOD ustalili okres przechowywania, potrzebna będzie osobna
-  migracja (furtka w triggerze w rodzaju `rd_anonymization_active()`), zadanie w
-  trybie „propozycja do zatwierdzenia” i test zachowania sum. Do tego czasu
-  usunięcie danych osoby oznacza wyłącznie anonimizację gospodarstwa.
+  migracja (furtka w triggerze w rodzaju `rd_anonymization_active()`) i test
+  zachowania sum; „propozycją do zatwierdzenia” jest dziś wyłącznie ręczny raport
+  kandydatów (niżej), niczego nie wykonujący. Do tego czasu usunięcie danych osoby
+  oznacza wyłącznie anonimizację gospodarstwa.
 
 ## Czego to jeszcze NIE obejmuje (część #91 zostaje otwarta)
 
 - Okresów retencji i ich zatwierdzania — D-04 (kod ich nie zawiera).
-- Zadania okresowego w trybie „propozycja do zatwierdzenia” — brak
-  automatycznego wykonania; przebieg zawsze uruchamia administrator.
-- Skryptu `scripts/reapply-anonymization.js` i testu „odtworzenie eksportu sprzed
-  anonimizacji + ponowne zastosowanie przebiegów”.
-- Panelu (UI) do podglądu i zatwierdzania przebiegów oraz wstawiania polityk —
-  dziś tylko API/baza.
+- Zadania okresowego, które wykonuje anonimizację — celowo brak (wskazanie
+  2026-10-02: bez automatycznego usuwania). Jest wyłącznie raport propozycji do
+  ręcznego przeglądu (`npm run anonymization:proposals`); przebieg zawsze uruchamia
+  administrator.
+- Automatycznego eksportu dziennika poza bazą po każdym przebiegu i automatycznego
+  ponowienia przy odtworzeniu — operator eksportuje dziennik i uruchamia
+  `anonymization:reapply` ręcznie (procedura w `RAILWAY_OPERATIONS.md`). Miejsce
+  przechowywania dziennika poza Railway i kto je prowadzi (D-01/D-20) jest
+  nierozstrzygnięte; plik ma sumę kontrolną, nie podpis.
+- Zniszczenia paczek rocznych i kopii u odbiorców oraz kopii zapasowych po okresie
+  przechowywania — procedura organizacyjna, nie kod (okres: D-04).
+- Ekranu do wpisywania i zatwierdzania polityk retencji — ekran „Anonimizacja” w
+  panelu administratora (`admin/`) podgląda i wykonuje przebiegi oraz pokazuje ich
+  historię (w tym przebiegi ponowione), ale wiersze `retention_policies` wpisuje się
+  dziś w bazie, a raportu propozycji nie ma w panelu (tylko skrypt).
 - `users` (członkowie Rady po kadencji), `audit_events`, wolnego tekstu w
   protokołach/uchwałach/księdze (patrz „Poza zakresem” wyżej).
 - Drugiego zatwierdzającego przebieg (reguła dwóch osób) — D-01/D-09.

@@ -19988,6 +19988,8 @@
           "quota_correction_target_not_found",
           "rate_limited",
           "read_only",
+          "reapply_actor_not_admin",
+          "reapply_actor_required",
           "recipients_hash_mismatch",
           "reconciliation_abandoned",
           "reconciliation_confirmed",
@@ -22014,6 +22016,16 @@
         "code": "read_only",
         "meaning": "Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "reapply_actor_not_admin",
+        "meaning": "Ponowne zastosowanie anonimizacji może uruchomić tylko aktywne konto administratora.",
+        "retry": "Nie — wskaż aktywne konto administratora."
+      },
+      {
+        "code": "reapply_actor_required",
+        "meaning": "Podaj konto administratora, który uruchamia ponowne zastosowanie anonimizacji.",
+        "retry": "Nie — popraw dane wywołania."
       },
       {
         "code": "recipients_hash_mismatch",

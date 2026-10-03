@@ -219,6 +219,8 @@ export const MESSAGES = Object.freeze({
   retention_period_not_elapsed: "Okres przechowywania danych tego gospodarstwa jeszcze nie upłynął — nic nie zostało zanonimizowane.",
   anonymization_plan_changed: "Dane gospodarstwa zmieniły się od podglądu. Zrób podgląd jeszcze raz i zatwierdź nowy plan.",
   anonymization_row_mismatch: "Liczba zmienionych wierszy nie zgadza się z planem — operację wycofano, nic nie zostało zanonimizowane.",
+  reapply_actor_required: "Podaj konto administratora, który uruchamia ponowne zastosowanie anonimizacji.",
+  reapply_actor_not_admin: "Ponowne zastosowanie anonimizacji może uruchomić tylko aktywne konto administratora.",
   data_request_kind_not_erasable: "Anonimizacja na żądanie jest możliwa tylko przy żądaniu usunięcia danych.",
   invalid_reason_code: "Podaj powód przebiegu: retention_policy albo data_subject_request.",
   invalid_data_request_id: "Podaj identyfikator żądania osoby (tylko przy powodzie data_subject_request).",

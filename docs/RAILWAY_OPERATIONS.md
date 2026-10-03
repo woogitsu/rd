@@ -21,6 +21,7 @@ protokołu, `/api/admin/ops-status` i `/health/jobs`).
 | Smoke test zdalny | `npm run smoke:remote` (`scripts/smoke-remote.js`) | wyłącznie `GET`, po deployu stagingu (sekcja „Smoke test po deployu” niżej) |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
+| Anonimizacja po odtworzeniu | `npm run anonymization:export-log`, `npm run anonymization:reapply`, `npm run anonymization:proposals` (`scripts/export-anonymization-log.js`, `scripts/reapply-anonymization.js`, `scripts/anonymization-proposals.js`) | dziennik przebiegów anonimizacji poza bazą i ponowne zastosowanie po odtworzeniu kopii (sekcja „Po odtworzeniu: ponowne zastosowanie anonimizacji”); raport propozycji tylko do odczytu, **bez crona** — nie ma usługi Railway ani pliku `railway.*.json` dla tych skryptów ([docs/RETENTION.md](RETENTION.md)) |
 | Pierwszy administrator | `npm run auth:bootstrap-admin` (`scripts/bootstrap-admin.js`, `src/pg/bootstrap-admin.js`) | jednorazowe zaproszenie do roli `admin` na pustej bazie (sekcja „Pierwszy administrator (bootstrap)”) |
 | Integralność migracji | `.github/workflows/ci.yml` (job `migrations-order`), `scripts/check-migrations-order.js`, `scripts/generate-migrations-manifest.js` | manifest sum kontrolnych aktualny; PR nie zmienia scalonego pliku migracji ani nie dokłada numeru ≤ maksimum na `main` (sekcja „Numeracja migracji…” w [postgres/README.md](../postgres/README.md)) |
 | CI | `.github/workflows/ci.yml` | testy, buildy, smoke, integralność migracji, lokalne migracje D1 (stara ścieżka pozostaje) |
@@ -832,6 +833,10 @@ parametrów Railway ani czasu przez sieć — RTO z tej próby to tylko dolna gr
    wpłatę częściową z korektą (lokalnie robi to test).
 6. Zmierzyć czas odtworzenia (RTO) i wiek kopii (RPO); usunąć bazę „drill”.
    Wpisać wynik do tabeli.
+7. Jeśli istnieje dziennik anonimizacji (sekcja niżej), uruchomić na bazie „drill”
+   `npm run anonymization:reapply -- --log=… --actor=… --dry-run` i zapisać liczbę
+   przebiegów do ponowienia (`would_apply`) — to rozmiar „długu anonimizacji” tej
+   kopii. Bez dziennika wpisać „brak dziennika poza bazą”.
 
 Kopia bez raportu (sprzed tego mechanizmu) daje wynik `comparison: no_baseline`
 — to nie jest zgodność i nie zamyka pozycji „próbne odtworzenie” na liście odbioru.
@@ -846,6 +851,61 @@ i testem odtworzenia do pustej bazy (`scripts/verify-export.js`), opisany w
 | 29.09.2026 | lokalnie, PostgreSQL 16, dane syntetyczne (`npm run restore:drill:local`) | agent (test automatyczny) | tymczasowa baza źródłowa | B (zrzut logiczny, szyfrowany) | ok. 3 s (dolna granica, lokalnie) | zgodny (liczności, sumy, skróty) | nie zastępuje próby na stagingu |
 | do wykonania | staging | | | | | | |
 | do wykonania | production (przed cutover) | | | | | | |
+
+### Po odtworzeniu: ponowne zastosowanie anonimizacji (#91)
+
+Przebieg anonimizacji ([RETENTION.md](RETENTION.md)) zmienia tylko bieżącą bazę;
+każda kopia lub paczka sprzed przebiegu (także odtworzona po latach) przywraca dane
+osobowe, których dotyczył. Stan: skrypty są w repozytorium i przetestowane na
+danych syntetycznych (`tests/pg-anonymization-reapply.test.js`); **nic nie jest
+wdrożone, nie ma crona**, a miejsce przechowywania dziennika poza Railway to decyzja
+D-01/D-20 (nierozstrzygnięta).
+
+Na bieżąco (poza odtworzeniem):
+
+1. Po każdym przebiegu anonimizacji wyeksportować dziennik:
+   `DATABASE_URL=… npm run anonymization:export-log -- --out=<nowa-nazwa.json>`.
+   Plik zawiera tylko identyfikatory, kody powodów i skróty planu (bez danych
+   osobowych), ale to dane operacyjne: przechowywać poza bazą i poza repozytorium,
+   z dala od kopii bazy (żeby awaria nie zabrała obu). Skrypt nie nadpisuje
+   istniejącego pliku; kolejne eksporty pod nowymi nazwami (ponowienie przyjmuje
+   wiele plików). Plik ma sumę kontrolną, nie podpis.
+
+Po odtworzeniu kopii bazy, paczki rocznej lub wolumenu (wariant A/B/C), **zanim**
+aplikacja zacznie przyjmować użytkowników i zanim ruszy wysyłka e-mail:
+
+1. Zatrzymać wysyłkę: usługa zadania e-mail (np. `rd-email-worker`) wyłączona (kampanie wysyłają na
+   adresy z odtworzonej bazy, także osób, których dane zanonimizowano). Nie
+   wznawiać kampanii, dopóki krok 4 nie jest zamknięty.
+2. Odtworzenie z paczki rocznej nie przywraca kont: założyć administratora
+   ([Pierwszy administrator](#pierwszy-administrator-bootstrap-187)). Po odtworzeniu
+   kopii bazy konta są w bazie — wskazać aktywnego administratora.
+3. Podgląd (nic nie zmienia, zostawia tylko zdarzenia podglądu w audycie):
+   `npm run anonymization:reapply -- --log=<dziennik.json> [--log=<starszy.json>]
+   --actor=<userId> --dry-run`. W wyniku `would_apply` = przebiegi do ponowienia,
+   `already_recorded` = kopia już je zawiera, `household_missing` = gospodarstwa
+   nie ma w tej bazie, `nothing_to_change` = już zanonimizowane. Porównać liczbę
+   `would_apply` z oczekiwaniem (przebiegi wykonane po wykonaniu kopii).
+4. Wykonanie: to samo polecenie bez `--dry-run` (na produkcji i przy nierozpoznanym
+   `APP_ENV` także `--allow-production`, wyłącznie w ramach zatwierdzonego
+   odtwarzania). Jedna transakcja: błąd wycofuje całość; ponowne uruchomienie jest
+   bezpieczne (pomija to, co już zapisano). Zapisać w protokole odtworzenia: liczby
+   z wyniku i identyfikatory przebiegów (`runId`), nie dane osobowe.
+5. Sprawdzić: `GET /api/admin/anonymizations` (lub ekran „Anonimizacja”) pokazuje
+   przebiegi z powodem „Ponowione po odtworzeniu kopii”; sumy wpłat i księga
+   bez zmian (`npm run restore:drill:local` na danych syntetycznych pokazuje, jak
+   wygląda zgodny raport; na odtworzonej bazie porównać sumy z raportem kopii:
+   anonimizacja nie zmienia kwot, więc różnice mogą dotyczyć wyłącznie liczby
+   wierszy `anonymization_runs` i `audit_events`).
+6. Dopiero teraz włączyć aplikację i, po osobnej decyzji, wysyłkę e-mail.
+7. Paczki roczne pobrane przed przebiegiem i kopie u odbiorców zniszczyć
+   organizacyjnie — serwer ich nie przechowuje, skrypt ich nie dotyka.
+
+Ryzyka (do decyzji D-01/D-04/D-20): dziennik starszy niż ostatni przebieg nie
+obejmuje późniejszych przebiegów (stąd eksport po każdym); ponowienie jest tak
+wiarygodne jak plik (suma kontrolna wykrywa uszkodzenie, nie podmianę); kopia
+przywrócona po latach zawiera dane dawno zanonimizowane w bieżącej bazie — każde
+odtworzenie wymaga tej procedury.
 
 ## Backup dokumentów (Storage Bucket)
 
