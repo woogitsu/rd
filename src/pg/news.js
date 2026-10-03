@@ -25,6 +25,7 @@
 //   cofnięcie praw: zarząd.
 import sharp from 'sharp';
 import { isSameOrigin } from '../auth.js';
+import { isSafeMethod } from './http.js';
 import { actorContext, authorizedClassIds, isAuthorizedForOwnClass, isAuthorizedScoped } from './scope.js';
 import { declaredType, detectType, readLimited, tryAcquireUploadSlot, validateStructure } from '../documents.js';
 import { sha256Hex } from '../storage.js';
@@ -1238,7 +1239,8 @@ export async function handle(request, env, url, json) {
     }
 
     const noStore = { 'Cache-Control': 'no-store' };
-    const unsafe = request.method !== 'GET';
+    // HEAD jak GET: metoda bezpieczna, bez Origin; trasa jej nie obsługuje (404 niżej).
+    const unsafe = !isSafeMethod(request.method);
     if (unsafe && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
 
     if (isPosts) {

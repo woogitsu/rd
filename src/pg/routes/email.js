@@ -38,6 +38,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { BlockList, isIP } from 'node:net';
 import { CLIENT_IP_HEADER } from './login.js';
 import { isSameOrigin } from '../../auth.js';
+import { isSafeMethod } from '../http.js';
 import {
   freshMfaForbiddenCode, isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied,
   MFA_STEP_UP_MAX_AGE_SECONDS, withDeferredAccessDenied,
@@ -2430,7 +2431,8 @@ export async function handle(request, env, url, json) {
       if (method === 'POST') return await preferencesOptOut(request, env, url, json);
       return json({ error: 'method_not_allowed' }, 405, { Allow: 'GET, POST' });
     }
-    if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
+    // HEAD jak GET: metoda bezpieczna, bez Origin; trasa jej nie obsługuje (405 z Allow niżej).
+    if (!isSafeMethod(method) && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     if (url.pathname === '/api/email/campaigns') {
       if (method === 'GET') return await listCampaigns(request, env, url, json);
       if (method === 'POST') return await createCampaign(request, env, json);

@@ -247,6 +247,35 @@ więc bramka routera nie zatrzymuje admina ani zarządu bez czynnika — odmowę
 Kontrola pozytywna: na kodzie sprzed poprawki zarząd bez MFA dostaje `201` z tokenem przy wydaniu linku,
 a błędne kodowanie w `approve` daje `503 service_unavailable`. Oba testy wtedy nie przechodzą.
 
+## Strażnik metod HTTP: trasa zapisu tylko własną metodą (po #748)
+
+`tests/pg-route-method-guard.test.js` to stały test regresyjny pomyłki metody z #748 (`GET …/approve` rozstrzygał
+wniosek). PGlite, jedna wspólna baza macierzy (`matrixContext` z `tests/helpers/authz-matrix.js`), jedna sesja
+z rolami admin + zarząd + skarbnik + Komisja Rewizyjna i potwierdzonym MFA. Dane syntetyczne (`@example.invalid`),
+bez sieci, ok. 11 s.
+
+- Każda trasa zapisu z `ROUTE_MATRIX` (POST/PUT/PATCH; macierz jest też źródłem `docs/openapi.json`) dostaje
+  ścieżkę z prawdziwym obiektem w stanie wymaganym przez trasę. Fixture macierzy tworzy np. wniosek `pending`
+  do `approve`. Gdy fixture nie pasuje (nowy użytkownik na przypadek, grupa zamknięcia roku), ścieżka ma rok 1
+  i syntetyczny identyfikator. Wywołania: `GET` bez `Origin` i ze zgodnym `Origin` (pominięte, gdy pod tą
+  ścieżką macierz ma legalny `GET`), `HEAD` bez i z `Origin`, `OPTIONS` ze zgodnym i bez `Origin`.
+  Asercje: brak `2xx` i `5xx` (każda odpowiedź to `4xx`), zero nowych wierszy `audit_events`, bez zmiany
+  liczby wierszy tabel zapisu (`writeFingerprint`, ok. 70 tabel), `OPTIONS` bez `Origin` → `403 invalid_origin`,
+  `HEAD` nigdy `invalid_origin`.
+- Każda ścieżka odczytu z macierzy: `HEAD` i `OPTIONS` bez `2xx`/`5xx` i bez nowych zdarzeń. Ślad odczytu,
+  np. `*.list_viewed` albo eksport, nie powstaje.
+- Tryb `read_only`: `OPTIONS` na każdej ścieżce zapisu → `503` (poza `/api/login`, `/api/logout`), `HEAD` nigdy `503`.
+- Router z modułem-atrapą odpowiadającym na każdą metodę: `OPTIONS`, `PROPFIND` i `POST` bez `Origin`, z obcym
+  `Origin` i w `read_only` nie docierają do modułu. `HEAD` i `GET` docierają.
+- Meta: co najmniej 150 tras zapisu z co najmniej 20 modułów, co najmniej 60 z prawdziwym obiektem. Każda operacja
+  `post`/`put`/`patch`/`delete` z `docs/openapi.json` jest w macierzy.
+
+Kontrola pozytywna (lokalnie, bez commitu): przywrócenie dopasowania decyzji o wniosku bez `request.method === 'POST'`
+w `src/pg/routes/guardian-updates.js` (stan sprzed #750) daje 14 problemów. `GET` i `HEAD` (bez i ze zgodnym
+`Origin`) oraz `OPTIONS` ze zgodnym `Origin` na `…/approve` i `…/reject` dostają `200`. Pierwsze wywołanie
+rozstrzyga wniosek, a w `audit_events` i odcisku tabel przybywa wiersz. `OPTIONS` bez `Origin` zatrzymuje już
+router (`403`). Pozostałe testy pliku przechodzą.
+
 ## Jakość asercji i izolacji (#214)
 
 `tests/test-quality-lint.test.js` przegląda wszystkie pliki `tests/*.test.js`.

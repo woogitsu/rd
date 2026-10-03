@@ -29,6 +29,7 @@
 // wyłącznie role finansowe z MFA. Jednostka ewidencji składki — decyzja D-11.
 
 import { isSameOrigin } from '../../auth.js';
+import { isSafeMethod } from '../http.js';
 import { isAuthorizedScoped, loadAuthorizationContext, logAccessDenied, logDeferredAccessDenied, withDeferredAccessDenied } from '../authorization.js';
 import { householdScope, resolveScope, scopeSqlFragment, scopeSqlParams, HOUSEHOLD_WIDE_ROLES } from '../scope.js';
 import { insertAuditEvent } from '../audit.js';
@@ -989,7 +990,7 @@ export async function handle(request, env, url, json) {
   else if (method === 'POST' && enrollmentMatch) action = () => changeEnrollment(request, env, decodeId(enrollmentMatch[1]), json);
   if (!action) return null;
   // handlePgRequest sprawdza Origin wcześniej; tu powtórnie, gdyby moduł użyto samodzielnie.
-  if (method !== 'GET' && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
+  if (!isSafeMethod(method) && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
   try {
     return await action();
   } catch (error) {
