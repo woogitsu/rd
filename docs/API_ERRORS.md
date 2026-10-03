@@ -88,6 +88,7 @@ przy przydziale, nie błąd.
 | `category_inactive` | Kategoria jest już wyłączona. | Zależy od kontekstu (patrz moduł trasy). |
 | `category_not_found` | Nie znaleziono kategorii księgi. | Nie — popraw dane żądania. |
 | `checklist_incomplete` | Lista kontrolna nie jest ukończona. | Zależy od kontekstu (patrz moduł trasy). |
+| `child_consent_required` | Zdjęcie z dziećmi wymaga co najmniej jednej zapisanej zgody dotyczącej dziecka. | Nie — najpierw dopisz odwołanie do zgody (przed weryfikacją). |
 | `class_exists` | Klasa o tej nazwie już istnieje w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_map_required` | Podaj jawną mapę klas (klasa źródłowa → klasa docelowa albo null dla klasy końcowej). Bez mapy nic nie jest przenoszone. | Nie — popraw dane żądania. |
 | `class_not_found` | Nie znaleziono klasy albo nie masz do niej dostępu. | Nie — popraw dane żądania. |
@@ -136,6 +137,7 @@ przy przydziale, nie błąd.
 | `confirmation_required` | Potwierdź operację, wpisując wymagany identyfikator. | Nie — popraw dane żądania. |
 | `conflict` | Dane zmieniły się w międzyczasie. Odśwież widok i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `consent_conflict` | Zapis zgody nie zgadza się z danymi zdjęcia. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `consent_missing` | Zapisane zgody nie obejmują wszystkich rozpoznawalnych osób na zdjęciu. | Nie — najpierw dopisz odwołanie do zgody (przed weryfikacją). |
 | `consent_not_found` | Nie znaleziono zgody o tym odwołaniu. | Nie — popraw dane żądania. |
 | `consents_locked` | Zgód nie można zmienić w obecnym stanie wpisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `content_hash_mismatch` | Plik uszkodził się podczas przesyłania. Wyślij go ponownie. | Nie — popraw dane żądania. |
@@ -241,6 +243,8 @@ przy przydziale, nie błąd.
 | `invalid_decision_ref` | Podaj odwołanie do decyzji (np. numer uchwały). | Nie — popraw dane żądania. |
 | `invalid_decorative` | Niepoprawna wartość pola „zdjęcie dekoracyjne”. | Nie — popraw dane. |
 | `invalid_depicts_children` | Zaznacz, czy zdjęcie przedstawia dzieci. | Nie — popraw dane żądania. |
+| `invalid_identifiable_adults` | Niepoprawna liczba rozpoznawalnych dorosłych na zdjęciu. | Nie — popraw dane żądania. |
+| `invalid_identifiable_children` | Niepoprawna liczba rozpoznawalnych dzieci na zdjęciu. | Nie — popraw dane żądania. |
 | `invalid_description` | Opis jest za długi. | Nie — popraw dane żądania. |
 | `invalid_display_name` | Nazwa wyświetlana może mieć najwyżej 100 znaków. | Nie — popraw dane żądania. |
 | `invalid_disposition` | Nieznany sposób otwarcia pliku. Użyj podglądu albo pobrania. | Nie — popraw dane żądania. |
@@ -272,6 +276,7 @@ przy przydziale, nie błąd.
 | `invalid_kind` | Nieznany rodzaj dokumentu. | Nie — popraw dane żądania. |
 | `invalid_label` | Podaj nazwę roku szkolnego (maksymalnie 200 znaków). | Nie — popraw dane żądania. |
 | `invalid_ledger_entry_id` | Niepoprawny identyfikator wpisu księgi. | Nie — popraw dane żądania. |
+| `invalid_license_document_ref` | Niepoprawne odwołanie do dokumentu licencji. | Nie — popraw dane żądania. |
 | `invalid_license_text` | Niepoprawna treść licencji. | Nie — popraw dane żądania. |
 | `invalid_limit` | Niepoprawna liczba wyników na stronę. | Nie — popraw dane żądania. |
 | `invalid_line_count` | Niepoprawna liczba pozycji wyciągu. | Nie — popraw dane żądania. |
@@ -391,6 +396,7 @@ przy przydziale, nie błąd.
 | `minutes_four_eyes_required` | Protokół zatwierdza inna osoba niż jego autor. | Zależy od kontekstu (patrz moduł trasy). |
 | `minutes_not_found` | Nie znaleziono wersji protokołu. | Nie — popraw dane żądania. |
 | `next_school_year_not_found` | Nie znaleziono następnego roku szkolnego. | Nie — popraw dane żądania. |
+| `next_school_year_not_open` | Następny rok szkolny nie jest otwarty. Wybierz rok, który jeszcze nie został zamknięty. | Nie — popraw dane żądania. |
 | `next_year_opening_balance_exists` | Bilans otwarcia następnego roku już istnieje. | Zależy od kontekstu (patrz moduł trasy). |
 | `no_classes_in_school_year` | Rok szkolny nie ma zdefiniowanych klas. | Zależy od kontekstu (patrz moduł trasy). |
 | `no_recipients` | Wysyłka nie ma odbiorców. | Zależy od kontekstu (patrz moduł trasy). |
@@ -447,6 +453,7 @@ przy przydziale, nie błąd.
 | `photo_file_too_large` | Plik zdjęcia przekracza dozwolony rozmiar. | Nie — popraw dane żądania. |
 | `photo_not_found` | Nie znaleziono zdjęcia. | Nie — popraw dane żądania. |
 | `photo_revoked` | Zgoda na publikację zdjęcia została wycofana. | Zależy od kontekstu (patrz moduł trasy). |
+| `photo_rights_unverified` | Wpis zawiera zdjęcie bez zweryfikowanych praw do publikacji. | Nie — najpierw zweryfikuj prawa do zdjęcia albo usuń je z wpisu. |
 | `photos_require_school_wide_role` | Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły. | Zależy od kontekstu (patrz moduł trasy). |
 | `plan_stale` | Dane zmieniły się od podglądu promocji. Wygeneruj podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `plan_too_large` | Plan promocji jest zbyt duży (najwyżej 2000 uczniów). Skontaktuj się z administratorem. | Nie — popraw dane żądania. |
@@ -572,6 +579,7 @@ przy przydziale, nie błąd.
 | `vote_record_required` | Wynik uchwały wymaga wszystkich trzech liczb głosów i ustalenia quorum. | Nie — popraw dane żądania. |
 | `webhook_not_configured` | Powiadomienia zwrotne nie są skonfigurowane na tym środowisku. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_already_started` | Zamknięcie roku zostało już rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
+| `year_close_not_in_progress` | Zamknięcie roku nie jest w toku (zostało już zakończone albo nie rozpoczęte). | Zależy od kontekstu (patrz moduł trasy). |
 | `year_close_not_started` | Zamknięcie roku nie zostało rozpoczęte. | Zależy od kontekstu (patrz moduł trasy). |
 | `year_end_balance_mismatch` | Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Potwierdź rozbieżność z powodem albo popraw wpisy. | Nie — popraw dane żądania. |
 | `year_end_confirmation_mismatch` | Rozbieżność salda końca roku jest inna niż potwierdzona. Sprawdź aktualne kwoty i potwierdź ponownie. | Nie — popraw dane żądania. |

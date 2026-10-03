@@ -105,6 +105,7 @@
       "ledger-cash",
       "ledger-cost-centers",
       "meetings",
+      "news",
       "payment-instructions",
       "payment-references",
       "payments",
@@ -122,7 +123,6 @@
       "import",
       "login",
       "mfa",
-      "news",
       "print",
       "privacy-notice",
       "representative",
@@ -130,7 +130,7 @@
     ],
     "operations": {
       "total": 297,
-      "withSchema": 172
+      "withSchema": 193
     }
   },
   "paths": {
@@ -28470,15 +28470,48 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
-            }
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Brak albo zły → 400 `invalid_school_year`."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wpisy roku (bez stronicowania), od najnowszego; przedstawiciel widzi tylko wpisy swoich klas.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "posts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NewsPost"
+                      }
+                    }
+                  },
+                  "required": [
+                    "posts"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_school_year"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28491,7 +28524,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -28537,9 +28575,107 @@
       },
       "post": {
         "operationId": "news_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPostCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (ta sama osoba, zakres i treść; bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    }
+                  },
+                  "required": [
+                    "post"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Szkic wpisu utworzony (nic nie jest publikowane).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    }
+                  },
+                  "required": [
+                    "post"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "duplicate_photo",
+              "invalid_body",
+              "invalid_class",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_photos",
+              "invalid_reference",
+              "invalid_school_year",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28552,7 +28688,70 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "photos_require_school_wide_role"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "photo_revoked",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "photo_not_found",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -28610,13 +28809,49 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wycofanie jednej zgody (po odwołaniu do dokumentu): ukrywa publicznie każde zdjęcie z tą zgodą (także rodzeństwo); ponowienie: `replayed: true`. Trasa nie czyta ciała.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    },
+                    "affectedPhotos": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Liczba zdjęć z wierszem tej zgody."
+                    }
+                  },
+                  "required": [
+                    "replayed",
+                    "affectedPhotos"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_consent"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28629,7 +28864,26 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "consent_not_found"
+            ]
           }
         },
         "security": [
@@ -28666,9 +28920,100 @@
     "/api/news-photos": {
       "get": {
         "operationId": "news_photos",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej strony tego samego filtru `status` (inny → 400 `invalid_cursor`)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 200
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "verified",
+                "revoked"
+              ]
+            },
+            "description": "Inna wartość → 400 `invalid_status`."
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Rejestr zdjęć od najnowszego (`uploaded_at DESC, id`), kursor keyset; bez odwołań do zgód.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "photos": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NewsPhoto"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 200
+                    }
+                  },
+                  "required": [
+                    "photos",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit",
+              "invalid_status"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28681,7 +29026,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -28720,9 +29070,117 @@
       },
       "post": {
         "operationId": "news_photoRegister",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPhotoRegisterRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu (ta sama osoba, dokument, autor i źródło).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "photo": {
+                      "$ref": "#/components/schemas/NewsPhoto"
+                    }
+                  },
+                  "required": [
+                    "photo"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zdjęcie zarejestrowane (`pending`; publiczne dopiero po weryfikacji i publikacji wpisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "photo": {
+                      "$ref": "#/components/schemas/NewsPhoto"
+                    }
+                  },
+                  "required": [
+                    "photo"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_alt_text",
+              "invalid_author",
+              "invalid_consent",
+              "invalid_consent_scope",
+              "invalid_consent_valid_until",
+              "invalid_decorative",
+              "invalid_depicts_children",
+              "invalid_document_id",
+              "invalid_explicit_license",
+              "invalid_idempotency_key",
+              "invalid_identifiable_adults",
+              "invalid_identifiable_children",
+              "invalid_json",
+              "invalid_license_document_ref",
+              "invalid_license_text",
+              "invalid_rights_note",
+              "invalid_source",
+              "invalid_source_detail",
+              "invalid_taken_on"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28735,7 +29193,68 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "alt_text_required",
+              "personal_data_forbidden",
+              "possible_personal_data",
+              "public_copy_requires_license"
+            ]
           }
         },
         "security": [
@@ -28782,13 +29301,42 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zdjęcie z odwołaniami do zgód.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "photo": {
+                      "$ref": "#/components/schemas/NewsPhotoWithConsents"
+                    }
+                  },
+                  "required": [
+                    "photo"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_photo_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28801,7 +29349,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_not_found"
+            ]
           }
         },
         "security": [
@@ -28848,13 +29414,75 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPhotoConsentRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam wpis pod tym numerem już istnieje (podwójne kliknięcie).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Odwołanie do zgody zapisane (bez nagłówka `Idempotency-Replayed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_consent",
+              "invalid_consent_scope",
+              "invalid_consent_valid_until",
+              "invalid_json",
+              "invalid_photo_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28867,7 +29495,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "consent_conflict",
+              "consents_locked"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -28910,17 +29597,125 @@
         "operationId": "news_photoFile",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "photoId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "description": "Surowe bajty PNG albo JPEG (nie JSON ani multipart, do 10 MiB i 40 Mpx). `Content-Type` musi zgadzać się z sygnaturą; serwer ponownie koduje obraz do wariantów JPEG `web` i `thumb` bez EXIF/GPS/XMP i nie przechowuje oryginału.",
+          "content": {
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam plik dla zdjęcia, które już ma warianty: zapisane wcześniej warianty.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NewsPhotoFile"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    }
+                  },
+                  "required": [
+                    "files"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Warianty zapisane w prywatnym magazynie (prefiks `photos/`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NewsPhotoFile"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    }
+                  },
+                  "required": [
+                    "files"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "empty_photo_file",
+              "invalid_idempotency_key",
+              "invalid_photo_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28933,7 +29728,81 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_file_exists",
+              "photo_revoked"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_file_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_file_malformed",
+              "unsupported_media_type"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "storage_unavailable",
+              "upload_busy"
+            ]
           }
         },
         "security": [
@@ -28980,13 +29849,59 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPhotoRevokeRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Prawa cofnięte (stan końcowy); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "photo": {
+                      "$ref": "#/components/schemas/NewsPhoto"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "photo",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_photo_id",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28999,7 +29914,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -29042,13 +30016,58 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPhotoVerifyRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Prawa zweryfikowane przez zarząd (inna osoba niż rejestrująca; zgody pokrywają osoby); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "photo": {
+                      "$ref": "#/components/schemas/NewsPhoto"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "photo",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_photo_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -29061,7 +30080,81 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "child_consent_required",
+              "consent_missing",
+              "four_eyes_required",
+              "photo_revoked"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "alt_text_required"
+            ]
           }
         },
         "security": [
@@ -29104,16 +30197,67 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wpis z pełną historią wersji (od pierwszej).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    },
+                    "revisions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NewsPostRevision"
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "post",
+                    "revisions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_post_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -29123,7 +30267,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "post_not_found"
+            ]
           }
         },
         "security": [
@@ -29179,16 +30326,82 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPostUpdateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Nowa wersja treści (wpis wraca do szkicu) albo odtworzenie (`replayed: true`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "post",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "duplicate_photo",
+              "invalid_body",
+              "invalid_json",
+              "invalid_photos",
+              "invalid_post_id",
+              "invalid_revision",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "photos_require_school_wide_role"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -29198,7 +30411,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "post_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_revoked",
+              "post_withdrawn",
+              "revision_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "photo_not_found",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -29256,13 +30528,59 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPostTransitionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zatwierdzenie zgłoszonej wersji przez zarząd (MFA, cztery oczy, zdjęcia zweryfikowane); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "post",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_post_id",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -29275,7 +30593,13 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -29285,7 +30609,54 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "post_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "four_eyes_required",
+              "invalid_transition",
+              "photo_revoked",
+              "photo_rights_unverified",
+              "post_withdrawn",
+              "revision_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -29331,13 +30702,59 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPostTransitionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Publikacja zatwierdzonej wersji przez zarząd (MFA; zdjęcia zweryfikowane); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "post",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_post_id",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -29350,7 +30767,13 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -29360,7 +30783,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "post_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_transition",
+              "photo_revoked",
+              "photo_rights_unverified",
+              "post_withdrawn",
+              "revision_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -29406,16 +30875,77 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPostTransitionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zgłoszenie wersji do zatwierdzenia; ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "post",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_post_id",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -29425,7 +30955,50 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "post_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "post_withdrawn",
+              "revision_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -29483,16 +31056,79 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsPostWithdrawRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wycofanie z powodem (stan końcowy, wpis znika z widoku publicznego); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPost"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "post",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_post_id",
+              "invalid_reason",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -29502,7 +31138,63 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "post_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "revision_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -33018,9 +34710,97 @@
     "/api/public/news": {
       "get": {
         "operationId": "news_public",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej strony tego samego filtru (inny filtr → 400 `invalid_cursor`)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Filtr roku szkolnego (400 `invalid_school_year`)."
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Publiczne (bez logowania): opublikowane wpisy od najnowszego (`published_at DESC, id`), kursor keyset. `Cache-Control: public, max-age=60` (wycofanie i cofnięcie praw znikają najpóźniej po 60 s).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "posts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NewsPublicPost"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Kursor następnej (starszej) strony; null na ostatniej."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 50
+                    }
+                  },
+                  "required": [
+                    "posts",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit",
+              "invalid_school_year"
+            ]
           }
         },
         "security": [],
@@ -33051,13 +34831,60 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wariant `thumb` (JPEG bez metadanych) wyłącznie dla zdjęcia zweryfikowanego, ze zgodami obejmującymi stronę Rady, należącego do opublikowanej wersji niewycofanego wpisu (`news_photo_is_public`, 0112). `Cache-Control: public, max-age=60` (wycofanie i cofnięcie praw znikają najpóźniej po 60 s).",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_file_integrity_mismatch"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "service_unavailable"
+            ]
           }
         },
         "security": [],
@@ -33088,13 +34915,60 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wariant `web` (JPEG bez metadanych) wyłącznie dla zdjęcia zweryfikowanego, ze zgodami obejmującymi stronę Rady, należącego do opublikowanej wersji niewycofanego wpisu (`news_photo_is_public`, 0112). `Cache-Control: public, max-age=60` (wycofanie i cofnięcie praw znikają najpóźniej po 60 s).",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "photo_file_integrity_mismatch"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "service_unavailable"
+            ]
           }
         },
         "security": [],
@@ -33125,13 +34999,42 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Stały adres jednego opublikowanego wpisu (te same pola co lista). `Cache-Control: public, max-age=60` (wycofanie i cofnięcie praw znikają najpóźniej po 60 s).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "post": {
+                      "$ref": "#/components/schemas/NewsPublicPost"
+                    }
+                  },
+                  "required": [
+                    "post"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "post_not_found"
+            ]
           }
         },
         "security": [],
@@ -33185,7 +35088,35 @@
         "operationId": "news_publicSchoolYears",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Lata szkolne z treściami publicznymi (aktualności, wydarzenia, zawiadomienia, protokoły `public`), od najnowszego; tylko identyfikatory. `Cache-Control: public, max-age=60` (wycofanie i cofnięcie praw znikają najpóźniej po 60 s).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schoolYears": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/EntityId"
+                          }
+                        },
+                        "required": [
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "schoolYears"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           }
         },
         "security": [],
@@ -42457,6 +44388,7 @@
           "category_inactive",
           "category_not_found",
           "checklist_incomplete",
+          "child_consent_required",
           "class_exists",
           "class_map_required",
           "class_not_found",
@@ -42470,6 +44402,7 @@
           "confirmation_required",
           "conflict",
           "consent_conflict",
+          "consent_missing",
           "consent_not_found",
           "consents_locked",
           "content_hash_mismatch",
@@ -42601,6 +44534,8 @@
           "invalid_iban",
           "invalid_id",
           "invalid_idempotency_key",
+          "invalid_identifiable_adults",
+          "invalid_identifiable_children",
           "invalid_identifier",
           "invalid_import",
           "invalid_invitation",
@@ -42609,6 +44544,7 @@
           "invalid_kind",
           "invalid_label",
           "invalid_ledger_entry_id",
+          "invalid_license_document_ref",
           "invalid_license_text",
           "invalid_limit",
           "invalid_line_count",
@@ -42748,6 +44684,7 @@
           "minutes_version_immutable",
           "minutes_version_mismatch",
           "next_school_year_not_found",
+          "next_school_year_not_open",
           "next_year_opening_balance_exists",
           "no_classes_in_school_year",
           "no_recipients",
@@ -42804,6 +44741,7 @@
           "photo_file_too_large",
           "photo_not_found",
           "photo_revoked",
+          "photo_rights_unverified",
           "photos_require_school_wide_role",
           "plan_stale",
           "plan_too_large",
@@ -42941,6 +44879,7 @@
           "vote_record_required",
           "webhook_not_configured",
           "year_close_already_started",
+          "year_close_not_in_progress",
           "year_close_not_started",
           "year_end_balance_mismatch",
           "year_end_confirmation_mismatch"
@@ -49710,6 +51649,1181 @@
           "reason"
         ]
       },
+      "NewsPhoto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "documentId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Prywatny dokument źródłowy zdjęcia (zarządu); nie jest plikiem galerii."
+          },
+          "author": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "own_work",
+              "school_provided",
+              "parent_provided",
+              "licensed_third_party",
+              "public_website_copy"
+            ]
+          },
+          "sourceDetail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Opis źródła (np. przybliżona data zdjęcia archiwalnego)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "takenOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "licenseText": {
+            "type": "string",
+            "description": "Tekst licencji/zgody na publikację (publiczny podpis zdjęcia)."
+          },
+          "explicitLicenseGranted": {
+            "type": "boolean"
+          },
+          "licenseDocumentRef": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Odwołanie do dokumentu licencji (wymagane dla `public_website_copy`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rightsNote": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Wewnętrzna notatka o prawach (niepubliczna)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "altText": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Tekst alternatywny; null — zdjęcie dekoracyjne albo sprzed migracji 0071 (#124)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decorative": {
+            "type": "boolean",
+            "description": "true: zdjęcie czysto dekoracyjne (na stronie publicznej `alt=\"\"`)."
+          },
+          "depictsChildren": {
+            "type": "boolean"
+          },
+          "identifiableChildren": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "identifiableAdults": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "uploadedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "uploadedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "rightsStatus": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified",
+              "revoked"
+            ],
+            "description": "`pending` → `verified` (inna osoba niż rejestrująca) → `revoked` (stan końcowy; zdjęcie znika z widoku publicznego)."
+          },
+          "rightsVerifiedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rightsVerifiedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revocationReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Powód cofnięcia praw (wewnętrzny)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "documentId",
+          "author",
+          "source",
+          "sourceDetail",
+          "takenOn",
+          "licenseText",
+          "explicitLicenseGranted",
+          "licenseDocumentRef",
+          "rightsNote",
+          "altText",
+          "decorative",
+          "depictsChildren",
+          "identifiableChildren",
+          "identifiableAdults",
+          "uploadedBy",
+          "uploadedAt",
+          "rightsStatus",
+          "rightsVerifiedBy",
+          "rightsVerifiedAt",
+          "revokedAt",
+          "revocationReason"
+        ],
+        "additionalProperties": false,
+        "description": "Metadane zdjęcia (niezmienne poza stanem praw; korekta = nowe zdjęcie)."
+      },
+      "NewsPhotoConsent": {
+        "type": "object",
+        "properties": {
+          "subjectNo": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Numer osoby na zdjęciu (nie dane osoby)."
+          },
+          "subjectKind": {
+            "type": "string",
+            "enum": [
+              "child",
+              "adult"
+            ]
+          },
+          "consentDocumentRef": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Wyłącznie identyfikator dokumentu zgody (np. `consent-doc-0001`) — bez imion, nazwisk i klas osób na zdjęciu."
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "rada_website",
+                "print",
+                "social_media"
+              ]
+            },
+            "description": "Pusty dla zgód sprzed 0083 (wymagają potwierdzenia zakresu)."
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recordedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "recordedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "subjectNo",
+          "subjectKind",
+          "consentDocumentRef",
+          "scope",
+          "validUntil",
+          "recordedBy",
+          "recordedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Odwołanie do dokumentu zgody na wizerunek (niezmienne)."
+      },
+      "NewsPhotoConsentInput": {
+        "type": "object",
+        "properties": {
+          "subjectNo": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Domyślnie kolejny numer na liście; numery bez powtórzeń."
+          },
+          "subjectKind": {
+            "type": "string",
+            "enum": [
+              "child",
+              "adult"
+            ]
+          },
+          "consentDocumentRef": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Wyłącznie identyfikator dokumentu zgody (np. `consent-doc-0001`) — bez imion, nazwisk i klas osób na zdjęciu."
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "rada_website",
+                "print",
+                "social_media"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 3,
+            "description": "Zakres zgody (#106; bez powtórzeń). Pominięty → `[\"rada_website\"]`. Zdjęcie trafia na stronę Rady tylko, gdy KAŻDA jego zgoda obejmuje `rada_website`."
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate",
+                "description": "Ostatni dzień ważności zgody (Europe/Brussels); null — bez terminu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "subjectKind",
+          "consentDocumentRef"
+        ]
+      },
+      "NewsPhotoConsentRequest": {
+        "type": "object",
+        "properties": {
+          "subjectNo": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "subjectKind": {
+            "type": "string",
+            "enum": [
+              "child",
+              "adult"
+            ]
+          },
+          "consentDocumentRef": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Wyłącznie identyfikator dokumentu zgody (np. `consent-doc-0001`) — bez imion, nazwisk i klas osób na zdjęciu."
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "rada_website",
+                "print",
+                "social_media"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 3,
+            "description": "Zakres zgody (#106; bez powtórzeń). Pominięty → `[\"rada_website\"]`. Zdjęcie trafia na stronę Rady tylko, gdy KAŻDA jego zgoda obejmuje `rada_website`."
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate",
+                "description": "Ostatni dzień ważności zgody (Europe/Brussels); null — bez terminu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "subjectNo",
+          "subjectKind",
+          "consentDocumentRef"
+        ],
+        "description": "Odwołanie do zgody (tylko przed weryfikacją). Ten sam wpis ponownie = odtworzenie; inny pod tym samym numerem → 409 `consent_conflict`."
+      },
+      "NewsPhotoFile": {
+        "type": "object",
+        "properties": {
+          "variant": {
+            "type": "string",
+            "enum": [
+              "web",
+              "thumb"
+            ],
+            "description": "`web` — do 1600 px, `thumb` — do 400 px (dłuższy bok)."
+          },
+          "mimeType": {
+            "const": "image/jpeg"
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "createdAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Zapis wariantu; null wyłącznie przy odtworzeniu po przegranym wyścigu dwóch przesłań (odczyt bez tej kolumny)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "variant",
+          "mimeType",
+          "width",
+          "height",
+          "byteSize",
+          "sha256",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Wariant pliku zdjęcia: ponownie zakodowany JPEG bez EXIF/GPS/XMP (oryginał nie jest przechowywany)."
+      },
+      "NewsPhotoRegisterRequest": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Istniejący dokument zarządu z plikiem źródłowym (inaczej 400 `invalid_document_id`)."
+          },
+          "author": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "own_work",
+              "school_provided",
+              "parent_provided",
+              "licensed_third_party",
+              "public_website_copy"
+            ],
+            "description": "`public_website_copy` wymaga `explicitLicenseGranted` i `licenseDocumentRef` (422 `public_copy_requires_license`)."
+          },
+          "sourceDetail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "takenOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "licenseText": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 1000
+          },
+          "explicitLicenseGranted": {
+            "type": "boolean"
+          },
+          "licenseDocumentRef": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rightsNote": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "altText": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 300,
+                "description": "Opis sceny bez imion i nazwisk dzieci (WCAG 1.1.1, #124)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decorative": {
+            "type": "boolean"
+          },
+          "depictsChildren": {
+            "type": "boolean",
+            "description": "true wymaga przed weryfikacją co najmniej jednej zgody `child` (409 `child_consent_required`)."
+          },
+          "identifiableChildren": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "> 0 wymaga `depictsChildren: true`; zgody muszą pokryć liczbę (409 `consent_missing`)."
+          },
+          "identifiableAdults": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "consents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewsPhotoConsentInput"
+            },
+            "description": "Odwołania do zgód; można je dopisywać do weryfikacji."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "documentId",
+          "author",
+          "source",
+          "takenOn",
+          "licenseText",
+          "depictsChildren"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "altText"
+            ],
+            "properties": {
+              "altText": {
+                "type": "string",
+                "minLength": 3
+              }
+            }
+          },
+          {
+            "required": [
+              "decorative"
+            ],
+            "properties": {
+              "decorative": {
+                "const": true
+              }
+            }
+          }
+        ],
+        "description": "Rejestracja metadanych zdjęcia (niezmiennych). `altText` albo `decorative: true` jest wymagane — inaczej 422 `alt_text_required` (#124)."
+      },
+      "NewsPhotoRevokeRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); wewnętrzny, nie trafia na stronę publiczną ani do dziennika. Bramka danych osobowych (#152); inna długość → 400 `invalid_reason`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "description": "Cofnięcie praw (stan końcowy): zdjęcie natychmiast znika z widoku publicznego i z publicznego odczytu pliku."
+      },
+      "NewsPhotoVerifyRequest": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "description": "Puste ciało JSON `{}` (trasa czyta ciało jak każdy zapis)."
+      },
+      "NewsPhotoWithConsents": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "documentId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Prywatny dokument źródłowy zdjęcia (zarządu); nie jest plikiem galerii."
+          },
+          "author": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "own_work",
+              "school_provided",
+              "parent_provided",
+              "licensed_third_party",
+              "public_website_copy"
+            ]
+          },
+          "sourceDetail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Opis źródła (np. przybliżona data zdjęcia archiwalnego)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "takenOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "licenseText": {
+            "type": "string",
+            "description": "Tekst licencji/zgody na publikację (publiczny podpis zdjęcia)."
+          },
+          "explicitLicenseGranted": {
+            "type": "boolean"
+          },
+          "licenseDocumentRef": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Odwołanie do dokumentu licencji (wymagane dla `public_website_copy`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rightsNote": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Wewnętrzna notatka o prawach (niepubliczna)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "altText": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Tekst alternatywny; null — zdjęcie dekoracyjne albo sprzed migracji 0071 (#124)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decorative": {
+            "type": "boolean",
+            "description": "true: zdjęcie czysto dekoracyjne (na stronie publicznej `alt=\"\"`)."
+          },
+          "depictsChildren": {
+            "type": "boolean"
+          },
+          "identifiableChildren": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "identifiableAdults": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "uploadedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "uploadedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "rightsStatus": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified",
+              "revoked"
+            ],
+            "description": "`pending` → `verified` (inna osoba niż rejestrująca) → `revoked` (stan końcowy; zdjęcie znika z widoku publicznego)."
+          },
+          "rightsVerifiedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rightsVerifiedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revocationReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Powód cofnięcia praw (wewnętrzny)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "consents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewsPhotoConsent"
+            },
+            "description": "Odwołania do zgód, od numeru 1."
+          }
+        },
+        "required": [
+          "id",
+          "documentId",
+          "author",
+          "source",
+          "sourceDetail",
+          "takenOn",
+          "licenseText",
+          "explicitLicenseGranted",
+          "licenseDocumentRef",
+          "rightsNote",
+          "altText",
+          "decorative",
+          "depictsChildren",
+          "identifiableChildren",
+          "identifiableAdults",
+          "uploadedBy",
+          "uploadedAt",
+          "rightsStatus",
+          "rightsVerifiedBy",
+          "rightsVerifiedAt",
+          "revokedAt",
+          "revocationReason",
+          "consents"
+        ],
+        "additionalProperties": false,
+        "description": "Zdjęcie z odwołaniami do zgód (tylko odczyt jednego zdjęcia)."
+      },
+      "NewsPost": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "classId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Klasa wpisu klasowego; null — ogólnoszkolny. Ustalone przy tworzeniu (niezmienne)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/NewsPostStatus"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Bieżąca wersja treści (każda zmiana treści = nowa, niezmienna wersja)."
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "photoIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityId"
+            }
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "submittedRevision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedRevision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Zatwierdzający (inna osoba niż autor wpisu i autor wersji — cztery oczy)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publishedRevision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Wersja widoczna publicznie; null — nigdy nie opublikowany."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "withdrawnAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "withdrawalReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Powód wycofania (tylko wewnętrznie)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "classId",
+          "status",
+          "revision",
+          "title",
+          "body",
+          "photoIds",
+          "createdBy",
+          "createdAt",
+          "updatedBy",
+          "updatedAt",
+          "submittedRevision",
+          "approvedRevision",
+          "approvedBy",
+          "approvedAt",
+          "publishedRevision",
+          "publishedAt",
+          "withdrawnAt",
+          "withdrawalReason"
+        ],
+        "additionalProperties": false,
+        "description": "Wpis w widoku wewnętrznym (osoby z prawem do szkicu lub zatwierdzenia wpisu)."
+      },
+      "NewsPostCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "classId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Klasa wpisu; pominięte/null — ogólnoszkolny (tylko admin i zarząd). Przedstawiciel: tylko własna klasa."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł (3-200 znaków po przycięciu, jedna linia; bramka danych osobowych, #152)."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "Treść (1-20000 znaków; tekst, nie HTML — interfejs wstawia ją jako tekst; bramka danych osobowych, #152)."
+          },
+          "photoIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 20,
+            "description": "Zdjęcia wpisu w kolejności wyświetlania (do 20, bez powtórzeń → 400 `duplicate_photo`). Tylko admin i zarząd z przydziałem bez klasy (przedstawiciel → 403 `photos_require_school_wide_role`); nieznane zdjęcie → 422 `photo_not_found`, cofnięte → 409 `photo_revoked`. Zatwierdzenie i publikacja wymagają zdjęć zweryfikowanych."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "title",
+          "body"
+        ],
+        "description": "Nowy szkic wpisu (pierwsza wersja treści)."
+      },
+      "NewsPostRevision": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "photoIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityId"
+            }
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "revision",
+          "title",
+          "body",
+          "photoIds",
+          "createdBy",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Niezmienna wersja treści wpisu (historii nie można nadpisać ani usunąć)."
+      },
+      "NewsPostStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "submitted",
+          "approved",
+          "published",
+          "withdrawn"
+        ],
+        "description": "Zmiana treści wraca do `draft` (opublikowana wersja zostaje publiczna do następnej publikacji); `withdrawn` — stan końcowy."
+      },
+      "NewsPostTransitionRequest": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji widziany przez użytkownika; brak → 400 `invalid_revision`, niezgodny → 409 `revision_conflict`."
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "description": "Krok przebiegu dla wskazanej wersji (zgłoszenie, zatwierdzenie, publikacja)."
+      },
+      "NewsPostUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji widziany przez użytkownika; brak → 400 `invalid_revision`, niezgodny → 409 `revision_conflict`."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł (3-200 znaków po przycięciu, jedna linia; bramka danych osobowych, #152)."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "Treść (1-20000 znaków; tekst, nie HTML — interfejs wstawia ją jako tekst; bramka danych osobowych, #152)."
+          },
+          "photoIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "maxItems": 20,
+            "description": "Zdjęcia wpisu w kolejności wyświetlania (do 20, bez powtórzeń → 400 `duplicate_photo`). Tylko admin i zarząd z przydziałem bez klasy (przedstawiciel → 403 `photos_require_school_wide_role`); nieznane zdjęcie → 422 `photo_not_found`, cofnięte → 409 `photo_revoked`. Zatwierdzenie i publikacja wymagają zdjęć zweryfikowanych."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "description": "Nowa wersja treści (pominięte pola bez zmian). Ta sama treść = odtworzenie (`replayed: true`); ponowienie tej samej zmiany przez jej autora po nowszym numerze wersji — też."
+      },
+      "NewsPostWithdrawRequest": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji widziany przez użytkownika; brak → 400 `invalid_revision`, niezgodny → 409 `revision_conflict`."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); wewnętrzny, nie trafia na stronę publiczną ani do dziennika. Bramka danych osobowych (#152); inna długość → 400 `invalid_reason`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "revision",
+          "reason"
+        ],
+        "description": "Wycofanie (stan końcowy, natychmiast znika z widoku publicznego); wpis kiedykolwiek opublikowany wycofuje tylko zarząd."
+      },
+      "NewsPublicPhoto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Plik: `/api/public/news-photos/{id}/web|thumb`."
+          },
+          "author": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "own_work",
+              "school_provided",
+              "parent_provided",
+              "licensed_third_party",
+              "public_website_copy"
+            ]
+          },
+          "license": {
+            "type": "string",
+            "description": "Tekst licencji/zgody (podpis)."
+          },
+          "takenOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "altText": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Tekst alternatywny; `\"\"` dla zdjęcia dekoracyjnego; null tylko dla zdjęcia sprzed 0071 bez opisu (strona je pomija)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decorative": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "author",
+          "source",
+          "license",
+          "takenOn",
+          "altText",
+          "decorative"
+        ],
+        "additionalProperties": false,
+        "description": "Zdjęcie zweryfikowane, ze zgodami obejmującymi stronę Rady (bez dokumentów, zgód, notatek i osób)."
+      },
+      "NewsPublicPost": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "publishedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "photos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewsPublicPhoto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "body",
+          "publishedAt",
+          "photos"
+        ],
+        "additionalProperties": false,
+        "description": "Opublikowana wersja wpisu — bez identyfikatorów użytkowników, klas, wersji i powodów."
+      },
       "NonNegativeCents": {
         "type": "integer",
         "minimum": 0,
@@ -52120,6 +55234,11 @@
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
+        "code": "child_consent_required",
+        "meaning": "Zdjęcie z dziećmi wymaga co najmniej jednej zapisanej zgody dotyczącej dziecka.",
+        "retry": "Nie — najpierw dopisz odwołanie do zgody (przed weryfikacją)."
+      },
+      {
         "code": "class_exists",
         "meaning": "Klasa o tej nazwie już istnieje w tym roku szkolnym.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -52183,6 +55302,11 @@
         "code": "consent_conflict",
         "meaning": "Zapis zgody nie zgadza się z danymi zdjęcia.",
         "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
+      },
+      {
+        "code": "consent_missing",
+        "meaning": "Zapisane zgody nie obejmują wszystkich rozpoznawalnych osób na zdjęciu.",
+        "retry": "Nie — najpierw dopisz odwołanie do zgody (przed weryfikacją)."
       },
       {
         "code": "consent_not_found",
@@ -52840,6 +55964,16 @@
         "retry": "Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie)."
       },
       {
+        "code": "invalid_identifiable_adults",
+        "meaning": "Niepoprawna liczba rozpoznawalnych dorosłych na zdjęciu.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_identifiable_children",
+        "meaning": "Niepoprawna liczba rozpoznawalnych dzieci na zdjęciu.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_identifier",
         "meaning": "Niepoprawny identyfikator.",
         "retry": "Nie — popraw dane żądania."
@@ -52877,6 +56011,11 @@
       {
         "code": "invalid_ledger_entry_id",
         "meaning": "Niepoprawny identyfikator wpisu księgi.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_license_document_ref",
+        "meaning": "Niepoprawne odwołanie do dokumentu licencji.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -53575,6 +56714,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "next_school_year_not_open",
+        "meaning": "Następny rok szkolny nie jest otwarty. Wybierz rok, który jeszcze nie został zamknięty.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "next_year_opening_balance_exists",
         "meaning": "Bilans otwarcia następnego roku już istnieje.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
@@ -53853,6 +56997,11 @@
         "code": "photo_revoked",
         "meaning": "Zgoda na publikację zdjęcia została wycofana.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "photo_rights_unverified",
+        "meaning": "Wpis zawiera zdjęcie bez zweryfikowanych praw do publikacji.",
+        "retry": "Nie — najpierw zweryfikuj prawa do zdjęcia albo usuń je z wpisu."
       },
       {
         "code": "photos_require_school_wide_role",
@@ -54537,6 +57686,11 @@
       {
         "code": "year_close_already_started",
         "meaning": "Zamknięcie roku zostało już rozpoczęte.",
+        "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "year_close_not_in_progress",
+        "meaning": "Zamknięcie roku nie jest w toku (zostało już zakończone albo nie rozpoczęte).",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
