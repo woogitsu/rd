@@ -455,4 +455,23 @@ describe('kod weryfikacyjny nowego adresu z wniosku rodzica (#140 pkt 5)', () =>
     assert.deepEqual([entry.verification, entry.verificationReason], ['failed', 'delivery_unknown']);
     await ctx.db.close();
   });
+
+  test('#748: pusty MFA_REQUIRED_ROLES — potwierdzenie kodu przez właściciela tokenu działa bez sesji; zarząd bez MFA nie widzi kolejki ani szablonów', async () => {
+    const ctx = await setup({ env: { ...FLAG, MFA_REQUIRED_ROLES: '' } });
+    const boardNoMfa = await seedUserSession(ctx.db, { userId: 'u-board-nomfa', roles: [{ role: 'board', schoolYearId: Y }] });
+    await seedGuardian(ctx.db, { id: 'g-20', householdId: 'h-20', studentId: 's-20' });
+    await approvedTemplate(ctx);
+    const submitted = await submitRequest(ctx, 'g-20', { email: 'nowy20@example.invalid' });
+    assert.equal(submitted.response.emailVerification, 'requested');
+    const transport = fakeTransport();
+    await runWorker(ctx.env, transport);
+    assert.equal(transport.sent.length, 1);
+    const confirmed = await call(ctx.env, '/api/public/guardian-update/verify', { body: { token: submitted.token, code: codeFrom(transport.sent[0]) } });
+    assert.deepEqual(confirmed, { status: 200, data: { verification: 'confirmed' } });
+    for (const path of ['/api/admin/guardian-update-requests', '/api/admin/guardian-verify-templates']) {
+      assert.deepEqual(await call(ctx.env, path, { cookie: boardNoMfa }), { status: 403, data: { error: 'forbidden' } }, path);
+    }
+    assert.equal((await queueEntry(ctx, submitted.requestId)).verification, 'confirmed', 'zarząd z MFA widzi stan potwierdzenia');
+    await ctx.db.close();
+  });
 });

@@ -1955,8 +1955,9 @@ export const ROUTE_MATRIX = Object.freeze([
   // ---------- guardian-updates (#140) ----------
   // Wydanie linku i kolejka: admin/zarząd BEZ przydziału klasowego (SR-01,
   // jak board.js/#131) — przedstawiciel klasy nie widzi kolejki wniosków
-  // (do decyzji D-08). MFA już wymuszone przez bramkę routera dla admin/
-  // zarząd (mfa-policy.js), stąd mfa: true. Formularz publiczny — bez sesji,
+  // (do decyzji D-08). MFA wymagane na samej trasie (requireMfa: true w
+  // requireBoardContext, #748), niezależnie od bramki routera (mfa-policy.js),
+  // stąd mfa: true. Formularz publiczny — bez sesji,
   // ten sam wynik dla każdego wywołującego.
   {
     id: 'guardianUpdates.issueLink', module: 'guardian-updates', method: 'POST', path: '/api/admin/guardian-links',

@@ -14,6 +14,10 @@
 //   POST /api/admin/guardian-verify-templates           admin, zarząd — nowy szkic szablonu
 //   POST /api/admin/guardian-verify-templates/{id}/approve  zarząd, inna osoba niż autor, świeże MFA
 //
+// Każda trasa /api/admin/* tego modułu wymaga potwierdzonego MFA na poziomie
+// trasy (#748, requireBoardContext), niezależnie od MFA_REQUIRED_ROLES; trasy
+// /api/public/* uwierzytelnia wyłącznie token i MFA ich nie dotyczy.
+//
 // Rodzic nie ma konta (role w role_grants obejmują wyłącznie Radę) — token
 // jest jedynym mechanizmem uwierzytelnienia, dlatego jednorazowy, krótkotrwały
 // i przechowywany wyłącznie jako skrót SHA-256. Formularz publiczny nigdy nie
@@ -46,7 +50,7 @@ import {
 } from '../authorization.js';
 import { insertAuditEvent } from '../audit.js';
 import { gateFreeText, piiAuditMetadata } from '../pii-gate.js';
-import { createJsonReader } from '../input.js';
+import { createJsonReader, decodePathId } from '../input.js';
 import { emailHash, findForbiddenWording, normalizeEmail } from '../../email/content.js';
 import {
   codeMatches, GUARDIAN_RESTRICTED_SQL, guardianVerifyEnabled, VERIFY_BODY_PLACEHOLDERS, VERIFY_CODE_PATTERN,
@@ -103,12 +107,18 @@ const readJson = createJsonReader({
 
 // Admin/zarząd BEZ przydziału klasowego — ten sam wzorzec SR-01 co pulpit
 // zarządu (board.js, #131): przedstawiciel klasy nie widzi kolejki wniosków.
+// #748: MFA wymagane na samej trasie (`requireMfa: true`, jak import,
+// privacy-notice i year-close), nie tylko przez bramkę routera — ta działa
+// wyłącznie dla ról z MFA_REQUIRED_ROLES, a trasy zmieniają dane kontaktowe
+// rodzin. Brak roli, zakresu albo MFA: ten sam ogólny `403 forbidden` i ślad
+// `access.denied`. Trasy publiczne (właściciel tokenu) tej funkcji nie wołają.
 async function requireBoardContext(request, env, roles = EDIT_ROLES) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  if (!isAuthorizedScoped(context, { roles })) {
+  const requirement = { roles, requireMfa: true };
+  if (!isAuthorizedScoped(context, requirement)) {
     // #184: ślad odmowy 403 (przed transakcją żądania).
-    await logAccessDenied(env, context, { roles }, request);
+    await logAccessDenied(env, context, requirement, request);
     throw new RequestError('forbidden', 403);
   }
   return context;
@@ -116,6 +126,14 @@ async function requireBoardContext(request, env, roles = EDIT_ROLES) {
 
 function validId(value) {
   return typeof value === 'string' && ID_PATTERN.test(value);
+}
+
+// Identyfikator ze ścieżki: błędne kodowanie procentowe (np. `%E0%A4%A`) albo
+// wartość spoza wzorca → 400 `invalid_request` PRZED sprawdzeniem sesji (jak
+// dotąd validId w decideRequest/approveTemplate), zamiast nieprzechwyconego
+// URIError → 503 z klasą `bug` (#748).
+function pathId(raw) {
+  return decodePathId(raw, { pattern: ID_PATTERN, notFound: () => new RequestError('invalid_request') });
 }
 
 // Klasy bieżących dzieci opiekuna — wyłącznie do podglądu formularza/kolejki
@@ -678,7 +696,10 @@ async function approveTemplate(request, env, id, json) {
 }
 
 export async function handle(request, env, url, json) {
-  const decideMatch = url.pathname.match(/^\/api\/admin\/guardian-update-requests\/([^/]+)\/(approve|reject)$/);
+  // Decyzja wyłącznie metodą POST (jak zatwierdzenie szablonu niżej): GET na tej
+  // ścieżce omijałby kontrolę Origin i tryb tylko do odczytu routera.
+  const decideMatch = request.method === 'POST'
+    && url.pathname.match(/^\/api\/admin\/guardian-update-requests\/([^/]+)\/(approve|reject)$/);
   const isIssueLink = request.method === 'POST' && url.pathname === '/api/admin/guardian-links';
   const isPreview = request.method === 'GET' && url.pathname === '/api/public/guardian-update';
   const isSubmit = request.method === 'POST' && url.pathname === '/api/public/guardian-update';
@@ -696,12 +717,8 @@ export async function handle(request, env, url, json) {
     if (isList) return await listRequests(request, env, url, json);
     if (isVerify) return await confirmCode(request, env, json);
     if (isTemplates) return request.method === 'GET' ? await listTemplates(request, env, url, json) : await createTemplate(request, env, json);
-    if (templateApproveMatch) {
-      let id;
-      try { id = decodeURIComponent(templateApproveMatch[1]); } catch { throw new RequestError('invalid_request'); }
-      return await approveTemplate(request, env, id, json);
-    }
-    return await decideRequest(request, env, decodeURIComponent(decideMatch[1]), decideMatch[2], json);
+    if (templateApproveMatch) return await approveTemplate(request, env, pathId(templateApproveMatch[1]), json);
+    return await decideRequest(request, env, pathId(decideMatch[1]), decideMatch[2], json);
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.code, ...error.extra }, error.status);
     throw error;

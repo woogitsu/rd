@@ -207,6 +207,29 @@ admina daje przy zapisie `409 plan_stale`. Przydział adminowi nadaje inny admin
 `POST /api/admin/grants`. Wspólny zapis przydziału (`insertGrantInTx`) odrzuca własne konto
 `409 cannot_grant_self` niezależnie od wywołującego.
 
+## Prośby o aktualizację kontaktu opiekuna: MFA na trasie i identyfikator w ścieżce (#748)
+
+Ścieżki i kształty odpowiedzi bez zmian. Zmieniły się odmowy:
+
+- Trasy zarządu modułu `guardian-updates` (`POST /api/admin/guardian-links`, `GET /api/admin/guardian-update-requests`,
+  `POST …/{id}/approve`, `POST …/{id}/reject`, `GET` i `POST /api/admin/guardian-verify-templates`,
+  `POST /api/admin/guardian-verify-templates/{id}/approve`) wymagają potwierdzonego MFA na samej trasie, także gdy
+  `MFA_REQUIRED_ROLES` nie obejmuje admina albo zarządu. Odmowa: `403 forbidden` (jak `import`, `privacy-notice`,
+  `year-close`), ślad `access.denied`, bez zmiany danych. Przy domyślnej liście ról wcześniej odpowiada bramka routera
+  (`mfa_enrollment_required`/`mfa_required`). Zatwierdzenie szablonu ma dodatkowo krok w górę (`403 mfa_stale`).
+- Identyfikator w ścieżce `approve`/`reject` i zatwierdzenia szablonu: błędne kodowanie procentowe (np. `%E0%A4%A`)
+  albo wartość spoza wzorca daje `400 invalid_request` przed sprawdzeniem sesji (wspólny `decodePathId` z
+  `src/pg/input.js`). Wcześniej `approve`/`reject` z błędnym kodowaniem kończyły się `503 service_unavailable` i logiem
+  klasy `bug`, także bez sesji.
+- Decyzja o wniosku tylko metodą `POST` (jak zatwierdzenie szablonu); inna metoda na tej ścieżce nie należy do modułu
+  i dostaje `404 not_found` routera. Wcześniej `GET` z sesją zarządu rozstrzygał wniosek z pominięciem kontroli
+  `Origin` i trybu tylko do odczytu.
+- Trasy publiczne `/api/public/guardian-update*` (właściciel tokenu) bez zmian i bez MFA.
+
+Schemat OpenAPI modułu (`src/pg/schemas/guardian-updates.js`, #160 etap 14) opisuje te odmowy. Testy: `tests/pg-guardian-updates.test.js`
+(opis „trasy zarządu: MFA na trasie…”), `tests/pg-guardian-update-verify.test.js` (potwierdzenie kodu przy pustym
+`MFA_REQUIRED_ROLES`).
+
 ## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-14)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
@@ -693,12 +716,9 @@ o przetwarzaniu danych; opis stanu, nie zmiana tras; zasady w `docs/YEAR_CLOSE.m
   school_year_closed` (cała transakcja wycofana); rozpoczęcie i punkt listy kontrolnej zamkniętego roku → `409 school_year_closed`;
   ponowienie zamknięcia przez osobę, której przydział wygasł tym zamknięciem → `409 school_year_closed`, przez zarząd bez zakresu
   roku → `200` z `replayed: true`.
-- Rozbieżności i uwagi (opis, trasy bez zmian): **trasy administracyjne `guardian-updates` nie wymagają MFA same**
-  (`requireBoardContext` bez `requireMfa`) — przy `MFA_REQUIRED_ROLES` bez `admin`/`board` sesja bez MFA wydaje link, czyta kolejkę
-  i zatwierdza zmianę adresu opiekuna, podczas gdy import, informacja o przetwarzaniu danych i zamknięcie roku odmawiają (`403
-  forbidden`); `POST /api/admin/guardian-update-requests/{id}/approve|reject` z błędnym kodowaniem procentowym w ścieżce
-  (`%E0%A4%A`) daje `503 service_unavailable` (nieprzechwycony `URIError`, w logu klasa `bug`) także bez sesji, a format
-  identyfikatora jest sprawdzany przed sesją (`400 invalid_request` także bez logowania) — kodu `503` nie ma w schemacie; utworzenie wersji
+- Rozbieżności i uwagi (opis, trasy bez zmian w tym etapie): brak własnego MFA na trasach administracyjnych
+  `guardian-updates` i `503` przy błędnym kodowaniu identyfikatora w ścieżce decyzji — naprawione w #748 (sekcja wyżej);
+  format identyfikatora jest sprawdzany przed sesją (`400 invalid_request` także bez logowania); utworzenie wersji
   informacji z nieistniejącym rokiem daje `400 invalid_reference` z routera (klucz obcy), choć kod trasy mapuje na `404
   school_year_not_found` błąd unikalności (`23505`), który tu nie występuje — schemat opisuje rzeczywiste `400`; wzorzec klucza
   importu (`^[A-Za-z0-9_-]{8,128}$`, zły → `400 idempotency_key_required`) różni się od `IdempotencyKey` w schemacie (dopuszcza

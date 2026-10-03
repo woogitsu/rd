@@ -8,9 +8,11 @@
 //
 // Cechy modułu, które schemat odwzorowuje (opis stanu, nie zmiana tras):
 //   * trasy administracyjne: admin i zarząd z przydziałem BEZ klasy (SR-01); przedstawiciel, skarbnik, Komisja Rewizyjna,
-//     dyrekcja i zarząd zawężony do klasy → 403 `forbidden`. Trasa NIE wymaga MFA sama (`requireBoardContext` bez
-//     `requireMfa`) — MFA wymusza wyłącznie bramka routera dla ról z `MFA_REQUIRED_ROLES` (`mfa_enrollment_required`,
-//     `mfa_required`); zatwierdzenie szablonu ma krok w górę MFA (`mfa_required`/`mfa_stale`, #150);
+//     dyrekcja i zarząd zawężony do klasy → 403 `forbidden`. Trasa wymaga MFA sama (`requireBoardContext` z
+//     `requireMfa`, #748): bez MFA → 403 `forbidden`, także gdy `MFA_REQUIRED_ROLES` nie obejmuje admina/zarządu; przy
+//     domyślnej liście wcześniej odpowiada bramka routera (`mfa_enrollment_required`, `mfa_required`); zatwierdzenie
+//     szablonu ma krok w górę MFA (`mfa_stale`, #150); identyfikator w ścieżce decyzji i zatwierdzenia szablonu
+//     (także błędne kodowanie procentowe) → 400 `invalid_request` przed sesją;
 //   * trasy `/api/public/*` działają bez sesji (bez 401) i są zwolnione z bramki MFA; token linku jest jedynym
 //     uwierzytelnieniem: zły, wygasły i zużyty token w podglądzie dają tę samą odpowiedź 404 `invalid_or_expired_link`,
 //     a zły token, zły lub wygasły kod, wyczerpany limit prób i rozstrzygnięty wniosek przy potwierdzeniu — 400
