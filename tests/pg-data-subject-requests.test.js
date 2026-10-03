@@ -4,10 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { perTestDb, request, seedUserSession } from './helpers/pg.js';
+
+// #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście.
+const createDb = perTestDb();
 
 async function setup() {
-  const db = await createTestDb();
+  const db = await createDb();
   await db.exec(`
     INSERT INTO households (id) VALUES ('h-1');
     INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed)
