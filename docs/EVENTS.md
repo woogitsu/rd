@@ -42,6 +42,11 @@ Przedstawiciel nie tworzy wydarzeń ogólnoszkolnych i nie widzi wydarzeń innyc
 
 Zmiany wymagają nagłówka `Origin` tej samej domeny, `Content-Type: application/json` i body do 16 KiB. Zapis w zamkniętym roku szkolnym daje `409 school_year_closed`.
 
+Kontrakt OpenAPI tych tras (#160 etap 9: wydarzenia, przebieg, zadania, zapisy i `GET /api/public/events`) opisuje
+`src/pg/schemas/events.js` (`docs/openapi.json`), a prawdziwe odpowiedzi sprawdza `tests/openapi-contract-events.test.js`;
+cechy i rozbieżności (m.in. kanały `.ics` i `GET /api/public/events/:id/tasks` poza macierzą tras i specyfikacją) —
+`docs/API.md`, „Cechy modułu etapu 9”.
+
 ## Dziennik
 
 Każdy krok zapisuje `audit_events` (aktor, czas, `entity_type='event'`, identyfikator) w tej samej transakcji. Metadane zawierają tylko numer wersji i status, bez tytułów, powodów ani danych osobowych.
@@ -54,7 +59,7 @@ Bez kont rodziców (D-10): zapisy prowadzi przedstawiciel klasy dla wydarzeń **
 - `event_task_signups`: zapis opiekuna albo konta. Status (`confirmed`/`withdrawn`) może się zmieniać (wycofanie i ponowny zapis tej samej osoby to przejście stanu **tego samego wiersza**, z historią w `audit_events` — nie nowy wiersz, nie nadpisanie: tożsamość zapisu, wraz z `recorded_by`/`created_at`, jest niezmienna, zmienia się wyłącznie `status`). Dwoje opiekunów tego samego dziecka to dwa osobne wiersze (różne `guardian_id`).
 - Limit miejsc: trigger blokuje wiersz zadania i odrzuca zapis, gdy liczba aktywnych (`confirmed`) zapisów osiągnęła `slots_needed` — `409 task_full`. Ten sam trigger zamraża zapisy odwołanego zadania i odwołanego wydarzenia — `409 event_cancelled`; wcześniejsze zapisy zostają (historia, nie usuwanie). Do odwołanego wydarzenia nie dodaje się też nowych zadań (`409 event_cancelled`; ponowienie wcześniejszego utworzenia z tym samym kluczem nadal zwraca `replayed: true`). Zadanie, którego `eventId` nie zgadza się z adresem, daje `404 event_task_not_found` (zapis, odwołanie).
 - Przedstawiciel może wskazać wyłącznie opiekuna z **bieżącą** relacją (`student_guardians_current`) do dziecka **bieżąco** przypisanego (`enrollments_current`) do klasy wydarzenia w jego roku szkolnym — `400 guardian_outside_class` w przeciwnym razie (także po zakończeniu relacji albo odejściu dziecka z klasy). Zarząd/admin (przydział bez klasy) nie mają tego ograniczenia.
-- Rok zamknięty: `409 school_year_closed` (rozszerza wspólny trigger zamrożenia — patrz `postgres/README.md`).
+- Rok zamknięty: `409 school_year_closed` (rozszerza wspólny trigger zamrożenia — patrz `postgres/README.md`) dla nowego zadania, zapisu i wycofania zapisu. Stan obecny: odwołanie zadania w zamkniętym roku przechodzi, bo trigger obejmuje w `event_tasks` tylko `INSERT` (rozbieżność opisana w `docs/API.md`, „Cechy modułu etapu 9”).
 
 ### API
 
