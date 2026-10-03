@@ -1,4 +1,4 @@
-// Rejestr schematów OpenAPI (#160, etapy 2-13) i jawny rejestr pokrycia.
+// Rejestr schematów OpenAPI (#160, etapy 2-14) i jawny rejestr pokrycia.
 //
 // Każdy plik `src/pg/schemas/<moduł>.js` eksportuje:
 //   name        nazwa modułu tras (jak `name` w src/pg/routes/*.js i `module` w macierzy tras),
@@ -39,6 +39,7 @@ import * as board from './board.js';
 import * as paymentInstructions from './payment-instructions.js';
 import * as paymentReferences from './payment-references.js';
 import * as payments from './payments.js';
+import * as privacyNotice from './privacy-notice.js';
 import * as ledger from './ledger.js';
 import * as ledgerBudget from './ledger-budget.js';
 import * as ledgerCash from './ledger-cash.js';
@@ -49,6 +50,8 @@ import * as dataExports from './exports.js';
 import * as events from './events.js';
 import * as families from './families.js';
 import * as financialReports from './financial-reports.js';
+import * as guardianUpdates from './guardian-updates.js';
+import * as importModule from './import.js';
 import * as login from './login.js';
 import * as meetings from './meetings.js';
 import * as mfa from './mfa.js';
@@ -57,21 +60,18 @@ import * as print from './print.js';
 import * as reconciliation from './reconciliation.js';
 import * as representative from './representative.js';
 import * as session from './session.js';
+import * as yearClose from './year-close.js';
 import { COMMON_COMPONENTS } from './common.js';
 
 export const SCHEMA_MODULES = Object.freeze([
-  admin, auditHistory, auditReviews, board, documents, email, events, dataExports, families, financialReports, ledger, ledgerBudget,
-  ledgerCash, ledgerCostCenters, login, meetings, mfa, news, paymentInstructions, paymentReferences, payments, print, reconciliation,
-  representative, session,
+  admin, auditHistory, auditReviews, board, documents, email, events, dataExports, families, financialReports,
+  guardianUpdates, importModule, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, login, meetings, mfa, news,
+  paymentInstructions, paymentReferences, payments, print, privacyNotice, reconciliation, representative, session, yearClose,
 ]);
 
-// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 13: wpłaty, księga
-// z preliminarzem, kasą i centrami kosztów, rodziny, sesja, uzgodnienia wyciągów bankowych, kampanie e-mail,
-// zebrania, dokumenty, wydarzenia, aktualności z galerią, logowanie hasłem i MFA, administracja kont i ról,
-// historia obiektu, ścieżka kontroli KR, sprawozdanie roczne z migawkami, eksporty, kartki oraz pulpity
-// zarządu i przedstawiciela).
+// Moduły z macierzy tras, które NIE mają jeszcze schematów. Po etapach 13 i 14 (#160) każdy moduł macierzy ma
+// plik schematów, więc lista jest pusta; test pilnuje, że nie urośnie.
 export const UNCOVERED_MODULES = Object.freeze([
-  'guardian-updates', 'import', 'privacy-notice', 'year-close',
 ]);
 
 export const COVERED_MODULES = Object.freeze(SCHEMA_MODULES.map((module) => module.name).sort());
