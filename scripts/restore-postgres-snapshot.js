@@ -2,6 +2,7 @@ import { migrationDatabaseUrl } from '../src/migration-url.js';
 import { readFile } from 'node:fs/promises';
 import { Client } from 'pg';
 import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
+import { assertConnectedDatabase, requireExpectedDatabase } from '../src/database-identity.js';
 import { checkSnapshot, eventTimeSummary, normalizeSnapshot, restoreSnapshot, SNAPSHOT_TABLES, verifySnapshot } from '../src/d1-postgres-migration.js';
 
 const args = process.argv.slice(2);
@@ -16,7 +17,7 @@ const zoneArgs = args.filter((arg) => /^--event(-local)?-time-zone=/.test(arg));
 const eventTimeZone = zoneArgs.length === 1 ? zoneArgs[0].split('=')[1] : undefined;
 
 if (!snapshotPath) {
-  console.error('Usage: npm run db:restore:postgres -- <private-snapshot.json> [--check | --apply] --actor=<userId> [--allow-production] [--event-local-time-zone=Europe/Brussels | --event-time-zone=UTC]');
+  console.error('Usage: npm run db:restore:postgres -- <private-snapshot.json> [--check | --apply] --actor=<userId> --expect-database=<database name> [--allow-production] [--event-local-time-zone=Europe/Brussels | --event-time-zone=UTC]');
   process.exitCode = 1;
 } else {
   try {
@@ -45,9 +46,12 @@ if (!snapshotPath) {
     } else if (!actorId) {
       throw new Error('--actor=<userId> (restored admin conducting the import) is required with --apply');
     } else {
+      // #166, #191: nazwa bazy docelowej potwierdzona jawnie, zanim cokolwiek zostanie zapisane.
+      const expectedDatabase = requireExpectedDatabase({ url: migrationDatabaseUrl(), args });
       const client = new Client({ connectionString: migrationDatabaseUrl() });
       try {
         await client.connect();
+        await assertConnectedDatabase(client, expectedDatabase);
         const report = await restoreSnapshot(client, snapshot, { eventTimeZone, actorId });
         console.log(JSON.stringify({ ...report, eventTimes: timeSummary }));
       } finally {

@@ -217,8 +217,12 @@ node scripts/verify-export.js /private/path/rd-eksport-y-2026-v2.json --restore-
 
 # 3. Odtworzenie do PUSTEJ bazy PostgreSQL po `npm run db:migrate:postgres`
 DATABASE_URL='…' APP_ENV=staging node scripts/verify-export.js \
-  /private/path/rd-eksport-y-2026-v2.json --restore-database
+  /private/path/rd-eksport-y-2026-v2.json --restore-database --expect-database=<nazwa bazy>
 ```
+
+`--expect-database` jest wymagane z `--restore-database` i porównywane z nazwą
+bazy w adresie oraz z `current_database()` przed zapisem (#166): `APP_ENV` z
+powłoki nie dowodzi, na jaką bazę wskazuje adres.
 
 (`npm run db:verify-export -- …` jest skrótem do tego samego skryptu.)
 

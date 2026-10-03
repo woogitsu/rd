@@ -33,10 +33,13 @@ async function captureProcessOutput(fn) {
   }
 }
 
+// #166: zapis wymaga --expect-database; domyślnie dopisujemy nazwę bazy testowej (PGlite: postgres, PG: rd_t_*).
 async function runCli(db, argv, env = { APP_ENV: 'staging' }) {
   const stdout = sink();
   const stderr = sink();
-  const { result: code, captured } = await captureProcessOutput(() => runBootstrapCli({ argv, env, db, stdout, stderr }));
+  const name = (await db.query('SELECT current_database() AS name')).rows[0].name;
+  const withFlag = argv.some((arg) => arg.startsWith('--expect-database')) ? argv : [...argv, `--expect-database=${name}`];
+  const { result: code, captured } = await captureProcessOutput(() => runBootstrapCli({ argv: withFlag, env, db, stdout, stderr }));
   const token = /^token: ([A-Za-z0-9_-]{43})$/m.exec(stdout.text())?.[1] ?? null;
   return { code, stdout: stdout.text(), stderr: stderr.text(), captured, token };
 }
@@ -195,6 +198,26 @@ test('konto wyłączone z tym adresem → odmowa', async () => {
     const run = await runCli(db, [EMAIL]);
     assert.equal(run.code, 2);
     assert.match(run.stderr, /disabled/);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM invitations')).rows[0].n, 0);
+  });
+});
+
+test('#166: bez --expect-database albo z inną nazwą bazy bootstrap nic nie zapisuje', async () => {
+  await withDb(async (db) => {
+    const wrongName = await runCli(db, [EMAIL, '--expect-database=other_database']);
+    assert.equal(wrongName.code, 1);
+    assert.match(wrongName.stderr, /Connected to database ".+", not "other_database"/);
+    assert.equal(wrongName.token, null);
+    const stdout = sink();
+    const stderr = sink();
+    assert.equal(await runBootstrapCli({ argv: [EMAIL], env: { APP_ENV: 'staging' }, db, stdout, stderr }), 1);
+    assert.match(stderr.text(), /--expect-database=<database name> is required/);
+    assert.equal(stdout.text(), '');
+    const url = sink();
+    assert.equal(await runBootstrapCli({ argv: [EMAIL, '--expect-database=rd_staging'], env: { APP_ENV: 'staging', DATABASE_URL: 'postgres://u:p@127.0.0.1:1/rd_production' }, stdout: url, stderr: url }), 1);
+    assert.match(url.text(), /points to database "rd_production", not "rd_staging"/);
+    assert.doesNotMatch(url.text(), /u:p@|127\.0\.0\.1/);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM users')).rows[0].n, 0);
     assert.equal((await db.query('SELECT count(*)::int AS n FROM invitations')).rows[0].n, 0);
   });
 });
