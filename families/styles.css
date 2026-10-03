@@ -40,6 +40,8 @@ button:disabled{opacity:.6;cursor:wait}
 .primary{background:var(--red);color:#fff;border-color:var(--red)}
 .primary:hover{background:var(--red-dark)}
 .empty,.message{color:var(--muted)}
+/* Komunikat pustego wyniku wstawia wpisany tekst (#128): długi ciąg bez spacji nie może poszerzać strony przy 320 px. */
+.empty{overflow-wrap:anywhere}
 .message.error,.form-error{color:var(--red-dark)}
 .message:not(:empty){margin:0 0 16px;padding:12px;background:#fff;border:1px solid #e0ddd9;border-left:3px solid var(--red)}
 .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

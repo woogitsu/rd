@@ -196,6 +196,14 @@ odmawia pod `node --test`), a przeglądarkowy spec podstawia odpowiedzi API prze
   wniosek z nowym adresem → pole kodu → ta sama treść dla złego kodu przy 400, 404 i 429 → sukces;
   pole kodu tylko przy `emailVerification: requested`; link zużyty albo zły to jedna treść; potwierdzenie
   nie niesie tokenu w adresie żądania (token jest w ciele).
+- `tests/e2e/families-class-search.spec.js` — przeglądarka, 320 px (#128): wpisywanie w pole „Szukaj ucznia”
+  na liście klasy (osobny rok `e2e-y-search`, klasa 3C z ośmioma wymyślonymi uczniami): zawężanie listy,
+  licznik w regionie `role="status"` `aria-live="polite"`, dopasowanie bez polskich znaków (także „ł”),
+  komunikat „Brak uczniów pasujących do …”, wpisany tekst jako tekst i brak poziomego przewijania także
+  przy długim zapytaniu bez spacji.
+- `tests/api-parity-ledger.test.js` — równoważność księgi Worker (D1) ↔ PostgreSQL (#41, część B): status,
+  wszystkie nagłówki i ciało po normalizacji oraz granice ról (bez sesji, bez MFA, przedstawiciel klasy,
+  konto bez roli, skarbnik innego roku, zarząd); różnice w `ALLOWED` opisuje `docs/EQUIVALENCE.md`.
 - `tests/families-guardian-verify-templates.test.js` — czyste funkcje widoku szablonu w `families/`,
   zgodność granic z API i migracją 0184 oraz prawdziwe API na PGlite: szkic, odmowy `self_approval_forbidden`,
   `forbidden` (admin), `mfa_stale` (sesja z MFA sprzed 20 minut), `verify_template_changed`, podwójne

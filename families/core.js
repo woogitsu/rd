@@ -79,7 +79,10 @@ function foldDiacritics(value) {
   return String(value ?? "")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
+    .toLowerCase()
+    // „ł” nie rozkłada się w NFD (to osobna litera, nie „l” ze znakiem), więc „lukasz” nie
+    // znajdowało „Łukasz” — jak w admin/core.js (foldText).
+    .replace(/ł/g, "l");
 }
 
 export function filterStudentsByName(students, query) {
