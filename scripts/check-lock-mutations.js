@@ -42,6 +42,9 @@ const REQUEST_LOCKS = 'tests/pg-real-request-locks.test.js';
 const DISABLE_SESSION = 'tests/pg-disable-session-race.test.js';
 const AUTH_LOCKS = 'tests/pg-real-auth-locks.test.js';
 const EMAIL_LOCKS = 'tests/pg-real-email-locks.test.js';
+const MFA_LOCKS = 'tests/pg-real-mfa-locks.test.js';
+const GUARDIAN_VERIFY_LOCKS = 'tests/pg-real-guardian-verify-locks.test.js';
+const WEBHOOK_LOCKS = 'tests/pg-real-webhook-locks.test.js';
 
 // kind: 'for-update' usuwa każde `FOR UPDATE [OF x]` w kodzie funkcji `fn`
 // (komentarze pomija skaner z scripts/lock-inventory.js), 'for-share' — każde
@@ -108,6 +111,13 @@ export const MUTANTS = [
   { id: 'grant-target-lock', file: 'src/pg/routes/admin.js', fn: 'lockGrantTarget', kind: 'for-update', test: AUTH_LOCKS },
   { id: 'email-outbox-resolution', file: 'src/pg/routes/email.js', fn: 'createResolution', kind: 'for-update', test: EMAIL_LOCKS },
   { id: 'email-suppression-release', file: 'src/pg/routes/email.js', fn: 'release', kind: 'for-update', test: EMAIL_LOCKS },
+  // Dawne luki inwentaryzacji (#208): kod weryfikacyjny wniosku rodzica, MFA i webhook dostawcy.
+  { id: 'guardian-verify-confirm', file: 'src/pg/routes/guardian-updates.js', fn: 'confirmCode', kind: 'for-update', test: GUARDIAN_VERIFY_LOCKS },
+  { id: 'mfa-lock-user', file: 'src/pg/mfa.js', fn: 'lockUser', kind: 'for-update', test: MFA_LOCKS },
+  { id: 'mfa-active-factors', file: 'src/pg/mfa.js', fn: 'activeFactors', kind: 'for-update', test: MFA_LOCKS },
+  { id: 'mfa-key-rotation', file: 'src/pg/mfa-key-rotation.js', fn: 'rotateOneAccount', kind: 'for-update', test: MFA_LOCKS },
+  { id: 'mfa-admin-reset', file: 'src/pg/login.js', fn: 'adminResetMfaInTx', kind: 'for-update', test: MFA_LOCKS },
+  { id: 'email-webhook-outbox', file: 'src/pg/routes/email.js', fn: 'recordWebhookEvent', kind: 'for-update', test: WEBHOOK_LOCKS },
 ];
 
 // Zwraca [początek, koniec) ciała funkcji najwyższego poziomu `fn` w `source`.
