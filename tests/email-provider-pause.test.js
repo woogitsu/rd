@@ -8,7 +8,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { createBrevoTransport } from '../src/email/brevo.js';
 import { emailHash } from '../src/email/content.js';
 import { activeProviderPause, runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice, assertOwnerGuard } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -278,8 +278,8 @@ test('baza: pauza niezmienna poza jednorazowym zdjęciem; bez DELETE/TRUNCATE; j
       /duplicate key/,
     );
     await assert.rejects(t.db.query("UPDATE email_provider_pauses SET error_code = 'provider_rejected_401' WHERE id = 'p1'"), /email_provider_pause_immutable/);
-    await assert.rejects(t.db.query("DELETE FROM email_provider_pauses WHERE id = 'p1'"), /email_provider_pause_immutable/);
-    await assert.rejects(t.db.query('TRUNCATE email_provider_pauses'));
+    await assertOwnerGuard(t.db, "DELETE FROM email_provider_pauses WHERE id = 'p1'", /email_provider_pause_immutable/);
+    await assertOwnerGuard(t.db, 'TRUNCATE email_provider_pauses', /truncate_not_allowed/);
     await assert.rejects(t.db.query("UPDATE email_provider_pauses SET lifted_at = now() WHERE id = 'p1'"), /email_provider_pause_lift_actor|email_provider_pause_immutable/);
     await t.db.query("UPDATE email_provider_pauses SET lifted_by = 'u-bd', lifted_at = '2019-01-01T00:00:00Z' WHERE id = 'p1'");
     const { rows: lifted } = await t.db.query("SELECT lifted_at > now() - interval '1 hour' AS fresh FROM email_provider_pauses WHERE id = 'p1'");

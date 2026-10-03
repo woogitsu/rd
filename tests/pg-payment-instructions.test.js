@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedSchoolYear, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const IBAN = 'BE68539007547034';
 
@@ -135,6 +135,6 @@ test('baza: zatwierdzona wersja jest niezmienna (trigger)', async () => {
     ctx.db.query("UPDATE payment_instructions SET iban = 'BE71096123456769' WHERE id = $1", [id]),
     /payment_instructions_immutable/,
   );
-  await assert.rejects(ctx.db.query('DELETE FROM payment_instructions WHERE id = $1', [id]), /payment_instructions_immutable/);
+  await assertOwnerGuard(ctx.db, 'DELETE FROM payment_instructions WHERE id = $1', /payment_instructions_immutable/, [id]);
   await ctx.close();
 });

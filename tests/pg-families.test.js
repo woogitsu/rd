@@ -9,7 +9,7 @@ import { buildClassRoster } from '../src/pg/export.js';
 import { computeSnapshot } from '../src/pg/routes/email.js';
 import { DEFAULT_CATEGORY } from '../src/email/content.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 const Y2 = 'y-2027';
@@ -218,7 +218,7 @@ describe('katalog rodzin (osobna baza na test)', () => {
     assert.equal(history.rows[0].changed_by, 'u-board');
     assert.equal(history.rows[0].reason, 'Prośba opiekuna');
     assert.equal(history.rows[0].source, 'api');
-    await assert.rejects(db.query('DELETE FROM guardian_contact_changes'), /append_only/);
+    await assertOwnerGuard(db, 'DELETE FROM guardian_contact_changes', /append_only/);
 
     const audit = await db.query(`SELECT actor_id, entity_id, metadata_json FROM audit_events WHERE action = 'guardian.contact.updated'`);
     assert.equal(audit.rows.length, 1);
@@ -314,7 +314,7 @@ describe('katalog rodzin (osobna baza na test)', () => {
       { kind: 'enrolled', from_class_id: null, to_class_id: 'c-1a', effective_on: null, changed_by: null, source: 'direct' },
       { kind: 'class_changed', from_class_id: 'c-1a', to_class_id: 'c-2b', effective_on: '2026-11-03', changed_by: 'u-board', source: 'api' },
     ]);
-    await assert.rejects(db.query(`DELETE FROM enrollments WHERE id = 'e-1'`), /cannot_be_deleted/);
+    await assertOwnerGuard(db, `DELETE FROM enrollments WHERE id = 'e-1'`, /cannot_be_deleted/);
     await assert.rejects(db.query(`UPDATE enrollment_history SET reason = 'x'`), /append_only/);
 
     // Po zmianie przedstawiciel klasy A traci wgląd w ucznia i jego rodzinę.
@@ -341,7 +341,7 @@ describe('katalog rodzin (osobna baza na test)', () => {
     await assert.rejects(db.query(
       `INSERT INTO student_households (id, student_id, household_id) VALUES ('x2', 's-1', 'h-2')`,
     ), /overlap/);
-    await assert.rejects(db.query(`DELETE FROM student_households WHERE id = 'sh-s1-h2'`), /cannot_be_deleted/);
+    await assertOwnerGuard(db, `DELETE FROM student_households WHERE id = 'sh-s1-h2'`, /cannot_be_deleted/);
     await assert.rejects(db.query(`UPDATE student_households SET household_id = 'h-3' WHERE id = 'sh-s1-h2'`), /immutable/);
 
     // Zmiana głównego gospodarstwa: zamknięcie starego wiersza i nowy wiersz.

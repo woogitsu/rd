@@ -13,7 +13,7 @@ import { checkJobsHealth } from '../src/pg/jobs-health.js';
 import { computeWorkerStatus } from '../src/pg/routes/email.js';
 import { guardianVerifyQueueStatus } from '../src/pg/ops-status.js';
 import { resolveRuntime } from '../src/server.js';
-import { createTestDb, request, seedClass, seedPublishedPrivacyNotice, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedPublishedPrivacyNotice, seedSchoolYear, seedUserSession, ownerDb } from './helpers/pg.js';
 
 const Y = 'y-2026';
 const HOUR = 60 * 60_000;
@@ -104,7 +104,8 @@ test('stan kolejki kodów: queued, sending i najstarszy oczekujący; bez tabeli 
     const decided = await call(ctx.env, `/api/admin/guardian-update-requests/${first}/reject`, { cookie: ctx.cookies.approver, body: {} });
     assert.equal(decided.status, 200);
     assert.equal((await guardianVerifyQueueStatus(ctx.db)).queued, 1);
-    await ctx.db.query('DROP TABLE guardian_update_verifications CASCADE');
+    // Baza sprzed 0184 symulowana DDL-em: połączenie właściciela (SR-05); odczyt stanu nadal rolą aplikacji.
+    await ownerDb(ctx.db).query('DROP TABLE guardian_update_verifications CASCADE');
     assert.equal(await guardianVerifyQueueStatus(ctx.db), null, 'brak tabeli (baza sprzed 0184) to null, nie wyjątek');
   } finally {
     await ctx.db.close();

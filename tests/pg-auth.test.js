@@ -11,7 +11,7 @@ import { assertNoPii } from '../src/pg/audit.js';
 import { createSessionSecret } from '../src/auth.js';
 import { resolveRuntime } from '../src/server.js';
 import { assertEvery } from './helpers/assertions.js';
-import { createTestDb, request, seedClass, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const HOUR = 60 * 60 * 1000;
 const past = () => new Date(Date.now() - HOUR);
@@ -216,8 +216,8 @@ test('audit log is append-only and role grants are never deleted', async () => w
   const cookie = await seedUserSession(db, { userId: 'u1', roles: [{ role: 'board' }] });
   await handlePgRequest(request('/api/logout', { method: 'POST', cookie }), env);
   await assert.rejects(db.query("UPDATE audit_events SET action = 'x'"), /append_only/);
-  await assert.rejects(db.query('DELETE FROM audit_events'), /append_only/);
-  await assert.rejects(db.query('DELETE FROM role_grants'), /cannot_be_deleted/);
+  await assertOwnerGuard(db, 'DELETE FROM audit_events', /append_only/);
+  await assertOwnerGuard(db, 'DELETE FROM role_grants', /cannot_be_deleted/);
   await assert.rejects(db.query("UPDATE role_grants SET role = 'admin'"), /scope_immutable/);
 }));
 

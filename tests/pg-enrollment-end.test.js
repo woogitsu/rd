@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildClassRoster } from '../src/pg/export.js';
 import { computeSnapshot } from '../src/pg/routes/email.js';
-import { perTestDb, request, seedClass, seedPublishedPrivacyNotice, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { perTestDb, request, seedClass, seedPublishedPrivacyNotice, seedSchoolYear, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 // #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście.
 const createDb = perTestDb();
@@ -87,7 +87,7 @@ describe('zakończenie przypisania (odejście ze szkoły, #86)', () => {
     const { db } = await setup();
     await db.query(`UPDATE enrollments SET ended_on = '2026-10-15', ended_reason = 'test', ended_by = 'u-board', ended_at = now() WHERE id = 'e-1'`);
     await assert.rejects(db.query(`UPDATE enrollments SET class_id = 'c-1a' WHERE id = 'e-1'`), /enrollment_already_ended/);
-    await assert.rejects(db.query(`DELETE FROM enrollments WHERE id = 'e-1'`), /cannot_be_deleted/);
+    await assertOwnerGuard(db, `DELETE FROM enrollments WHERE id = 'e-1'`, /cannot_be_deleted/);
   });
 
   test('rodzeństwo: uczeń, który odszedł, znika z listy klasy, kartek, kampanii i eksportu — drugie dziecko zostaje', async () => {

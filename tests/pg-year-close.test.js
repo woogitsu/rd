@@ -3,7 +3,7 @@ import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
-import { createTestDb, request, seedClass, seedEnrolledHousehold, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedEnrolledHousehold, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const OLD = 'y-2026';
@@ -150,8 +150,7 @@ describe('po zamknięciu roku przez drugą osobę z zarządu', () => {
     // Zamknięcie jest ostateczne na poziomie bazy.
     await assert.rejects(db.query("UPDATE school_year_closures SET status = 'closing' WHERE school_year_id = $1", [OLD]),
       /school_year_closure_is_final/);
-    await assert.rejects(db.query('DELETE FROM school_year_closures WHERE school_year_id = $1', [OLD]),
-      /school_year_closures_cannot_be_deleted/);
+    await assertOwnerGuard(db, 'DELETE FROM school_year_closures WHERE school_year_id = $1', /school_year_closures_cannot_be_deleted/, [OLD]);
   });
 
   test('zwrot wpłaty i ponowne przypisanie w zamkniętym roku są odrzucane, nic nie zapisano (#138)', async () => {

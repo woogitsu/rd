@@ -21,7 +21,7 @@ import { reapplyAnonymizationRuns } from '../src/pg/anonymization-reapply.js';
 import { runExportLogCli } from '../scripts/export-anonymization-log.js';
 import { runReapplyCli } from '../scripts/reapply-anonymization.js';
 import { assertCaptured, assertEvery } from './helpers/assertions.js';
-import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard, ownerDb } from './helpers/pg.js';
 
 const Y1 = 'y-reapply-1';
 const TEST_ENV = { APP_ENV: 'test' };
@@ -172,7 +172,9 @@ describe('ponowne zastosowanie przebiegów anonimizacji po odtworzeniu (#91)', (
   async function restoredTarget({ admin = 'u-restored-admin' } = {}) {
     const target = await createTestDb();
     targets.push(target);
-    await restoreBundle(target, fixture.bundleBefore);
+    // Odtworzenie paczki: operator na DATABASE_MIGRATION_URL (właściciel; SR-05). Samo ponowienie
+    // anonimizacji biegnie dalej połączeniem aplikacji (`target`), jak skrypt z DATABASE_URL.
+    await restoreBundle(ownerDb(target), fixture.bundleBefore);
     if (admin) await seedRoleGrant(target, { userId: admin, role: 'admin' });
     return target;
   }
@@ -526,9 +528,9 @@ describe('ponowne zastosowanie przebiegów anonimizacji po odtworzeniu (#91)', (
       assert.equal((await runCli(runReapplyCli, reapplyArgv(), { db: target })).code, 0);
       await assert.rejects(target.query("UPDATE payment_entries SET reference = NULL WHERE id = 'p-x'"), /payment_financial_facts_immutable/);
       await assert.rejects(target.query("UPDATE payment_entries SET amount_cents = 1 WHERE id = 'p-1a'"), /payment_financial_facts_immutable/);
-      await assert.rejects(target.query("DELETE FROM payment_entries WHERE id = 'p-1a'"), /payment_entries_cannot_be_deleted/);
+      await assertOwnerGuard(target, "DELETE FROM payment_entries WHERE id = 'p-1a'", /payment_entries_cannot_be_deleted/);
       await assert.rejects(target.query("UPDATE anonymization_runs SET source_run = '{}'::jsonb"), /anonymization_runs_is_append_only/);
-      await assert.rejects(target.query('DELETE FROM anonymization_runs'), /anonymization_runs_is_append_only/);
+      await assertOwnerGuard(target, 'DELETE FROM anonymization_runs', /anonymization_runs_is_append_only/);
       // Schemat nie przyjmuje wiersza restore_reapply bez kompletnych danych źródłowych.
       await assert.rejects(target.query(
         `INSERT INTO anonymization_runs (id, household_id, reason_code, plan_sha256, counts, executed_by)

@@ -12,7 +12,7 @@ import {
 } from '../src/d1-postgres-migration.js';
 import { handlePgRequest } from '../src/pg/app.js';
 import { revokeRoleGrant } from '../src/pg/authorization.js';
-import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const require = createRequire(import.meta.url);
 const SQL = await initSqlJs({ locateFile: () => require.resolve('sql.js/dist/sql-wasm.wasm') });
@@ -195,10 +195,10 @@ test('restored rows stay protected by the new guards (append-only audit, role gr
   try {
     await restore(db, snapshotFromD1());
     await assert.rejects(db.query("UPDATE audit_events SET action = 'changed' WHERE id = 'ae-1'"), /audit_events_are_append_only/);
-    await assert.rejects(db.query("DELETE FROM audit_events WHERE id = 'ae-3'"), /audit_events_are_append_only/);
-    await assert.rejects(db.query("DELETE FROM role_grants WHERE id = 'rg-rep'"), /role_grants_cannot_be_deleted/);
+    await assertOwnerGuard(db, "DELETE FROM audit_events WHERE id = 'ae-3'", /audit_events_are_append_only/);
+    await assertOwnerGuard(db, "DELETE FROM role_grants WHERE id = 'rg-rep'", /role_grants_cannot_be_deleted/);
     await assert.rejects(db.query("UPDATE role_grants SET class_id = 'c-2a' WHERE id = 'rg-rep'"), /role_grant_scope_immutable/);
-    await assert.rejects(db.query("DELETE FROM events WHERE id = 'ev-published'"), /events_cannot_be_deleted/);
+    await assertOwnerGuard(db, "DELETE FROM events WHERE id = 'ev-published'", /events_cannot_be_deleted/);
     await assert.rejects(db.query("UPDATE payment_entries SET amount_cents = 1 WHERE id = 'p-1'"), /immutable|financial/);
 
     // Cofnięcie odtworzonej roli działa przez funkcję aplikacji i dopisuje zdarzenie audytu.

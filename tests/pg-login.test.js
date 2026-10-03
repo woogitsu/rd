@@ -13,7 +13,7 @@ import {
 } from '../src/pg/password.js';
 import { emailDelayMs, LOGIN_POLICY, maskEmail, scopeHash } from '../src/pg/login.js';
 import { freshMfaForbiddenCode, loadAuthorizationContext } from '../src/pg/authorization.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const KEY = randomBytes(32).toString('base64');
@@ -990,7 +990,7 @@ test('reset hasła: token tylko od administratora (admin + MFA), jednorazowy, no
   );
   assert.equal((await post('/api/password/reset', { token: expiredToken, newPassword: newPassword() })).status, 400);
   // Tokenów nie da się usunąć ani użyć ponownie w SQL.
-  await assert.rejects(db.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [account.userId]), /password_reset_token_immutable/);
+  await assertOwnerGuard(db, 'DELETE FROM password_reset_tokens WHERE user_id = $1', /password_reset_token_immutable/, [account.userId]);
   const issued = await auditRows('auth.password_reset_issued');
   assert.ok(issued.filter((row) => row.actor_id === 'u-login-admin').length >= 3);
   assert.equal((await auditRows('auth.password_reset_revoked')).filter((row) => row.metadata_json.userId === account.userId).length >= 1, true);

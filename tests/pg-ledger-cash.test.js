@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
-import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const OLD = 'y-2026';
 const NEW = 'y-2027';
@@ -134,7 +134,7 @@ test('symulacja: 3000 EUR w kasie przechodzi na nowy rok, wpłata do banku jako 
     const recStorno = await reconcile(call, cookies.treasurer, NEW, '2027-10-03', BANK + CASH);
     assert.equal(recStorno.ledgerNonBankCents, CASH);
     await assert.rejects(db.query('UPDATE ledger_transfers SET amount_cents = 1'), /ledger_transfers_cannot_be_changed/);
-    await assert.rejects(db.query('DELETE FROM ledger_transfers'), /ledger_transfers_cannot_be_changed/);
+    await assertOwnerGuard(db, 'DELETE FROM ledger_transfers', /ledger_transfers_cannot_be_changed/);
 
     // Raport KR i zestawienie przekazania pokazują podział.
     // Raport zamkniętego roku czyta zarząd roku następnego (#195).

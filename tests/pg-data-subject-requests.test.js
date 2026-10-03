@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { perTestDb, request, seedUserSession } from './helpers/pg.js';
+import { perTestDb, request, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 // #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście.
 const createDb = perTestDb();
@@ -111,8 +111,7 @@ test('rejestr jest tylko do dopisywania: tożsamość żądania i historia stan�
     method: 'POST', cookie: admin, body: { kind: 'access', studentId: 's-1', receivedOn: '2026-10-01' },
   });
   const id = created.data.request.id;
-  await assert.rejects(env.db.query('DELETE FROM data_subject_requests WHERE id = $1', [id]),
-    /data_subject_request_cannot_be_deleted/);
+  await assertOwnerGuard(env.db, 'DELETE FROM data_subject_requests WHERE id = $1', /data_subject_request_cannot_be_deleted/, [id]);
   await assert.rejects(env.db.query(`UPDATE data_subject_requests SET kind = 'erasure' WHERE id = $1`, [id]),
     /data_subject_request_identity_immutable/);
 });

@@ -8,7 +8,7 @@ import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { assertNoPii } from '../src/pg/audit.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const Y1 = 'y-ident-1';
 const REASON = 'Błąd pisowni w ewidencji (syntetyczne)';
@@ -280,8 +280,8 @@ describe('sprostowanie imienia i nazwiska z historią (#100)', () => {
       await assert.rejects(db.query("UPDATE identity_changes SET new_first_name = 'X' WHERE id = $1", [row.id]), /identity_changes_is_append_only/);
       await assert.rejects(db.query('UPDATE identity_changes SET reason = NULL WHERE id = $1', [row.id]), /identity_changes_is_append_only/);
       await assert.rejects(db.query('UPDATE identity_changes SET changed_at = now() WHERE id = $1', [row.id]), /identity_changes_is_append_only/);
-      await assert.rejects(db.query('DELETE FROM identity_changes WHERE id = $1', [row.id]), /identity_changes_is_append_only/);
-      await assert.rejects(db.query('TRUNCATE identity_changes'), /truncate_not_allowed/);
+      await assertOwnerGuard(db, 'DELETE FROM identity_changes WHERE id = $1', /identity_changes_is_append_only/, [row.id]);
+      await assertOwnerGuard(db, 'TRUNCATE identity_changes', /truncate_not_allowed/);
       assert.equal((await one('SELECT previous_first_name FROM identity_changes WHERE id = $1', [row.id])).previous_first_name, row.previous_first_name);
       // Antydatowany INSERT jest nadpisany zegarem bazy.
       await db.query(
