@@ -5,7 +5,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { auditScope, buildYearlyExport, EXPORT_TABLES, restoreBundle, verifyBundle } from '../src/pg/export.js';
-import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUser, seedUserSession, ownerDb } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const OLD = 'y-old';
@@ -204,7 +204,8 @@ test('odtworzenie paczki roku poprzedniego: zdarzenia roku obiektu (także stare
   const { bundle } = await buildYearlyExport(db, OLD);
   const target = await createTestDb();
   try {
-    const report = await restoreBundle(target, bundle);
+    // Odtworzenie paczki to operacja operatora na DATABASE_MIGRATION_URL (właściciel; SR-05).
+    const report = await restoreBundle(ownerDb(target), bundle);
     assert.equal(report.restored, true);
     assert.equal(report.reexportFilesMatch, true);
     const restored = (await buildYearlyExport(target, OLD)).bundle;

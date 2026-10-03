@@ -700,6 +700,80 @@ lista z uzasadnieniami: `TRIGGER_BYPASS_ALLOWED` w `tests/test-quality-lint.test
 musi przejść na samej roli `rd_app`. To nie jest „pełny zestaw na `rd_app`” z kryterium #101: pominięte pliki
 nie mają dowodu na tej roli.
 
+### Klasyfikacja niezgodności z rolą `rd_app` (#101, SR-05)
+
+Nocny przebieg na `rd_app` (run 37124010123, `main` 5c8c73db) dał 65 testów z błędem w 40 plikach. Każdy błąd to
+`42501` (`permission denied for table …`, `permission denied for schema public`, `must be owner of table …`,
+`permission denied to set parameter "session_replication_role"`). Klasy:
+
+- **A**: test celowo wykonuje operację właściciela: DDL w danych testowych albo bezpośredni `DELETE`/`TRUNCATE`
+  na tabeli z historią, żeby sprawdzić strażnika bazy. Rola aplikacji nie ma tego uprawnienia i odpada na `42501`,
+  zanim operacja dojdzie do triggera. To nie jest błąd aplikacji.
+- **B**: brak uprawnienia, którego aplikacja albo worker potrzebuje w normalnym działaniu (błąd wdrożenia na
+  Railway, wymagałby migracji z `GRANT`). **Nie znaleziono żadnego przypadku.**
+- **C**: operacja skryptu operatora, która w produkcji idzie przez `DATABASE_MIGRATION_URL` (rola właściciela),
+  a test wykonywał ją połączeniem aplikacji. Dotyczy wyłącznie odtworzenia paczki (`restoreBundle`/`restoreBundleFile`
+  ustawiają `session_replication_role`; `scripts/verify-export.js --restore-database` używa `migrationDatabaseUrl()`).
+
+Narzędzia w `tests/helpers/pg.js`:
+
+- `ownerDb(db)`: połączenie właściciela tabel. Na PGlite i w przebiegu właściciela to ta sama baza, a z
+  `RD_TEST_PG_APP_ROLE` osobna pula bez `-c role=…`. Służy wyłącznie do operacji z klas A i C.
+- `assertOwnerGuard(db, sql, oczekiwany, parametry)`: komunikat triggera (albo naruszenie klucza obcego) sprawdza
+  na połączeniu właściciela, a z `RD_TEST_PG_APP_ROLE` sprawdza też, że rola aplikacji dostaje `42501`. Asercja
+  strażnika zostaje bez zmian, a przebieg na `rd_app` daje dodatkowy dowód, że aplikacja tej operacji nie wykona.
+- `assertAppRoleDenied(db, sql, parametry)`: samo sprawdzenie `42501` na roli aplikacji (bez roli nic nie sprawdza).
+
+`UPDATE` zostaje na połączeniu aplikacji: `rd_app` ma `UPDATE` (migracja 0170), więc te asercje sprawdzają trigger
+właśnie tą rolą, której używa aplikacja.
+
+| Plik | Testy z błędem | Klasa | Zmiana |
+| --- | --- | --- | --- |
+| `d1-postgres-restore-compat` | strażniki po odtworzeniu migawki D1 | A | `DELETE` z `audit_events`, `role_grants`, `events` przez `assertOwnerGuard` |
+| `email-provider-pause` | pauza niezmienna, bez `DELETE`/`TRUNCATE` | A | `DELETE` i `TRUNCATE` przez `assertOwnerGuard` (`TRUNCATE` sprawdza teraz `truncate_not_allowed`) |
+| `pg-access-denied` | `access_denial_windows` bez usuwania | A | jw. |
+| `pg-access-log-review` | dwa testy „gwarancja zapisu” | A | sztuczna awaria dziennika (`CREATE FUNCTION`/`TRIGGER` na `data_access_log`) przez `ownerDb`; żądania nadal rolą aplikacji |
+| `pg-account-recovery` | granice ról, cztery oczy w bazie | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-anonymization` | bezpośredni `UPDATE`/`DELETE` poza przebiegiem | A | `DELETE`/`TRUNCATE` przez `assertOwnerGuard`; `DELETE` w kontekście przebiegu na `ownerDb` + `assertAppRoleDenied` |
+| `pg-anonymization-reapply` | wszystkie 14 testów | C (+A) | odtworzenie paczki w `restoredTarget` przez `ownerDb`. Samo ponowienie anonimizacji biegnie połączeniem aplikacji, tak jak skrypt z `DATABASE_URL`, i przechodzi na `rd_app`. `DELETE` po ponowieniu przez `assertOwnerGuard` |
+| `pg-auth` | dziennik tylko do dopisywania, przydziały bez usuwania | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-data-access-log` | dziennik odczytu tylko do dopisywania | A | jw. |
+| `pg-data-subject-requests` | rejestr żądań tylko do dopisywania | A | jw. |
+| `pg-email-followup` | zatwierdzenia rozstrzygnięć niezmienne | A | `DELETE`/`TRUNCATE` przez `assertOwnerGuard` |
+| `pg-email-quota` | księga wysyłek bez edycji i usuwania | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-enrollment-end` | zakończone przypisanie niezmienne | A | jw. |
+| `pg-export-audit-year` | odtworzenie paczki roku poprzedniego | C | `restoreBundle(ownerDb(target), …)` |
+| `pg-export-stream-file` | `restoreBundleFile` jak `restoreBundle` | C | odtworzenie (także zmienionego pliku) przez `ownerDb` |
+| `pg-export-v2` | odtworzenie v2, paczka bez danych pochodnych, paczka v1 | C | odtworzenie przez `ownerDb`. Na `rd_app` dodatkowo `restoreBundle` na połączeniu aplikacji musi dać `42501` i zostawić pustą bazę |
+| `pg-families` | zmiana kontaktu, zmiana klasy, model gospodarstw | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-grant-requests` | zatwierdzenie wniosku o rolę | A | jw. |
+| `pg-guardian-verify-monitoring` | stan kolejki kodów (baza bez tabeli) | A | `DROP TABLE guardian_update_verifications` (symulacja bazy sprzed 0184) przez `ownerDb`; odczyt stanu rolą aplikacji |
+| `pg-identity-changes` | `UPDATE`/`DELETE`/`TRUNCATE` sprostowań | A | `DELETE`/`TRUNCATE` przez `assertOwnerGuard` |
+| `pg-immutability-hardening` | sesji nie da się usunąć | A | jw. |
+| `pg-immutability-stamps` | `BEFORE TRUNCATE` na tabelach z 0090/0144 | A | `TRUNCATE` przez `assertOwnerGuard` |
+| `pg-import` | zdarzenie audytu importu | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-ledger-api` | korekty księgi, atomowość audytu | A | `DELETE` przez `assertOwnerGuard`; sztuczna awaria audytu (DDL) przez `ownerDb` |
+| `pg-ledger-cash` | przeniesienie gotówki | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-login` | token resetu hasła | A | jw. |
+| `pg-mfa` | czynniki MFA i kody zapasowe | A | jw. |
+| `pg-news` | zdjęcie sprzed 0071, historia publikacji | A | `ALTER TABLE news_photos … CONSTRAINT` przez `ownerDb`, `DELETE` przez `assertOwnerGuard` (wspólna baza przekazuje `owner`/`appRole`) |
+| `pg-payment-instructions` | zatwierdzona wersja niezmienna | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-payment-references` | referencja niezmienna | A | jw. |
+| `pg-payments-api` | korekty wpłat, atomowość audytu | A | `DELETE` przez `assertOwnerGuard`; sztuczna awaria audytu (DDL) przez `ownerDb` |
+| `pg-processing-restrictions` | zdjęcie ograniczenia jako nowy zapis | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-real-tx-conflict` | dwa testy 40001 | A | tabelę próbną zakłada `ownerDb`; zapisy i konflikt idą połączeniem aplikacji (domyślne uprawnienia z 0170) |
+| `pg-real-type-parity` | cztery testy typów | A | jw. (`type_parity_probe`) |
+| `pg-retention` | `retention_policies` tylko do dopisywania | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-school-year-setup` | klasy bez trasy usuwania | A | `DELETE FROM classes` (klucz obcy) przez `assertOwnerGuard` |
+| `pg-student-guardian-consent` | strażnik przypisań opiekunów | A | `DELETE` (strażnik i klucze obce) przez `assertOwnerGuard` |
+| `pg-year-close` | zapisy w zamkniętym roku | A | `DELETE` przez `assertOwnerGuard` |
+| `pg-year-cycle` | cały cykl roku | C | odtworzenie eksportu przez `ownerDb` |
+| `privacy-inventory` | sztuczna migracja bez wpisu w spisie | A | `ALTER TABLE guardians ADD COLUMN` przez `ownerDb`; spis kolumn czyta rola aplikacji |
+
+Po zmianach wszystkie 40 plików przechodzi lokalnie na `rd_app` i bez roli (prawdziwy PostgreSQL 16) oraz na PGlite.
+Cały zestaw z przebiegu `--all` na `rd_app` (288 plików bez 54 pominiętych) przeszedł lokalnie plik po pliku, dlatego
+nocny job `nightly-pg-real-app-role` jest blokujący.
+
 `scripts/test-pg-real.js`: `initdb` w katalogu tymczasowym → serwer na losowym porcie
 (wyłącznie `127.0.0.1`, uwierzytelnianie `trust`, `fsync=off`) → `node --test
 --test-concurrency=1` z `RD_TEST_PG_URL` → zatrzymanie serwera → usunięcie katalogu
@@ -1255,15 +1329,14 @@ Nocny przebieg (#111, #101): osobny workflow `.github/workflows/nightly-pg-real.
 
 - `nightly-pg-real` (120 min): `npm run test:pg-real -- --all` (cały zestaw `tests/*.test.js` na prawdziwym
   PostgreSQL) i `npm run test:pg-mutations`;
-- `nightly-pg-real-app-role` (120 min): ten sam zestaw z `RD_TEST_PG_APP_ROLE=rd_app` (punkt 3 z #101). To przebieg
-  DIAGNOSTYCZNY (`continue-on-error`): lokalna próba 18 plików na roli `rd_app` dała 12 plików z błędem, bo testy
-  sprawdzają niezmienność tabel bezpośrednim `UPDATE`/`DELETE` (rola dostaje `permission denied`, a nie komunikat
-  triggera: `audit_events`, `payment_corrections`, `ledger_corrections`, `user_mfa_factors`, `password_reset_tokens`,
-  `access_denial_windows`…), zakładają obiekty w schemacie `public` (`permission denied for schema public`:
-  `pg-real-type-parity`, testy „audit events are atomic…”) albo zmieniają tabele (`must be owner of table`). To nie są
-  błędy aplikacji, tylko testy napisane pod właściciela. Lista niezgodnych plików trafia do podsumowania joba
-  (`### Przebieg na roli rd_app`); kryterium „pełny zestaw testów przechodzi na `rd_app`” z #101 jest otwarte do czasu
-  sklasyfikowania tej listy (test zgodny z rolą albo jawna lista wyjątków z uzasadnieniem, jak `TRIGGER_BYPASS_ALLOWED`);
+- `nightly-pg-real-app-role` (120 min): ten sam zestaw z `RD_TEST_PG_APP_ROLE=rd_app` (punkt 3 z #101). Przebieg
+  BLOKUJĄCY (bez `continue-on-error`; pilnuje tego `tests/nightly-workflow.test.js`). Niezgodności z ostatniego
+  przebiegu diagnostycznego (65 testów w 40 plikach) są sklasyfikowane w sekcji „Klasyfikacja niezgodności z rolą
+  `rd_app`”: operacje właściciela w testach idą przez `ownerDb`/`assertOwnerGuard`, a braku uprawnienia aplikacji nie
+  znaleziono. Nowy błąd na tej roli oznacza więc albo brak uprawnienia, którego aplikacja potrzebuje (migracja z
+  `GRANT` i wpis w `postgres/README.md`), albo test, który wykonuje operację właściciela połączeniem aplikacji.
+  Lista plików z błędem i plików pominiętych (właściciel/`pg_read_all_stats`) trafia do podsumowania joba
+  (`### Przebieg na roli rd_app`). Pominięte pliki (54) nie mają dowodu na `rd_app`, biegną w jobie właściciela;
 - `nightly-concurrency` (90 min): 20 powtórzeń plików z barierą (`pg-real-double-click`, `pg-real-domain-locks`,
   `pg-real-record-locks`, `pg-real-replay-23505`, `pg-real-payment-locks`, `pg-real-request-locks`, `pg-real-auth-locks`,
   `pg-real-email-locks`, `pg-real-guardian-verify-locks`, `pg-real-mfa-locks`, `pg-real-webhook-locks`) i 50 powtórzeń podwójnego przyjęcia zaproszenia

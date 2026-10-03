@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { emailConfig } from '../src/email/brevo.js';
 import { addDays, quotaOverview, remainingQuota, runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice, assertOwnerGuard } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const NOW = new Date('2026-10-05T10:00:00Z');
@@ -141,7 +141,7 @@ test('#84 correction is a new negative row; history is kept; the ledger cannot b
     assert.equal((await t.post(t.users.board, { day: TODAY, count: -20, reasonCode: 'correction', correctsId: original.body.entry.id })).status, 201);
     assert.equal(await remainingQuota(t.db, NOW, config), 100);
     await assert.rejects(t.db.query("UPDATE email_send_ledger SET message_count = 1 WHERE id = $1", [original.body.entry.id]), /append_only/);
-    await assert.rejects(t.db.query('DELETE FROM email_send_ledger WHERE id = $1', [original.body.entry.id]), /append_only/);
+    await assertOwnerGuard(t.db, 'DELETE FROM email_send_ledger WHERE id = $1', /append_only/, [original.body.entry.id]);
   } finally { await t.close(); }
 });
 

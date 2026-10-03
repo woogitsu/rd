@@ -9,7 +9,7 @@ import { MESSAGES, splitGuardianName } from '../src/pg/routes/import.js';
 import { strToU8, zipSync } from 'fflate';
 import readXlsxFileNode from 'read-excel-file/node';
 import { readXlsxSheets } from '../import/xlsx.js';
-import { createTestDb, request, seedClass, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const YEAR = 'y-2026';
@@ -391,7 +391,7 @@ test('audit event records actor and counts only, without PII', async () => withD
   assert.equal(rows[0].metadata_json.counts.studentsCreated, 3);
   const batch = (await db.query('SELECT * FROM import_batches')).rows[0];
   assert.equal(batch.actor_id, 'u-admin');
-  await assert.rejects(db.query('DELETE FROM import_batches'), /append_only/);
+  await assertOwnerGuard(db, 'DELETE FROM import_batches', /append_only/);
 }));
 
 // #248: bez set_config('rd.actor_id', …, true) przed bulkInsert, triggery historii

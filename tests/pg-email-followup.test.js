@@ -8,7 +8,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { runEmailBatch } from '../src/email/worker.js';
 import { AUDIT_ACTION_LABELS } from '../shared/audit-actions.js';
 import { MESSAGES } from '../shared/messages.js';
-import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
+import { createTestDb, networkGuardCalls, request, seedClass, seedUserSession, seedPublishedPrivacyNotice, assertOwnerGuard } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -214,8 +214,8 @@ test('#139 baza: zatwierdzenie tej samej osoby, zmiana i usunięcie zatwierdzeni
     ), /foreign key|approval_target_fk/);
     assert.equal((await approveResolution(t, source.id, notSent, t.board2)).status, 201);
     await assert.rejects(t.db.query("UPDATE email_outbox_resolution_approvals SET approved_by = 'u-tr'"), /append_only/);
-    await assert.rejects(t.db.query('DELETE FROM email_outbox_resolution_approvals'), /append_only/);
-    await assert.rejects(t.db.query('TRUNCATE email_outbox_resolution_approvals'));
+    await assertOwnerGuard(t.db, 'DELETE FROM email_outbox_resolution_approvals', /append_only/);
+    await assertOwnerGuard(t.db, 'TRUNCATE email_outbox_resolution_approvals', /truncate_not_allowed/);
     assert.equal(await t.count('SELECT count(*)::int AS n FROM email_outbox_resolution_approvals'), 1);
   } finally { await t.close(); }
 });

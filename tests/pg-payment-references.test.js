@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { isValidStructuredReference } from '../src/pg/ogm.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedSchoolYear, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 async function backend({ role = 'treasurer', mfa = true, schoolYearId = 'y2026' } = {}) {
   const db = await createTestDb();
@@ -170,10 +170,7 @@ test('baza: referencja jest niezmienna poza unieważnieniem (trigger)', async ()
     ctx.db.query("UPDATE payment_references SET structured_reference = '999999999999' WHERE id = $1", [id]),
     /payment_reference_facts_immutable/,
   );
-  await assert.rejects(
-    ctx.db.query('DELETE FROM payment_references WHERE id = $1', [id]),
-    /payment_references_cannot_be_deleted/,
-  );
+  await assertOwnerGuard(ctx.db, 'DELETE FROM payment_references WHERE id = $1', /payment_references_cannot_be_deleted/, [id]);
   await ctx.close();
 });
 

@@ -8,7 +8,7 @@
 // (poza API). Dane wyłącznie syntetyczne (@example.invalid).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestDb, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const PAST = '2019-01-01T00:00:00Z';
 
@@ -142,7 +142,8 @@ test('email_campaigns: anulowanie z datą wsteczną dostaje cancelled_at = now()
 test('BEFORE TRUNCATE blokuje tabele z 0090 i pozostałe strażniki dopisane w 0144 (#204)', async () => {
   const db = await setup();
   for (const table of ['ledger_allocation_versions', 'ledger_allocation_items', 'document_status_events', 'privacy_notices', 'sessions', 'retention_policies']) {
-    await assert.rejects(db.query(`TRUNCATE ${table} CASCADE`), /truncate_not_allowed/, table);
+    // TRUNCATE wykonuje tylko właściciel; rola aplikacji nie ma tego uprawnienia (SR-05, assertOwnerGuard).
+    await assertOwnerGuard(db, `TRUNCATE ${table} CASCADE`, /truncate_not_allowed/);
   }
   await db.close();
 });

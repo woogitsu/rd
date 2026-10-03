@@ -27,7 +27,7 @@ import {
 import { updateMeeting } from './helpers/with-revision.js';
 import { buildYearlyExport, restoreBundle } from '../src/pg/export.js';
 import { buildHouseholds, parseInputRows } from '../print/core.js';
-import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedUserSession, ownerDb } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 const Y2 = 'y-2027';
@@ -424,7 +424,8 @@ test('cały cykl roku szkolnego przez API: import, kartki, kampania, księga, uz
     const { bundle: rebuiltBundle } = await db.transaction((tx) => buildYearlyExport(tx, Y1));
     const target = await createTestDb();
     try {
-      const restoreReport = await restoreBundle(target, rebuiltBundle);
+      // Odtworzenie paczki to operacja operatora na DATABASE_MIGRATION_URL (właściciel; SR-05).
+      const restoreReport = await restoreBundle(ownerDb(target), rebuiltBundle);
       assert.equal(restoreReport.restored, true);
       assert.equal(restoreReport.reexportTotalsMatch, true);
       const { rows: restoredHouseholds } = await target.query('SELECT count(DISTINCT household_id)::int AS n FROM students');

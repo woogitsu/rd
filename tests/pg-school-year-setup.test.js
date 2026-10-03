@@ -4,7 +4,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 async function setup() {
   const db = await createTestDb();
@@ -83,7 +83,7 @@ describe('konfiguracja roku szkolnego (#78): tworzenie roku i klas', () => {
       INSERT INTO students (id, household_id, first_name, last_name) VALUES ('s-2027', 'h-2027', 'Ola', 'Testowa');
       INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES ('e-2027', 's-2027', '${classId}', 'y-2027');
     `);
-    await assert.rejects(db.query(`DELETE FROM classes WHERE id = '${classId}'`), /foreign key|violates/);
+    await assertOwnerGuard(db, `DELETE FROM classes WHERE id = '${classId}'`, /foreign key|violates/);
   });
 });
 

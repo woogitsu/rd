@@ -11,7 +11,7 @@ import {
 import { assertNoPii } from '../src/pg/audit.js';
 import { requireAuditDomains } from '../src/pg/routes/admin.js';
 import {
-  createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession,
+  createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession, assertOwnerGuard,
 } from './helpers/pg.js';
 
 const financeProbe = {
@@ -185,8 +185,8 @@ test('access_denial_windows: only the counter moves; no rewrite, no delete, no t
   await assert.rejects(db.query(`UPDATE access_denial_windows SET route = '/api/other'`), /access_denial_window_immutable/);
   await assert.rejects(db.query('UPDATE access_denial_windows SET denial_count = 0'), /access_denial_window_immutable|check/i);
   await assert.rejects(db.query(`UPDATE access_denial_windows SET first_denied_at = now() - interval '1 hour'`), /access_denial_window_immutable/);
-  await assert.rejects(db.query('DELETE FROM access_denial_windows'), /access_denial_windows_cannot_be_deleted/);
-  await assert.rejects(db.query('TRUNCATE access_denial_windows'));
+  await assertOwnerGuard(db, 'DELETE FROM access_denial_windows', /access_denial_windows_cannot_be_deleted/);
+  await assertOwnerGuard(db, 'TRUNCATE access_denial_windows', /truncate_not_allowed/);
   await db.query('UPDATE access_denial_windows SET denial_count = denial_count + 1');
   assert.equal((await accessDeniedEvents(db, 'rep7'))[0].count, 2);
 }));

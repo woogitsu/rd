@@ -12,7 +12,7 @@ import {
 import { newsItems } from '../site/core.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { resetUploadSlotsForTests, tryAcquireUploadSlot } from '../src/documents.js';
-import { createTestDb, lifecycleActors, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, lifecycleActors, request, seedClass, seedDocument, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard, ownerDb } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 // Jedna baza PGlite na plik (oszczędność pamięci); testy izolowane rokiem szkolnym.
@@ -45,7 +45,8 @@ async function newsDb() {
   await seedClass(db, { id: `${year}-1b`, schoolYearId: year });
   rep1A = { userId: 'rep1a', grants: [{ role: 'representative', classId: `${year}-1a`, schoolYearId: year }] };
   rep1B = { userId: 'rep1b', grants: [{ role: 'representative', classId: `${year}-1b`, schoolYearId: year }] };
-  return { query: (...a) => db.query(...a), transaction: (fn) => db.transaction(fn), close: async () => {} };
+  // owner/appRole: połączenie właściciela i rola aplikacji wspólnej bazy (SR-05, ownerDb/assertOwnerGuard).
+  return { query: (...a) => db.query(...a), transaction: (fn) => db.transaction(fn), close: async () => {}, owner: ownerDb(db), appRole: db.appRole };
 }
 
 const pub = async (db) => listPublic(db, { schoolYearId: year });
@@ -342,14 +343,15 @@ test('verifying a legacy photo without alt text or decorative flag is refused wi
   const db = await newsDb();
   try {
     await seedDocument(db, { id: 'doc-legacy-alt' });
-    await db.query('ALTER TABLE news_photos DROP CONSTRAINT news_photo_alt_text_required');
+    // DDL w danych testowych: połączenie właściciela (SR-05); wiersz wstawia rola aplikacji.
+    await ownerDb(db).query('ALTER TABLE news_photos DROP CONSTRAINT news_photo_alt_text_required');
     try {
       await db.query(
         `INSERT INTO news_photos (id, document_id, author, source, taken_on, license_text, depicts_children, uploaded_by)
          VALUES ('p-legacy-no-alt', 'doc-legacy-alt', 'Autor', 'own_work', '2020-01-01', 'Zdjęcie bez opisu', false, 'admin')`,
       );
     } finally {
-      await db.query('ALTER TABLE news_photos ADD CONSTRAINT news_photo_alt_text_required CHECK (alt_text IS NOT NULL OR decorative) NOT VALID');
+      await ownerDb(db).query('ALTER TABLE news_photos ADD CONSTRAINT news_photo_alt_text_required CHECK (alt_text IS NOT NULL OR decorative) NOT VALID');
     }
     await assert.rejects(verifyPhoto(db, board1, { photoId: 'p-legacy-no-alt' }), { code: 'alt_text_required', status: 422 });
     const { rows } = await db.query("SELECT rights_status, rights_verified_by FROM news_photos WHERE id = 'p-legacy-no-alt'");
@@ -445,14 +447,14 @@ test('edits after publication keep the published revision public; history is imm
     await assert.rejects(updateDraft(db, board2, { postId: post.id, revision: 1, title: 'Nadpisanie' }), { code: 'revision_conflict' });
 
     await assert.rejects(db.query(`UPDATE news_post_revisions SET title='x' WHERE post_id=$1`, [post.id]), /cannot_be_changed/);
-    await assert.rejects(db.query(`DELETE FROM news_post_revisions WHERE post_id=$1`, [post.id]), /cannot_be_changed/);
-    await assert.rejects(db.query(`DELETE FROM news_posts WHERE id=$1`, [post.id]), /cannot_be_changed/);
+    await assertOwnerGuard(db, `DELETE FROM news_post_revisions WHERE post_id=$1`, /cannot_be_changed/, [post.id]);
+    await assertOwnerGuard(db, `DELETE FROM news_posts WHERE id=$1`, /cannot_be_changed/, [post.id]);
     await assert.rejects(db.query(
       `INSERT INTO news_post_revisions (post_id, revision_no, title, body, photo_ids, created_by) VALUES ($1, 9, 'Fałsz', 'x', '{}', 'board1')`, [post.id],
     ), /news_post_revision_must_match_current_post/);
     const photo = await verifiedPhoto(db);
     await assert.rejects(db.query(`UPDATE news_photos SET author='Ktoś inny' WHERE id=$1`, [photo.id]), /news_photo_metadata_immutable/);
-    await assert.rejects(db.query(`DELETE FROM news_photos WHERE id=$1`, [photo.id]), /cannot_be_changed/);
+    await assertOwnerGuard(db, `DELETE FROM news_photos WHERE id=$1`, /cannot_be_changed/, [photo.id]);
 
     const detail = await getInternal(db, board2, { postId: post.id });
     assert.deepEqual(detail.revisions.map((r) => [r.revision, r.title]), [[1, 'Wersja pierwsza'], [2, 'Wersja druga']]);

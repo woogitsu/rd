@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createTestDb } from './helpers/pg.js';
+import { createTestDb, ownerDb } from './helpers/pg.js';
 import { EXPORT_TABLES } from '../src/pg/export.js';
 import { loadInventory, renderReport } from '../scripts/privacy-report.js';
 
@@ -59,7 +59,8 @@ test('spis nie zawiera kolumn, których już nie ma w schemacie (bez martwych wp
 test('sztuczna migracja dodająca kolumnę bez wpisu w spisie jest wykrywana (czerwony test)', async () => {
   const db = await createTestDb();
   try {
-    await db.exec('ALTER TABLE guardians ADD COLUMN phone text');
+    // Sztuczna migracja = DDL: połączenie właściciela (SR-05); spis kolumn czyta rola aplikacji.
+    await ownerDb(db).exec('ALTER TABLE guardians ADD COLUMN phone text');
     const columns = await baseTableColumns(db);
     const inventory = loadInventory();
     const missing = columns
