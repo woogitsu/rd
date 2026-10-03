@@ -1163,6 +1163,31 @@ bez potrzeby dostępu do Railway:
   runnerze; jej hasło (`rd_ci_only`) nie jest sekretem i nie chroni żadnych
   danych.
 
+### Pomiar czasu i pamięci testów w CI (#111)
+
+Kryteria #111: czas przebiegu PR (start do `ci-ok`) co najmniej o połowę krótszy niż przed zmianami, zmierzony na 3
+kolejnych przebiegach; żaden job nie zbliża się do limitu (zapas co najmniej 20%); szczytowa pamięć procesu testów w
+jednym shardzie zmierzona i opisana tutaj.
+
+- **Pamięć.** `tests/setup.js` (ładowany w każdym procesie testowym) dopisuje przy wyjściu szczytowy RSS procesu do pliku
+  z `RD_TEST_RSS_LOG`, a krok `if: always()` w jobie `test` zamienia ten log na tabelę w podsumowaniu joba („Pamięć testów,
+  shard i/6”: liczba procesów, największy proces, górne oszacowanie dla dwóch największych naraz przy
+  `--test-concurrency=2`, pięć największych plików). Podsumowanie jest w zakładce Summary przebiegu; źródło:
+  `scripts/summarize-test-memory.js`. Runner `ubuntu-latest` ma 7 GB RAM, więc wartość „dwa największe naraz” plus proces
+  `node --test` powinna zostać wyraźnie poniżej tego (każda instancja PGlite to ok. 250–550 MB).
+- **Czas.** Dla trzech kolejnych przebiegów PR na tej samej gałęzi (bez zmian między nimi) odczytaj czasy jobów:
+  `gh run view <id> --json jobs --jq '.jobs[] | [.name, .startedAt, .completedAt] | @tsv'`. Czas przebiegu to różnica
+  między najwcześniejszym `startedAt` a `completedAt` jobu `ci-ok`. Dla zapasu porównaj najdłuższy shard z limitem
+  20 min (`test`) i job `test-pg-real` z limitem 45 min: wynik powyżej 80% limitu oznacza zbyt mały zapas.
+- **Stan pomiarów.** Z GitHub runnerów jeszcze nie zmierzono (po scaleniu brak 3 przebiegów PR). Lokalnie, w kontenerze
+  z 4 rdzeniami: szablon bazy PGlite skrócił 17 reprezentatywnych plików `pg-*` z 1323 s do 700 s, a największy proces
+  testowy zużył 1816 MB przed i 1710 MB po; shard 1/6 (`--test-concurrency=2`) skrócił się z 333 s do 161 s przy
+  tych samych 723 testach, a szczyt RSS jednego procesu wyniósł 5935 MB przed i 5589 MB po (`pg-promotions`, baza
+  na każdy test, nigdy niezamykana; drugi to `pg-anonymization-reapply`, ok. 4 GB). Dwa takie pliki w jednym shardzie przekraczają 7 GB
+  runnera, więc tabela pamięci z jobu `test` ma pokazać, czy to się zdarza (tabela i opis metody w `docs/TESTING.md`,
+  „Szablon bazy PGlite i czas testów”). Kryteria „połowa krócej na 3 przebiegach” i „zapas 20%” zostają niepotwierdzone do pierwszych przebiegów z
+  tym podsumowaniem; wynik wpisać w tym miejscu.
+
 ### Historia: runner self-hosted
 
 - **Kto zarządza runnerem i organizacją GitHub**: ustalenie zespołu
