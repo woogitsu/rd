@@ -1,6 +1,6 @@
 # Wykrywanie możliwych danych osobowych w polach wolnego tekstu (#152)
 
-Deterministyczny, lokalny moduł `src/pg/pii-check.js` wykrywa w tekście prawdopodobne dane osobowe — e-mail, IBAN (BE/PL, walidacja mod-97), telefon PL/BE oraz **znane imię i nazwisko** (uczniowie zapisani w danym roku szkolnym i opiekunowie ich gospodarstw, porównanie znormalizowane, bez diakrytyków). Nic nie jest wysyłane na zewnątrz; wynik zawiera **wyłącznie kategorie i liczby trafień**, nigdy dopasowany fragment ani nazwisko — ani w odpowiedzi API, ani w `audit_events`, ani w logach.
+Deterministyczny, lokalny moduł `src/pg/pii-check.js` wykrywa w tekście prawdopodobne dane osobowe — e-mail, IBAN (BE/PL, walidacja mod-97), telefon PL/BE oraz **znane imię i nazwisko** (uczniowie zapisani w danym roku szkolnym i opiekunowie ich gospodarstw — dla pól bez roku szkolnego, czyli zdjęć, ze wszystkich lat otwartych, patrz niżej; porównanie znormalizowane, bez diakrytyków). Nic nie jest wysyłane na zewnątrz; wynik zawiera **wyłącznie kategorie i liczby trafień**, nigdy dopasowany fragment ani nazwisko — ani w odpowiedzi API, ani w `audit_events`, ani w logach.
 
 To środek wspierający, nie zastępuje odpowiedzialności osoby zapisującej (fałszywe alarmy są możliwe, np. nazwisko identyczne z nazwą ulicy).
 
@@ -31,8 +31,19 @@ Każda zmiana treści aktualności (`news_post_revisions`) i wydarzenia (`event_
 
 Powody **odwołania wydarzenia** (`POST /api/events/{eventId}/cancel`, kolumna `events.cancellation_reason`) i **wycofania aktualności** (`POST /api/news/{postId}/withdraw`, kolumna `news_posts.withdrawal_reason`) przechodzą tę samą bramkę (znane imiona z roku szkolnego wpisu, `confirmPersonalData: true` w treści żądania, metadane `piiConfirmed`/`piiCategories` w `audit_events`). Bramka działa dopiero po sprawdzeniu roli, zakresu i stanu, więc ponowienie odwołania/wycofania (już wykonanego) nie wymaga ponownego potwierdzenia i nie tworzy drugiego zapisu.
 
+### Zdjęcia aktualności (#741)
+
+Zdjęcie (`news_photos`) nie jest przypisane do roku szkolnego, a `altText` trafia do widoku publicznego razem z opublikowanym wpisem. Dlatego przy **rejestracji zdjęcia** (`POST /api/news-photos`, pola `news_photos.author`, `source_detail`, `license_text`, `rights_note`, `alt_text`) i przy **cofnięciu praw** (`POST /api/news-photos/{photoId}/revoke`, pole `news_photos.revocation_reason`) lista znanych imion i nazwisk pochodzi ze **wszystkich lat szkolnych, które nie są zamknięte** (`loadKnownNamesForOpenYears` w `src/pg/pii-gate.js`):
+
+- rok otwarty = brak wiersza w `school_year_closures` albo status `closing`; rok zamknięty = status `closed` (ta sama definicja co `school_year_assert_open`, migracja `0017_year_close.sql`);
+- uczniowie zapisani (`enrollments`) w którymkolwiek otwartym roku i opiekunowie ich gospodarstw; jedno zapytanie przy zapisie, powtórzenia (ten sam uczeń w dwóch latach, rodzeństwo) usuwa `UNION`;
+- reguły jak wyżej: imię **i** nazwisko tej samej osoby → `422 possible_personal_data` z kategorią `known_name`, zapis po ponowieniu z `confirmPersonalData: true`; `audit_events` (`news_photo.registered`, `news_photo.revoked`) dostaje `piiConfirmed` i `piiCategories`, bez treści; ponowienie rejestracji z tym samym `Idempotency-Key` zwraca istniejący rekord bez ponownej bramki;
+- **uczeń wyłącznie z roku zamkniętego nie wywołuje ostrzeżenia.** Uczeń nadal w szkole ma zapis w roku otwartym (promocja tworzy zapis w następnym roku), a włączenie archiwum zamkniętych lat powiększałoby listę z każdym rokiem — rósłby koszt zapytania i liczba fałszywych alarmów przy popularnych imionach. Ryzyko szczątkowe: absolwent z zamkniętego roku na zdjęciu archiwalnym nie zostanie wykryty; podpis zdjęcia nadal sprawdza osoba weryfikująca prawa (cztery oczy), a zasady publikacji zdjęć archiwalnych czekają na decyzję zarządu/szkoły (AGENTS.md).
+
+Zgody na wizerunek (`news_photo_consents`) i ich wycofanie (`news_photo_consent_withdrawals`) nie mają pól wolnego tekstu (`consent_document_ref` to identyfikator dokumentu zgody), więc bramka ich nie dotyczy. Wpisy aktualności, ich rewizje i powód wycofania wpisu nadal używają imion z roku szkolnego wpisu.
+
 Założenie zachowawcze (do decyzji zarządu/IOD): publiczny kontakt e-mail w treści aktualności lub wydarzenia jest odrzucany tak samo jak w polach finansowych; adres kontaktowy Rady podaje się przez stałe dane strony, nie w treści. Pola `location` i `organizer` wydarzenia nie są objęte bramką (nazwy miejsc i organizacji; nie są polem wolnego tekstu o osobach) — do rewizji, jeśli zarząd uzna inaczej. Wydłużenie okresu przechowywania i `reference_hash` dla `payment_entries.reference` nadal czekają na D-04.
 
 ## Wydajność
 
-`detectPossiblePersonalData` przy ~1000 znanych imionach/nazwiskach wykonuje się poniżej 50 ms (test `tests/pii-check.test.js`) — dopasowanie liniowe po zbiorze znormalizowanych słów tekstu, bez zapytań do bazy poza jednorazowym pobraniem listy imion/nazwisk dla roku szkolnego.
+`detectPossiblePersonalData` przy ~1000 znanych imionach/nazwiskach wykonuje się poniżej 50 ms (test `tests/pii-check.test.js`) — dopasowanie liniowe po zbiorze znormalizowanych słów tekstu, bez zapytań do bazy poza jednorazowym pobraniem listy imion/nazwisk dla roku szkolnego (dla zdjęć: jedno zapytanie o wszystkie lata otwarte; zwykle jeden–dwa lata, bo zamknięty rok wypada z listy).

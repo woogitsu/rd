@@ -29,7 +29,7 @@ import { actorContext, authorizedClassIds, isAuthorizedForOwnClass, isAuthorized
 import { declaredType, detectType, readLimited, tryAcquireUploadSlot, validateStructure } from '../documents.js';
 import { sha256Hex } from '../storage.js';
 import { insertAuditEvent } from './audit.js';
-import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
+import { gateFreeText, loadKnownNames, loadKnownNamesForOpenYears, piiAuditMetadata } from './pii-gate.js';
 import { createJsonReader, isUniqueError } from './input.js';
 import { afterTimestampDescSql, cursorTimestampSql, decodeListCursor, pageOf, parseListLimit } from './list-cursor.js';
 
@@ -771,13 +771,18 @@ export async function registerPhoto(db, actor, input) {
   const id = crypto.randomUUID();
   try {
     return await db.transaction(async (tx) => {
+      // #741: zdjęcie nie należy do roku szkolnego, a `alt_text` jest publiczny —
+      // znane imiona i nazwiska uczniów i opiekunów ze wszystkich lat otwartych.
       const gate = gateFreeText([
         ['news_photos.author', photo.author],
         ['news_photos.source_detail', photo.sourceDetail],
         ['news_photos.license_text', photo.licenseText],
         ['news_photos.rights_note', photo.rightsNote],
         ['news_photos.alt_text', photo.altText],
-      ], { confirm: input.confirmPersonalData === true, fail: piiFail });
+      ], {
+        confirm: input.confirmPersonalData === true, fail: piiFail,
+        knownNames: await loadKnownNamesForOpenYears(tx),
+      });
       const { rows } = await tx.query(
         `INSERT INTO news_photos (id, document_id, author, source, source_detail, taken_on, license_text,
            explicit_license_granted, license_document_ref, rights_note, alt_text, decorative, depicts_children,
@@ -864,7 +869,11 @@ export async function revokePhoto(db, actor, input) {
   return run(db, async (tx) => {
     const row = await lockPhoto(tx, input?.photoId);
     if (row.rights_status === 'revoked') return { photo: internalPhoto(row), replayed: true };
-    const gate = gateFreeText([['news_photos.revocation_reason', reason]], { confirm: input?.confirmPersonalData === true, fail: piiFail });
+    // #741: jak przy rejestracji — znane imiona z lat otwartych (zdjęcie bez roku).
+    const gate = gateFreeText([['news_photos.revocation_reason', reason]], {
+      confirm: input?.confirmPersonalData === true, fail: piiFail,
+      knownNames: await loadKnownNamesForOpenYears(tx),
+    });
     const { rows } = await tx.query(
       `UPDATE news_photos SET rights_status = 'revoked', revoked_by = $2, revoked_at = now(), revocation_reason = $3
         WHERE id = $1 RETURNING ${PHOTO_COLUMNS}`,
