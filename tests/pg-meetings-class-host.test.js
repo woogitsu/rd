@@ -4,9 +4,6 @@
 // dane syntetyczne (@example.invalid).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   addAgendaItem,
   approveMinutes,
@@ -20,8 +17,8 @@ import {
   setMinutesVisibility,
 } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
+import { createPgliteTestDb } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const ON = { MEETINGS_CLASS_HOST: 'representative' };
 const OFF = {};
 
@@ -45,8 +42,7 @@ let keySeq = 0;
 const key = () => `test-key-${++keySeq}`;
 
 async function meetingsDb() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query(`INSERT INTO school_years VALUES
     ('year','2026/27','2026-09-01','2027-08-31'), ('other','2027/28','2027-09-01','2028-08-31')`);
   await db.query("INSERT INTO classes (id, school_year_id, name) VALUES ('class-a','year','1A'), ('class-b','year','2B')");

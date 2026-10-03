@@ -2,17 +2,13 @@
 // liczba otwartych projektów w 409 i hash idempotencji ustalenia quorum. Dane syntetyczne.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   approveMinutes, createMeeting, createMinutesVersion, createResolution, determineQuorum,
   getApprovalChecklist, handle, recordAttendance,
 } from '../src/pg/meetings.js';
 import { updateMeeting, updateResolution } from './helpers/with-revision.js';
-import { seedRoleGrant } from './helpers/pg.js';
+import { createPgliteTestDb, seedRoleGrant } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
 const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
 const admin = { userId: 'admin', grants: [grant('admin', { schoolYearId: null })], mfaVerified: true };
@@ -25,8 +21,7 @@ let keySeq = 0;
 const key = () => `checklist-key-${++keySeq}`;
 
 async function meetingsDb() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query("INSERT INTO school_years VALUES ('year','2026/27','2026-09-01','2027-08-31')");
   await db.query("INSERT INTO classes (id, school_year_id, name) VALUES ('class-a','year','1A'), ('class-b','year','1B')");
   for (const id of ['board', 'admin', 'auditor', 'rep', 'treasurer', 'board-a', 'u1', 'u2', 'u3']) {

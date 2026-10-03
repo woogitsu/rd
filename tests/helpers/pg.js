@@ -113,12 +113,48 @@ export async function createRealTestDb() {
   return handle;
 }
 
-// Zawsze PGlite, także przy RD_TEST_PG_BACKEND=real — dla testów porównujących
-// oba backendy (tests/pg-real-type-parity.test.js).
-export async function createPgliteTestDb() {
+// #111: szablon bazy PGlite. Wcześniej każde createPgliteTestDb() zakładało świeżą
+// instancję i od zera wykonywało wszystkie pliki z postgres/migrations (~4,5 s na
+// bazę). Teraz migracje idą raz na proces testowy: pierwsza baza jest migrowana,
+// jej katalog danych zrzucany przez `dumpDataDir('none')` (PRZED oddaniem bazy
+// testowi, więc zrzut jest czysty), a każda następna baza to nowa instancja z
+// `loadDataDir` tego zrzutu (~0,6 s). Klony są od siebie niezależne (osobne
+// instancje i pamięć); testy nie widzą swoich zapisów — dowód:
+// tests/pg-template-isolation.test.js. Plik z jedną bazą płaci tylko za zrzut.
+// RD_TEST_PGLITE_TEMPLATE=off wraca do migracji od zera przy każdej bazie
+// (pomiar „przed”, diagnostyka); nie jest używane w CI.
+const pgliteTemplateEnabled = process.env.RD_TEST_PGLITE_TEMPLATE !== 'off';
+let pgliteTemplate; // Promise<File> | undefined — zrzut katalogu danych po wszystkich migracjach
+
+async function migratedPglite() {
   const db = new PGlite();
   for (const migration of await loadMigrations(migrationsDirectory)) await db.exec(migration.sql);
   return db;
+}
+
+// Zawsze PGlite, także przy RD_TEST_PG_BACKEND=real — dla testów porównujących
+// oba backendy (tests/pg-real-type-parity.test.js).
+export async function createPgliteTestDb() {
+  if (!pgliteTemplateEnabled) return migratedPglite();
+  if (pgliteTemplate) {
+    const db = new PGlite({ loadDataDir: await pgliteTemplate });
+    await db.waitReady;
+    return db;
+  }
+  // Pierwsze wywołanie (także równoległe: kolejne czekają na ten sam zrzut).
+  let first;
+  pgliteTemplate = (async () => {
+    first = await migratedPglite();
+    return first.dumpDataDir('none');
+  })();
+  try {
+    await pgliteTemplate;
+  } catch (error) {
+    pgliteTemplate = undefined; // nieudana budowa nie zatruwa kolejnych wywołań
+    await first?.close().catch(() => {});
+    throw error;
+  }
+  return first;
 }
 
 export async function createTestDb() {
