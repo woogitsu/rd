@@ -1,5 +1,5 @@
 // Schematy OpenAPI dla modułu `guardian-updates` (src/pg/routes/guardian-updates.js; #140, #94, #133, #150, #152, #159),
-// #160 etap 13: jednorazowy link dla opiekuna, publiczny podgląd i formularz wniosku o aktualizację kontaktu, kolejka
+// #160 etap 14: jednorazowy link dla opiekuna, publiczny podgląd i formularz wniosku o aktualizację kontaktu, kolejka
 // wniosków z decyzją zarządu, publiczne potwierdzenie kodu weryfikacyjnego nowego adresu (#140 pkt 5, migracja 0184) i
 // szablon wiadomości z kodem (szkic, zatwierdzenie przez drugą osobę z zarządu). Pisane ręcznie na podstawie kodu trasy
 // (`issueLink`, `previewLink`, `submitUpdate`, `listRequests`, `decideRequest`, `confirmCode`, `templateView`),

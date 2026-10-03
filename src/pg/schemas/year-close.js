@@ -1,5 +1,5 @@
 // Schematy OpenAPI dla modułu `year-close` (src/pg/routes/year-close.js; #15, #80, #97, #125, #133, #138, #150, #152,
-// #169, #195, #199, #205, #212, #213), #160 etap 13: stan zamknięcia roku z listą kontrolną i bilansem, rozpoczęcie,
+// #169, #195, #199, #205, #212, #213), #160 etap 14: stan zamknięcia roku z listą kontrolną i bilansem, rozpoczęcie,
 // potwierdzenie punktu listy kontrolnej, zamknięcie (cztery oczy, krok w górę MFA) i zestawienie przekazania. Pisane
 // ręcznie na podstawie `statusView`, `checklistView`, `balanceView`, `yearEndCheck`, `closeWarnings`, `accessLogReview`,
 // `expenseReviewSummary` i `handover` oraz testów tests/pg-year-close*.test.js; trasy się nie zmieniają.

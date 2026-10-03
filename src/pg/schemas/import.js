@@ -1,4 +1,4 @@
-// Schematy OpenAPI dla modułu `import` (src/pg/routes/import.js; #36, #88, #98, #145, #166, #184, #248), #160 etap 13:
+// Schematy OpenAPI dla modułu `import` (src/pg/routes/import.js; #36, #88, #98, #145, #166, #184, #248), #160 etap 14:
 // opcje importu (lata i klasy w zakresie importującego), podgląd planu (walidacja i różnica względem bazy, NIC nie
 // zapisuje) i zapis planu w jednej transakcji. Pisane ręcznie na podstawie `parseImportPayload`, `buildPlan`,
 // `batchResult` i testów tests/pg-import.test.js; trasy się nie zmieniają.

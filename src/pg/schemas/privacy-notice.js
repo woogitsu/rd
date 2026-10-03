@@ -1,4 +1,4 @@
-// Schematy OpenAPI dla modułu `privacy-notice` (src/pg/routes/privacy-notice.js; #145, D-06), #160 etap 13: publiczna
+// Schematy OpenAPI dla modułu `privacy-notice` (src/pg/routes/privacy-notice.js; #145, D-06), #160 etap 14: publiczna
 // obowiązująca wersja informacji o przetwarzaniu danych, lista wersji, szkic, zatwierdzenie (cztery oczy) i publikacja.
 // Pisane ręcznie na podstawie `noticeView`, `loadPublicNotice` i testów tests/pg-privacy-notice.test.js; trasy się nie
 // zmieniają.

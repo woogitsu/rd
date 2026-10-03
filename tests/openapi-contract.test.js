@@ -1,4 +1,4 @@
-// Kontrakt API (#160, etapy 2-13): schematy ciał żądań i odpowiedzi w docs/openapi.json
+// Kontrakt API (#160, etapy 2-14): schematy ciał żądań i odpowiedzi w docs/openapi.json
 // (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
 // (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js;
 // preliminarz, kasa i centra kosztów (ledger-budget, ledger-cash, ledger-cost-centers)
@@ -7,7 +7,9 @@
 // tests/openapi-contract-email.test.js; zebrania (meetings) w tests/openapi-contract-meetings.test.js; dokumenty
 // (documents) w tests/openapi-contract-documents.test.js; wydarzenia (events) w tests/openapi-contract-events.test.js;
 // aktualności i galeria (news) w tests/openapi-contract-news.test.js; logowanie hasłem i MFA (login, mfa)
-// w tests/openapi-contract-auth.test.js; administracja kont i ról (admin) w tests/openapi-contract-admin.test.js; wnioski
+// w tests/openapi-contract-auth.test.js; administracja kont i ról (admin) w tests/openapi-contract-admin.test.js;
+// historia obiektu, ścieżka kontroli KR, sprawozdanie roczne, eksporty, kartki i pulpity (audit-history, audit-reviews,
+// financial-reports, exports, print, board, representative) w tests/openapi-contract-reports.test.js; wnioski
 // opiekunów, import, zamknięcie roku i informacja o przetwarzaniu danych (guardian-updates, import, year-close,
 // privacy-notice) w tests/openapi-contract-guardian-year.test.js.
 // Testy rejestru poniżej obejmują wszystkie pokryte moduły.
@@ -39,7 +41,7 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 7;
+const MAX_UNCOVERED_MODULES = 0;
 // Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
 const POST_WITHOUT_BODY = new Set([
   'POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout',
@@ -62,7 +64,7 @@ const POST_WITHOUT_BODY = new Set([
   'POST /api/admin/invitations/{invitationId}/revoke', 'POST /api/admin/invitations/{invitationId}/reissue',
   'POST /api/admin/data-requests/{requestId}/export', 'POST /api/admin/data-requests/{requestId}/restrict',
   'POST /api/admin/data-requests/{requestId}/lift-restriction',
-  // Wnioski opiekunów i informacja o przetwarzaniu danych (#160 etap 13): decyzja o wniosku, zatwierdzenie i publikacja
+  // Wnioski opiekunów i informacja o przetwarzaniu danych (#160 etap 14): decyzja o wniosku, zatwierdzenie i publikacja
   // wersji wynikają ze ścieżki; trasy nie czytają ciała.
   'POST /api/admin/guardian-update-requests/{requestId}/approve', 'POST /api/admin/guardian-update-requests/{requestId}/reject',
   'POST /api/admin/privacy-notices/{id}/approve', 'POST /api/admin/privacy-notices/{id}/publish',
@@ -79,15 +81,19 @@ const POST_WITHOUT_BODY = new Set([
 // odzyskiwania i limity (src/pg/mfa.js);
 // admin — moduły wniosków (grant-requests.js, account-recovery.js), partii zaproszeń, promocji, ograniczenia przetwarzania,
 // eksportu danych rodziny, anonimizacji, resetu hasła/MFA (login.js, LoginError) i kursor list;
-// guardian-updates — kursor list (kolejka wniosków i wersje szablonu, #160 etap 13).
+// guardian-updates — kursor list (kolejka wniosków i wersje szablonu, #160 etap 14).
+// audit-reviews — zapis uwag KR i mapowanie reguł bazy (src/pg/audit-reviews.js); financial-reports — migawki sprawozdania
+// (src/pg/report-snapshots.js: łańcuch korekt, cztery oczy, kody reguł bazy).
 const ROUTE_HELPER_SOURCES = {
   admin: [
     'account-recovery.js', 'anonymization.js', 'family-export.js', 'grant-requests.js', 'invitation-batch.js', 'list-cursor.js', 'login.js',
     'processing-restrictions.js', 'promotions.js',
   ],
+  'audit-reviews': ['audit-reviews.js'],
   documents: ['../documents.js', 'list-cursor.js'],
   email: ['../email/content.js', '../email/brevo.js', 'list-cursor.js'],
   events: ['events.js', 'list-cursor.js'],
+  'financial-reports': ['report-snapshots.js'],
   'guardian-updates': ['list-cursor.js'],
   login: ['login.js', 'password.js'],
   meetings: ['meetings.js', 'list-cursor.js'],
@@ -211,7 +217,8 @@ test('rejestr: kody błędów w schematach są w katalogu docs/API_ERRORS.md i w
     // Moduły z kodami poza plikiem trasy (ROUTE_HELPER_SOURCES: reconciliation — parsery CODA/CAMT.053, email — treść i Brevo,
     // meetings, events i news — moduły domenowe src/pg/meetings.js, src/pg/events.js i src/pg/news.js, documents — kontrola struktury
     // pliku w src/documents.js, login — src/pg/login.js i polityka haseł src/pg/password.js, mfa — src/pg/mfa.js, admin — moduły
-    // wniosków, partii zaproszeń, promocji, RODO i resetu kont).
+    // wniosków, partii zaproszeń, promocji, RODO i resetu kont, audit-reviews — src/pg/audit-reviews.js, financial-reports —
+    // src/pg/report-snapshots.js).
     const helpers = await Promise.all((ROUTE_HELPER_SOURCES[module.name] ?? [])
       .map((file) => readFile(new URL(`../src/pg/${file}`, import.meta.url), 'utf8')));
     const source = [await readFile(new URL(`../src/pg/routes/${module.name}.js`, import.meta.url), 'utf8'), ...helpers, ...shared].join('\n');

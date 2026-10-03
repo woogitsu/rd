@@ -9,8 +9,9 @@
 //
 // Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga z preliminarzem, kasą i centrami
 // kosztów, rodziny, sesja, uzgodnienia wyciągów z raportem KR, kampanie e-mail, zebrania, dokumenty, wydarzenia, aktualności,
-// administracja kont i ról, logowanie i MFA, wnioski opiekunów, import, zamknięcie roku, informacja o przetwarzaniu
-// danych); pozostałe są
+// administracja kont i ról, logowanie i MFA, historia obiektu, ścieżka kontroli KR, sprawozdanie roczne z migawkami,
+// eksporty, kartki, pulpity zarządu i przedstawiciela, wnioski opiekunów, import, zamknięcie roku, informacja
+// o przetwarzaniu danych); pozostałe są
 // jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
 // tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
 // „do zatwierdzenia” przez zarząd/szkołę.

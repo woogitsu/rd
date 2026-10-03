@@ -1,4 +1,4 @@
-// Kontrakt API (#160, etap 13): prawdziwe odpowiedzi modułów `guardian-updates`, `import`, `privacy-notice` i `year-close`
+// Kontrakt API (#160, etap 14): prawdziwe odpowiedzi modułów `guardian-updates`, `import`, `privacy-notice` i `year-close`
 // (PGlite, dane syntetyczne `@example.invalid`, imiona syntetyczne) walidowane schematami z docs/openapi.json
 // (src/pg/schemas/guardian-updates.js, import.js, privacy-notice.js, year-close.js) przez tests/helpers/contract-client.js.
 // Rejestr pokrycia i katalog kodów sprawdza tests/openapi-contract.test.js (wspólnie dla wszystkich pokrytych modułów).
@@ -159,7 +159,7 @@ const YEAR_CLOSE_DENY = [
   ['POST', `/api/year-close/${OLD}/close`, {}, ['treasurer']],
 ];
 
-test('specyfikacja etapu 13: klucz idempotencji, nagłówek ponowienia, ciała opcjonalne, trasy publiczne i tokeny', () => {
+test('specyfikacja etapu 14: klucz idempotencji, nagłówek ponowienia, ciała opcjonalne, trasy publiczne i tokeny', () => {
   const operations = MODULES.flatMap(operationsOf);
   assert.equal(operations.length, 23);
   assert.deepEqual(MODULES.map((name) => operationsOf(name).length), [10, 3, 5, 5]);

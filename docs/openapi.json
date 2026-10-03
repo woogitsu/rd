@@ -97,10 +97,15 @@
   "x-rd-schema-coverage": {
     "covered": [
       "admin",
+      "audit-history",
+      "audit-reviews",
+      "board",
       "documents",
       "email",
       "events",
+      "exports",
       "families",
+      "financial-reports",
       "guardian-updates",
       "import",
       "ledger",
@@ -114,23 +119,17 @@
       "payment-instructions",
       "payment-references",
       "payments",
+      "print",
       "privacy-notice",
       "reconciliation",
+      "representative",
       "session",
       "year-close"
     ],
-    "uncovered": [
-      "audit-history",
-      "audit-reviews",
-      "board",
-      "exports",
-      "financial-reports",
-      "print",
-      "representative"
-    ],
+    "uncovered": [],
     "operations": {
       "total": 297,
-      "withSchema": 275
+      "withSchema": 297
     }
   },
   "paths": {
@@ -9839,13 +9838,89 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wątki uwag i wnioski końcowe roku w kolejności zapisu; obowiązuje najnowszy wniosek.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schoolYearId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "threads": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditReviewThread"
+                      }
+                    },
+                    "conclusions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditReviewNote"
+                      },
+                      "description": "Wszystkie wnioski końcowe (kolejny wniosek to nowy zapis)."
+                    },
+                    "currentConclusion": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/AuditReviewNote"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "open": {
+                          "$ref": "#/components/schemas/Count"
+                        },
+                        "answered": {
+                          "$ref": "#/components/schemas/Count"
+                        },
+                        "closed": {
+                          "$ref": "#/components/schemas/Count"
+                        }
+                      },
+                      "required": [
+                        "open",
+                        "answered",
+                        "closed"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "schoolYearId",
+                    "threads",
+                    "conclusions",
+                    "currentConclusion",
+                    "counts"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9858,7 +9933,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -9905,17 +9998,94 @@
         "operationId": "auditReviews_conclusion",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "year",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditReviewBodyRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ponowienie tym samym kluczem i tą samą treścią: ten sam zapis (`replayed: true`), bez nowego wiersza.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wniosek końcowy roku zapisane (`replayed: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_audit_review_body",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9928,7 +10098,80 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -9967,17 +10210,95 @@
         "operationId": "auditReviews_noteCreate",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "year",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditReviewNoteRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ponowienie tym samym kluczem i tą samą treścią: ten sam zapis (`replayed: true`), bez nowego wiersza.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Pytanie albo ustalenie KR zapisane (`replayed: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_audit_review_body",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_request",
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9990,7 +10311,81 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "audit_review_target_not_found",
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -10029,11 +10424,19 @@
         "operationId": "auditReviews_answer",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -10041,26 +10444,171 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditReviewBodyRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ponowienie tym samym kluczem i tą samą treścią: ten sam zapis (`replayed: true`), bez nowego wiersza.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Odpowiedź zarządu albo skarbnika zapisane (`replayed: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthenticated"
-          },
-          "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "audit_review_not_found",
+              "invalid_audit_review_body",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_school_year_id"
+            ]
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień, MFA albo ta sama osoba co autor pytania (`four_eyes_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "four_eyes_required",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "audit_review_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "audit_review_closed",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -10103,11 +10651,19 @@
         "operationId": "auditReviews_close",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -10115,13 +10671,83 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuditReviewClosureRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ponowienie tym samym kluczem i tą samą treścią: ten sam zapis (`replayed: true`), bez nowego wiersza.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zamknięcie wątku przez KR zapisane (`replayed: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/AuditReviewNote"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "note",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "audit_review_not_found",
+              "invalid_audit_review_body",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10134,7 +10760,81 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "audit_review_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "audit_review_closed",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -10177,13 +10877,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Historia kampanii e-mail (zdarzenia domeny obiektu, od najstarszego).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entityType": {
+                      "const": "email_campaign"
+                    },
+                    "entityId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditHistoryEvent"
+                      },
+                      "description": "Zdarzenia obiektu i powiązane (korekta, przypisanie, dopasowanie …), od najstarszego."
+                    }
+                  },
+                  "required": [
+                    "entityType",
+                    "entityId",
+                    "events"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10196,7 +10937,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -10206,7 +10952,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -10254,13 +11003,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Historia wpisu księgi (zdarzenia domeny obiektu, od najstarszego).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entityType": {
+                      "const": "ledger_entry"
+                    },
+                    "entityId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditHistoryEvent"
+                      },
+                      "description": "Zdarzenia obiektu i powiązane (korekta, przypisanie, dopasowanie …), od najstarszego."
+                    }
+                  },
+                  "required": [
+                    "entityType",
+                    "entityId",
+                    "events"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10273,7 +11063,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -10283,7 +11078,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -10331,13 +11129,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Historia wpłaty (zdarzenia domeny obiektu, od najstarszego).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entityType": {
+                      "const": "payment_entry"
+                    },
+                    "entityId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditHistoryEvent"
+                      },
+                      "description": "Zdarzenia obiektu i powiązane (korekta, przypisanie, dopasowanie …), od najstarszego."
+                    }
+                  },
+                  "required": [
+                    "entityType",
+                    "entityId",
+                    "events"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10350,7 +11189,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -10360,7 +11204,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -10408,13 +11255,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Historia uzgodnienia wyciągu (zdarzenia domeny obiektu, od najstarszego).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entityType": {
+                      "const": "reconciliation"
+                    },
+                    "entityId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditHistoryEvent"
+                      },
+                      "description": "Zdarzenia obiektu i powiązane (korekta, przypisanie, dopasowanie …), od najstarszego."
+                    }
+                  },
+                  "required": [
+                    "entityType",
+                    "entityId",
+                    "events"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10427,7 +11315,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -10437,7 +11330,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -10537,15 +11433,35 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Statystyki klas roku w zakresie wywołującego (jedna migawka odczytu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardOverview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10558,7 +11474,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -10607,15 +11541,35 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Ta sama tabela co widok: CSV UTF-8 z BOM, separator `;`, nagłówek z rokiem i notą, wiersze klas i „Razem”, kolumna wpisów wpłat tylko z dostępem finansowym (`—` przy progu 5 gospodarstw).",
+            "content": {
+              "text/csv; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10628,7 +11582,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -10677,15 +11649,36 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Ta sama tabela co widok jako arkusz XLSX „Statystyki klas” (te same kolumny i reguły co CSV).",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10698,7 +11691,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -22342,9 +23353,40 @@
     "/api/exports": {
       "post": {
         "operationId": "exports_yearly",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YearlyExportRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Paczka eksportu rocznego jako załącznik `rd-eksport-<rok>-v2.json` (nagłówki `X-Export-Run-Id`, `X-Export-Manifest-Sha256`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportYearlyBundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_school_year"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22357,7 +23399,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "mfa_stale"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "export_in_progress"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -22402,15 +23503,62 @@
           {
             "name": "classId",
             "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "enum": [
+                "json",
+                "csv",
+                "xlsx"
+              ],
+              "default": "json"
+            },
+            "description": "Ten sam zakres i te same dane w każdym formacie (#132)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Lista klasy jako załącznik: JSON (domyślnie, z sumą SHA-256), CSV UTF-8 z BOM albo arkusz XLSX (sortowanie polskie, stopka o danych osobowych).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassRoster"
+                }
+              },
+              "text/csv; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_class",
+              "invalid_format"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22423,7 +23571,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "class_not_found"
+            ]
           }
         },
         "security": [
@@ -41934,21 +43100,143 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Klasa roku; wymagana przy przydziale klasowym. Pusty parametr = brak."
           },
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Dane kartek w zakresie wywołującego (kolejność: klasa, rodzina, nazwisko).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schoolYearId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "classId": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "paymentInfoIncluded": {
+                      "type": "boolean",
+                      "description": "true — wiersze mają `recordedNetCents` (rola finansowa z MFA)."
+                    },
+                    "paymentInstructions": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "$ref": "#/components/schemas/EntityId",
+                              "description": "Wersja zatwierdzonej konfiguracji rachunku (drukowana w stopce kartki)."
+                            },
+                            "iban": {
+                              "type": "string"
+                            },
+                            "bic": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "payeeName": {
+                              "type": "string"
+                            },
+                            "approvedAt": {
+                              "$ref": "#/components/schemas/IsoDateTime"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "iban",
+                            "bic",
+                            "payeeName",
+                            "approvedAt"
+                          ],
+                          "additionalProperties": false,
+                          "description": "Zatwierdzone dane do wpłaty Rady (#92) do kodu QR; null — kartka bez QR (szkic)."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "privacyNotice": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "url": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "description": "Publiczny adres informacji; null bez PUBLIC_BASE_URL."
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "url"
+                      ],
+                      "additionalProperties": false,
+                      "description": "Opublikowana informacja o przetwarzaniu danych (D-06) drukowana na kartce."
+                    },
+                    "skippedRestricted": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Liczba rodzin pominiętych z powodu ograniczenia przetwarzania (D-07), w zakresie wydruku."
+                    },
+                    "rows": {
+                      "type": "array",
+                      "maxItems": 5000,
+                      "items": {
+                        "$ref": "#/components/schemas/PrintCardRow"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schoolYearId",
+                    "classId",
+                    "paymentInfoIncluded",
+                    "paymentInstructions",
+                    "privacyNotice",
+                    "skippedRestricted",
+                    "rows"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "400": {
             "description": "Błąd walidacji żądania (kod z katalogu).",
@@ -41958,7 +43246,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "class_required",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -41971,7 +43263,52 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "class_not_found",
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "privacy_notice_missing"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "too_many_rows"
+            ]
           }
         },
         "security": [
@@ -45603,21 +46940,61 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "enum": [
+                "json",
+                "html"
+              ],
+              "default": "json"
+            },
+            "description": "`html` — dokument A4 do druku (CSP bez skryptów)."
           },
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Sprawozdanie roczne: JSON (domyślnie) albo HTML do druku; każde wygenerowanie zapisuje `report.annual.generated` bez treści.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "report": {
+                      "$ref": "#/components/schemas/FinancialAnnualReport"
+                    }
+                  },
+                  "required": [
+                    "report"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "text/html; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -45630,7 +47007,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -45679,15 +47074,47 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Migawki roku od najstarszej (bez treści).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "snapshots": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FinancialReportSnapshot"
+                      }
+                    }
+                  },
+                  "required": [
+                    "snapshots"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -45700,7 +47127,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -45739,9 +47171,77 @@
       },
       "post": {
         "operationId": "financialReports_snapshotCreate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinancialReportSnapshotRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ta sama treść co bieżąca migawka (podwójne kliknięcie): istniejąca migawka, `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "snapshot": {
+                      "$ref": "#/components/schemas/FinancialReportSnapshot"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "snapshot",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Nowa niezmienna migawka z bieżącej księgi (`replayed: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "snapshot": {
+                      "$ref": "#/components/schemas/FinancialReportSnapshot"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "snapshot",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -45754,7 +47254,83 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "conflict",
+              "report_snapshot_content_exists",
+              "report_snapshot_superseded",
+              "report_snapshot_supersedes_required",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -45801,7 +47377,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -45809,13 +47385,57 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "enum": [
+                "json",
+                "html"
+              ],
+              "default": "json"
+            },
+            "description": "`html` — dokument A4 do druku (CSP bez skryptów)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zapisana treść migawki ze stanem (SHA-256 sprawdzony przy odczycie): JSON (domyślnie) albo HTML do druku.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "snapshot": {
+                      "$ref": "#/components/schemas/FinancialReportSnapshot"
+                    },
+                    "report": {
+                      "$ref": "#/components/schemas/FinancialAnnualReportPayload"
+                    }
+                  },
+                  "required": [
+                    "snapshot",
+                    "report"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "text/html; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -45828,7 +47448,38 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "report_snapshot_not_found"
+            ]
+          },
+          "500": {
+            "description": "Zapisana treść nie zgadza się ze skrótem SHA-256 (naruszenie poza API) — treść nie jest wydawana.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "report_snapshot_integrity_failed"
+            ]
           }
         },
         "security": [
@@ -45875,13 +47526,80 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinancialReportSnapshotApproveRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Migawka była już zatwierdzona: bez nowego zapisu (`replayed: true`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "snapshot": {
+                      "$ref": "#/components/schemas/FinancialReportSnapshot"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "snapshot",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Migawka zatwierdzona teraz (`replayed: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "snapshot": {
+                      "$ref": "#/components/schemas/FinancialReportSnapshot"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "snapshot",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -45894,7 +47612,69 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "four_eyes_required",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "mfa_stale"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "report_snapshot_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "conflict",
+              "report_snapshot_superseded",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -46107,17 +47887,56 @@
         "operationId": "financialReports_cashFlow",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "granularity",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "const": "month",
+              "default": "month"
+            },
+            "description": "Jedyna obsługiwana szczegółowość: miesiąc."
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Przepływy środków roku; zapisuje `report.cash_flow.generated` bez treści.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "report": {
+                      "$ref": "#/components/schemas/FinancialCashFlow"
+                    }
+                  },
+                  "required": [
+                    "report"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -46130,7 +47949,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -46179,15 +48016,51 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Przypisane klasy wywołującego w roku (wg nazwy); przydział innego roku — pusta lista.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schoolYearId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "classes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RepresentativeClassSummary"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schoolYearId",
+                    "classes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -46200,7 +48073,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -50717,6 +52595,90 @@
         "maximum": 100000000,
         "description": "Kwota dodatnia w eurocentach (EUR); do 1 000 000,00 EUR."
       },
+      "AuditHistoryEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "actorId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Członek Rady; null — zdarzenie systemowe (worker, webhook)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string",
+            "enum": [
+              "finance",
+              "email"
+            ],
+            "description": "Domena obiektu: `finance` (wpłata, wpis księgi, uzgodnienie) albo `email` (kampania)."
+          },
+          "actorKind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "system",
+              "anonymous"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "email_worker",
+                  "brevo_webhook",
+                  "unsubscribe_link",
+                  "login",
+                  "bootstrap",
+                  "system"
+                ],
+                "description": "Pochodzenie zdarzenia bez aktora; null dla zdarzeń użytkownika."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Metadane bez wolnego tekstu i danych osobowych (auditMetadataForView): liczby, wartości logiczne i napisy w kształcie identyfikatora/kodu/daty."
+          },
+          "redactedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ścieżki pominiętych pól metadanych (bez wartości)."
+          }
+        },
+        "required": [
+          "id",
+          "actorId",
+          "action",
+          "domain",
+          "actorKind",
+          "source",
+          "occurredAt",
+          "metadata",
+          "redactedFields"
+        ],
+        "additionalProperties": false,
+        "description": "Zdarzenie dziennika w historii obiektu (#181): bez rodzaju i identyfikatora obiektu (są w odpowiedzi)."
+      },
       "AuditReport": {
         "type": "object",
         "properties": {
@@ -52124,6 +54086,245 @@
         "additionalProperties": false,
         "description": "Zapis ścieżki kontroli Komisji Rewizyjnej (#137; niezmienny)."
       },
+      "AuditReviewBodyRequest": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 2000,
+            "description": "Treść (3-2000 znaków po przycięciu spacji). Wolny tekst za bramką danych osobowych (#152); nie trafia do dziennika zdarzeń."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "body"
+        ]
+      },
+      "AuditReviewClosureRequest": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 2000,
+                "description": "Treść (3-2000 znaków po przycięciu spacji). Wolny tekst za bramką danych osobowych (#152); nie trafia do dziennika zdarzeń."
+              },
+              {
+                "type": "null"
+              },
+              {
+                "const": ""
+              }
+            ],
+            "description": "Opcjonalne uzasadnienie zamknięcia (3-2000 znaków); null, pusty tekst albo brak pola — zamknięcie bez treści."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": []
+      },
+      "AuditReviewNote": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "question",
+              "finding",
+              "answer",
+              "closed",
+              "conclusion"
+            ],
+            "description": "question/finding — korzeń wątku; answer, closed — wpisy wątku; conclusion — wniosek końcowy roku."
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "ledger_entry",
+              "reconciliation",
+              "year"
+            ]
+          },
+          "targetId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Wpis księgi, uzgodnienie albo rok (wtedy identyfikator roku ze ścieżki)."
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Korzeń wątku (odpowiedź, zamknięcie); null dla korzenia i wniosku."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Treść; null tylko przy zamknięciu bez treści."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Autor (identyfikator konta, bez imienia i e-maila)."
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "targetType",
+          "targetId",
+          "parentId",
+          "body",
+          "createdBy",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Niezmienny zapis ścieżki kontroli KR (korekta = nowy zapis)."
+      },
+      "AuditReviewNoteRequest": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "question",
+              "finding"
+            ]
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "ledger_entry",
+              "reconciliation",
+              "year"
+            ]
+          },
+          "targetId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Wpis księgi albo uzgodnienie z roku ze ścieżki (inaczej 404 `audit_review_target_not_found`); dla `year` — identyfikator roku ze ścieżki."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 2000,
+            "description": "Treść (3-2000 znaków po przycięciu spacji). Wolny tekst za bramką danych osobowych (#152); nie trafia do dziennika zdarzeń."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "kind",
+          "targetType",
+          "targetId",
+          "body"
+        ]
+      },
+      "AuditReviewThread": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "question",
+              "finding"
+            ]
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "ledger_entry",
+              "reconciliation",
+              "year"
+            ]
+          },
+          "targetId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Wpis księgi, uzgodnienie albo rok (wtedy identyfikator roku ze ścieżki)."
+          },
+          "parentId": {
+            "type": "null"
+          },
+          "body": {
+            "type": "string",
+            "description": "Treść pytania albo ustalenia."
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Autor (identyfikator konta, bez imienia i e-maila)."
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "answered",
+              "closed"
+            ],
+            "description": "open — bez odpowiedzi; answered — z odpowiedzią; closed — zamknięty przez KR."
+          },
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditReviewNote"
+            },
+            "description": "Odpowiedzi zarządu/skarbnika w kolejności zapisu."
+          },
+          "closed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuditReviewNote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "targetType",
+          "targetId",
+          "parentId",
+          "body",
+          "createdBy",
+          "createdAt",
+          "status",
+          "answers",
+          "closed"
+        ],
+        "additionalProperties": false,
+        "description": "Wątek: pytanie albo ustalenie KR z odpowiedziami i zamknięciem."
+      },
       "AuthState": {
         "type": "object",
         "properties": {
@@ -52393,6 +54594,289 @@
           "camt053"
         ],
         "description": "Źródło paczki pozycji: manual = lista JSON, csv = ogólny CSV, coda / camt053 = plik banku (#105)."
+      },
+      "BoardOverview": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearLabel": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string",
+            "description": "Stała nota o dobrowolności składki i znaczeniu odsetka."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "school",
+              "classes"
+            ],
+            "description": "`school` — wszystkie klasy roku; `classes` — przydział zarządu ograniczony do klas."
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardOverviewClass"
+            },
+            "description": "Klasy w zakresie, wg nazwy (bez sortowania po odsetku)."
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "studentCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Uczniowie klas w zakresie."
+              },
+              "householdCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Gospodarstwa w zakresie liczone raz (rodzeństwo w kilku klasach — jedno gospodarstwo)."
+              },
+              "representative": {
+                "type": "object",
+                "properties": {
+                  "active": {
+                    "$ref": "#/components/schemas/Count",
+                    "description": "Aktywne przydziały przedstawiciela."
+                  },
+                  "pendingInvites": {
+                    "$ref": "#/components/schemas/Count",
+                    "description": "Oczekujące zaproszenia przedstawiciela."
+                  }
+                },
+                "required": [
+                  "active",
+                  "pendingInvites"
+                ],
+                "additionalProperties": false
+              },
+              "contactEmailCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Uczniowie z opiekunem ze zgodą na kontakt (opiekuna i relacji) i adresem e-mail."
+              },
+              "noContactCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Uczniowie „do kartki”: bez takiego opiekuna."
+              },
+              "paymentEntryRatePercent": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Odsetek gospodarstw z odnotowanym wpisem wpłaty (informacyjnie, nie zobowiązanie); null przy mniej niż 5 gospodarstwach. Tylko rola finansowa z MFA i przydziałem szerokim dla roku — inaczej pola nie ma."
+              },
+              "unmatchedPaymentsCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Wpłaty roku bez przypisania do rodziny (nieujęte w odsetkach); tylko z kolumną wpłat."
+              }
+            },
+            "required": [
+              "studentCount",
+              "householdCount",
+              "representative",
+              "contactEmailCount",
+              "noContactCount"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "schoolYearLabel",
+          "note",
+          "scope",
+          "classes",
+          "totals"
+        ],
+        "additionalProperties": false,
+        "description": "Statystyki klas (#131) — informacja pomocnicza, nie ocena klas ani rodzin."
+      },
+      "BoardOverviewClass": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "studentCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Uczniowie z bieżącym przypisaniem (bez odeszłych)."
+          },
+          "householdCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Gospodarstwa główne uczniów (rodzeństwo liczone raz)."
+          },
+          "representative": {
+            "type": "object",
+            "properties": {
+              "active": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Aktywne przydziały przedstawiciela."
+              },
+              "pendingInvites": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Oczekujące zaproszenia przedstawiciela."
+              }
+            },
+            "required": [
+              "active",
+              "pendingInvites"
+            ],
+            "additionalProperties": false
+          },
+          "contactEmailCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Uczniowie z opiekunem ze zgodą na kontakt (opiekuna i relacji) i adresem e-mail."
+          },
+          "noContactCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Uczniowie „do kartki”: bez takiego opiekuna."
+          },
+          "paymentEntryRatePercent": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Odsetek gospodarstw z odnotowanym wpisem wpłaty (informacyjnie, nie zobowiązanie); null przy mniej niż 5 gospodarstwach. Tylko rola finansowa z MFA i przydziałem szerokim dla roku — inaczej pola nie ma."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "studentCount",
+          "householdCount",
+          "representative",
+          "contactEmailCount",
+          "noContactCount"
+        ],
+        "additionalProperties": false
+      },
+      "ClassRoster": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "name": {
+                "type": "string"
+              },
+              "schoolYearId": {
+                "$ref": "#/components/schemas/EntityId"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "schoolYearId"
+            ],
+            "additionalProperties": false
+          },
+          "format": {
+            "const": "rd-class-roster"
+          },
+          "formatVersion": {
+            "const": 1
+          },
+          "sha256": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "Skrót listy (bez tego pola); ten sam co w nagłówku `X-Export-Manifest-Sha256`."
+          },
+          "students": {
+            "type": "array",
+            "description": "Bieżący skład klasy (bez uczniów po odejściu), z opiekunami w aktywnych relacjach.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "firstName": {
+                  "type": "string"
+                },
+                "lastName": {
+                  "type": "string"
+                },
+                "guardians": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ClassRosterGuardian"
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "firstName",
+                "lastName",
+                "guardians"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "class",
+          "format",
+          "formatVersion",
+          "sha256",
+          "students"
+        ],
+        "additionalProperties": false,
+        "description": "Lista klasy (#9): uczniowie i opiekunowie, bez wpłat i identyfikatorów rodzin. Zawiera dane osobowe."
+      },
+      "ClassRosterGuardian": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Tylko przy zgodzie na kontakt opiekuna i relacji z dzieckiem; inaczej null."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "primaryContact": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "firstName",
+          "lastName",
+          "email",
+          "primaryContact"
+        ],
+        "additionalProperties": false
       },
       "Count": {
         "type": "integer",
@@ -56608,6 +59092,179 @@
         ],
         "description": "Nowa wersja treści (pominięte pola bez zmian; `classId` i `schoolYearId` są ignorowane). Ta sama treść = odtworzenie (`replayed: true`); ponowienie tej samej zmiany przez jej autora po nowszym numerze wersji — też."
       },
+      "ExportManifestFile": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+\\.jsonl$",
+            "description": "Ścieżka pliku w `files` (`<tabela>.jsonl`)."
+          },
+          "table": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Kolumny w kolejności alfabetycznej."
+          },
+          "rows": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "sha256": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "Skrót treści pliku JSONL."
+          },
+          "sums": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Sumy kolumn `*_cents` (eurocenty) do kontroli odtworzenia."
+          }
+        },
+        "required": [
+          "path",
+          "table",
+          "columns",
+          "rows",
+          "sha256",
+          "sums"
+        ],
+        "additionalProperties": false
+      },
+      "ExportYearlyBundle": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Treść tabel: ścieżka `<tabela>.jsonl` → wiersze JSON (jeden na linię, klucze posortowane). Zawiera dane osobowe."
+          },
+          "format": {
+            "const": "rd-yearly-export"
+          },
+          "formatVersion": {
+            "const": 2
+          },
+          "manifest": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "const": "rd-yearly-export"
+              },
+              "formatVersion": {
+                "const": 2
+              },
+              "schoolYearId": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "migrations": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Zastosowane migracje bazy (nazwy plików)."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "migrations"
+                ],
+                "additionalProperties": false
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ExportManifestFile"
+                }
+              },
+              "totals": {
+                "type": "object",
+                "properties": {
+                  "payments": {
+                    "type": "object",
+                    "properties": {
+                      "recordedNetCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "recordedCount": {
+                        "$ref": "#/components/schemas/Count"
+                      }
+                    },
+                    "required": [
+                      "recordedNetCents",
+                      "recordedCount"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "ledger": {
+                    "type": "object",
+                    "properties": {
+                      "openingBalanceCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "incomeCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "expenseCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "closingBalanceCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      }
+                    },
+                    "required": [
+                      "openingBalanceCents",
+                      "incomeCents",
+                      "expenseCents",
+                      "closingBalanceCents"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "format",
+              "formatVersion",
+              "schoolYearId",
+              "schema",
+              "files",
+              "totals"
+            ],
+            "additionalProperties": false
+          },
+          "manifestSha256": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "Skrót kanonicznego JSON manifestu; ten sam co w nagłówku `X-Export-Manifest-Sha256`."
+          }
+        },
+        "required": [
+          "files",
+          "format",
+          "formatVersion",
+          "manifest",
+          "manifestSha256"
+        ],
+        "additionalProperties": false,
+        "description": "Paczka eksportu rocznego (docs/EXPORT.md): deterministyczna, weryfikowalna manifestem (`npm run db:verify-export`)."
+      },
       "FamilyClass": {
         "type": "object",
         "properties": {
@@ -56704,6 +59361,896 @@
         ],
         "additionalProperties": false,
         "description": "Bieżące członkostwo ucznia w gospodarstwie. Zakres klasowy widzi tylko gospodarstwa kontaktowe (#95), bez `isPrimary`."
+      },
+      "FinancialAnnualReport": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "annual"
+          },
+          "schoolYear": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "label": {
+                "type": "string"
+              },
+              "startsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              "endsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "startsOn",
+              "endsOn"
+            ],
+            "additionalProperties": false
+          },
+          "generatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "balance": {
+            "type": "object",
+            "properties": {
+              "openingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "openingBankCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "openingCashCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "incomeCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "expenseCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "resultCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingBankCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingCashCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              }
+            },
+            "required": [
+              "openingBalanceCents",
+              "openingBankCents",
+              "openingCashCents",
+              "incomeCents",
+              "expenseCents",
+              "resultCents",
+              "closingBalanceCents",
+              "closingBankCents",
+              "closingCashCents"
+            ],
+            "additionalProperties": false
+          },
+          "income": {
+            "type": "object",
+            "properties": {
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "categoryId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "netCents": {
+                      "$ref": "#/components/schemas/SignedCents",
+                      "description": "Wykonanie: suma wpisów netto (po korektach) w kategorii."
+                    },
+                    "plannedCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Preliminarz bieżącej wersji; null — kategoria bez preliminarza."
+                    },
+                    "varianceCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Wykonanie minus preliminarz; null bez preliminarza."
+                    }
+                  },
+                  "required": [
+                    "categoryId",
+                    "name",
+                    "netCents",
+                    "plannedCents",
+                    "varianceCents"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Kategorie z wpisami albo z preliminarzem."
+              },
+              "totalCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "plannedCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Suma preliminarza; null, gdy żadna kategoria go nie ma."
+              }
+            },
+            "required": [
+              "categories",
+              "totalCents",
+              "plannedCents"
+            ],
+            "additionalProperties": false
+          },
+          "expense": {
+            "type": "object",
+            "properties": {
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "categoryId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "netCents": {
+                      "$ref": "#/components/schemas/SignedCents",
+                      "description": "Wykonanie: suma wpisów netto (po korektach) w kategorii."
+                    },
+                    "plannedCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Preliminarz bieżącej wersji; null — kategoria bez preliminarza."
+                    },
+                    "varianceCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Wykonanie minus preliminarz; null bez preliminarza."
+                    }
+                  },
+                  "required": [
+                    "categoryId",
+                    "name",
+                    "netCents",
+                    "plannedCents",
+                    "varianceCents"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Kategorie z wpisami albo z preliminarzem."
+              },
+              "totalCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "plannedCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Suma preliminarza; null, gdy żadna kategoria go nie ma."
+              }
+            },
+            "required": [
+              "categories",
+              "totalCents",
+              "plannedCents"
+            ],
+            "additionalProperties": false
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "entryCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "correctionCount": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "entryCount",
+              "correctionCount"
+            ],
+            "additionalProperties": false
+          },
+          "reconciliation": {
+            "type": "object",
+            "properties": {
+              "lastConfirmedStatementDate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDate",
+                    "description": "Data wyciągu ostatniego potwierdzonego uzgodnienia; null — brak."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "lastConfirmedStatementDate"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "kind",
+          "schoolYear",
+          "generatedAt",
+          "balance",
+          "income",
+          "expense",
+          "counts",
+          "reconciliation"
+        ],
+        "additionalProperties": false,
+        "description": "Sprawozdanie roczne (projekt z bieżącej księgi): bilans, przychody i wydatki według kategorii z preliminarzem, liczby wpisów i korekt. Wyłącznie sumy — bez opisów wpisów, osób i danych rodzin. Nie jest zatwierdzonym sprawozdaniem."
+      },
+      "FinancialAnnualReportPayload": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "annual"
+          },
+          "schoolYear": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "label": {
+                "type": "string"
+              },
+              "startsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              "endsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "startsOn",
+              "endsOn"
+            ],
+            "additionalProperties": false
+          },
+          "balance": {
+            "type": "object",
+            "properties": {
+              "openingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "openingBankCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "openingCashCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "incomeCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "expenseCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "resultCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingBankCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingCashCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              }
+            },
+            "required": [
+              "openingBalanceCents",
+              "openingBankCents",
+              "openingCashCents",
+              "incomeCents",
+              "expenseCents",
+              "resultCents",
+              "closingBalanceCents",
+              "closingBankCents",
+              "closingCashCents"
+            ],
+            "additionalProperties": false
+          },
+          "income": {
+            "type": "object",
+            "properties": {
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "categoryId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "netCents": {
+                      "$ref": "#/components/schemas/SignedCents",
+                      "description": "Wykonanie: suma wpisów netto (po korektach) w kategorii."
+                    },
+                    "plannedCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Preliminarz bieżącej wersji; null — kategoria bez preliminarza."
+                    },
+                    "varianceCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Wykonanie minus preliminarz; null bez preliminarza."
+                    }
+                  },
+                  "required": [
+                    "categoryId",
+                    "name",
+                    "netCents",
+                    "plannedCents",
+                    "varianceCents"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Kategorie z wpisami albo z preliminarzem."
+              },
+              "totalCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "plannedCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Suma preliminarza; null, gdy żadna kategoria go nie ma."
+              }
+            },
+            "required": [
+              "categories",
+              "totalCents",
+              "plannedCents"
+            ],
+            "additionalProperties": false
+          },
+          "expense": {
+            "type": "object",
+            "properties": {
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "categoryId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "netCents": {
+                      "$ref": "#/components/schemas/SignedCents",
+                      "description": "Wykonanie: suma wpisów netto (po korektach) w kategorii."
+                    },
+                    "plannedCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Preliminarz bieżącej wersji; null — kategoria bez preliminarza."
+                    },
+                    "varianceCents": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Wykonanie minus preliminarz; null bez preliminarza."
+                    }
+                  },
+                  "required": [
+                    "categoryId",
+                    "name",
+                    "netCents",
+                    "plannedCents",
+                    "varianceCents"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Kategorie z wpisami albo z preliminarzem."
+              },
+              "totalCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "plannedCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Suma preliminarza; null, gdy żadna kategoria go nie ma."
+              }
+            },
+            "required": [
+              "categories",
+              "totalCents",
+              "plannedCents"
+            ],
+            "additionalProperties": false
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "entryCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "correctionCount": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "entryCount",
+              "correctionCount"
+            ],
+            "additionalProperties": false
+          },
+          "reconciliation": {
+            "type": "object",
+            "properties": {
+              "lastConfirmedStatementDate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDate",
+                    "description": "Data wyciągu ostatniego potwierdzonego uzgodnienia; null — brak."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "lastConfirmedStatementDate"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "kind",
+          "schoolYear",
+          "balance",
+          "income",
+          "expense",
+          "counts",
+          "reconciliation"
+        ],
+        "additionalProperties": false,
+        "description": "Zapisana treść migawki: sprawozdanie bez `generatedAt` (ten sam stan księgi = ten sam skrót SHA-256)."
+      },
+      "FinancialCashFlow": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "cash_flow"
+          },
+          "granularity": {
+            "const": "month"
+          },
+          "schoolYear": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "label": {
+                "type": "string"
+              },
+              "startsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              "endsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "startsOn",
+              "endsOn"
+            ],
+            "additionalProperties": false
+          },
+          "generatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "openingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "openingCashCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "months": {
+            "type": "array",
+            "description": "Każdy miesiąc roku szkolnego (i miesiące wpisów spoza jego zakresu), rosnąco.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "month": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}$",
+                  "description": "RRRR-MM."
+                },
+                "byMethod": {
+                  "type": "object",
+                  "properties": {
+                    "bank": {
+                      "type": "object",
+                      "properties": {
+                        "incomeCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        "expenseCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        }
+                      },
+                      "required": [
+                        "incomeCents",
+                        "expenseCents"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "cash": {
+                      "type": "object",
+                      "properties": {
+                        "incomeCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        "expenseCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        }
+                      },
+                      "required": [
+                        "incomeCents",
+                        "expenseCents"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "card": {
+                      "type": "object",
+                      "properties": {
+                        "incomeCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        "expenseCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        }
+                      },
+                      "required": [
+                        "incomeCents",
+                        "expenseCents"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "other": {
+                      "type": "object",
+                      "properties": {
+                        "incomeCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        },
+                        "expenseCents": {
+                          "$ref": "#/components/schemas/SignedCents"
+                        }
+                      },
+                      "required": [
+                        "incomeCents",
+                        "expenseCents"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "bank",
+                    "cash",
+                    "card",
+                    "other"
+                  ],
+                  "additionalProperties": false
+                },
+                "incomeCents": {
+                  "$ref": "#/components/schemas/SignedCents"
+                },
+                "expenseCents": {
+                  "$ref": "#/components/schemas/SignedCents"
+                },
+                "netCents": {
+                  "$ref": "#/components/schemas/SignedCents"
+                },
+                "transfers": {
+                  "type": "object",
+                  "properties": {
+                    "cashToBankCents": {
+                      "$ref": "#/components/schemas/SignedCents"
+                    },
+                    "bankToCashCents": {
+                      "$ref": "#/components/schemas/SignedCents"
+                    }
+                  },
+                  "required": [
+                    "cashToBankCents",
+                    "bankToCashCents"
+                  ],
+                  "additionalProperties": false
+                },
+                "runningBalanceCents": {
+                  "$ref": "#/components/schemas/SignedCents",
+                  "description": "Saldo narastające na koniec miesiąca."
+                },
+                "runningCashCents": {
+                  "$ref": "#/components/schemas/SignedCents",
+                  "description": "Saldo kasy (metody inne niż bank i przeniesienia)."
+                },
+                "runningBankCents": {
+                  "$ref": "#/components/schemas/SignedCents"
+                }
+              },
+              "required": [
+                "month",
+                "byMethod",
+                "incomeCents",
+                "expenseCents",
+                "netCents",
+                "transfers",
+                "runningBalanceCents",
+                "runningCashCents",
+                "runningBankCents"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "incomeCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "expenseCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingCashCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              }
+            },
+            "required": [
+              "incomeCents",
+              "expenseCents",
+              "closingBalanceCents",
+              "closingCashCents"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "kind",
+          "granularity",
+          "schoolYear",
+          "generatedAt",
+          "openingBalanceCents",
+          "openingCashCents",
+          "months",
+          "totals"
+        ],
+        "additionalProperties": false,
+        "description": "Przepływy środków per miesiąc i metoda z saldem narastającym i saldem kasy (#125)."
+      },
+      "FinancialReportSnapshot": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "kind": {
+            "const": "annual"
+          },
+          "sha256": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "Skrót kanonicznego JSON treści migawki."
+          },
+          "supersedesId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Migawka zastąpiona tą korektą."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersededById": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Korekta, która zastąpiła tę migawkę; null — migawka bieżąca."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "approvedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Zatwierdzający (inna osoba niż autor); null — niezatwierdzona."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "kind",
+          "sha256",
+          "supersedesId",
+          "supersededById",
+          "createdBy",
+          "createdAt",
+          "approvedBy",
+          "approvedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Stan migawki sprawozdania (bez treści i bez powodu korekty)."
+      },
+      "FinancialReportSnapshotApproveRequest": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "description": "Zatwierdzenie nie ma pól; trasa przyjmuje `{}` albo żądanie bez treści."
+      },
+      "FinancialReportSnapshotRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "supersedesId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bieżąca migawka roku, którą zastępuje korekta; wymagane, gdy rok ma już migawkę (409 `report_snapshot_supersedes_required`)."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Powód korekty (3-500 znaków po przycięciu), wymagany razem z `supersedesId`; bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152)."
+          }
+        },
+        "required": [
+          "schoolYearId"
+        ]
       },
       "GuardianContactRequest": {
         "type": "object",
@@ -65535,6 +69082,49 @@
         ],
         "description": "recorded = przypisana do gospodarstwa, unmatched = nieprzypisana do wyjaśnienia (nie „dłużnik”)."
       },
+      "PrintCardRow": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Gospodarstwo główne ucznia w dniu kartki (rodzeństwo ma ten sam identyfikator)."
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "className": {
+            "type": "string"
+          },
+          "structuredReference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{12}$",
+                "description": "Komunikacja strukturalna OGM-VCS (12 cyfr) rodziny w tym roku."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recordedNetCents": {
+            "$ref": "#/components/schemas/NonNegativeCents",
+            "description": "Suma netto zapisanych wpłat rodziny w roku (informacyjnie, nie należność); tylko rola finansowa z MFA."
+          }
+        },
+        "required": [
+          "householdId",
+          "firstName",
+          "lastName",
+          "className",
+          "structuredReference"
+        ],
+        "additionalProperties": false,
+        "description": "Jeden wiersz na ucznia; bez danych opiekunów."
+      },
       "PrivacyNotice": {
         "type": "object",
         "properties": {
@@ -66968,6 +70558,143 @@
           "reason"
         ]
       },
+      "RepresentativeClassSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "studentCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Uczniowie z bieżącym przypisaniem do klasy."
+          },
+          "householdCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Gospodarstwa tych uczniów (bieżące członkostwa, także opieka dzielona)."
+          },
+          "needsPaperCardCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Uczniowie bez osiągalnego kontaktu e-mail (zgody, adres, brak blokady) — do kartki papierowej."
+          },
+          "cards": {
+            "type": "object",
+            "properties": {
+              "lastPrintedAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDateTime",
+                    "description": "Ostatni wydruk kartek tej klasy (z dziennika); null — brak."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "lastPrintedAt"
+            ],
+            "additionalProperties": false
+          },
+          "nextMeeting": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "scheduledAt": {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  "location": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "scheduledAt",
+                  "location"
+                ],
+                "additionalProperties": false,
+                "description": "Najbliższe zaplanowane zebranie klasy."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "documents": {
+            "type": "object",
+            "properties": {
+              "activeCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Aktywne dokumenty klasy (bez zastąpionych i unieważnionych)."
+              },
+              "latestAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "activeCount",
+              "latestAt"
+            ],
+            "additionalProperties": false
+          },
+          "events": {
+            "type": "object",
+            "properties": {
+              "draftCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Szkice wydarzeń klasy."
+              },
+              "submittedCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Wydarzenia klasy czekające na decyzję zarządu."
+              }
+            },
+            "required": [
+              "draftCount",
+              "submittedCount"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "studentCount",
+          "householdCount",
+          "needsPaperCardCount",
+          "cards",
+          "nextMeeting",
+          "documents",
+          "events"
+        ],
+        "additionalProperties": false,
+        "description": "Podsumowanie jednej przypisanej klasy (bez sekcji wpłat, bez rankingu)."
+      },
       "Role": {
         "type": "string",
         "enum": [
@@ -68384,6 +72111,17 @@
         ],
         "additionalProperties": false,
         "description": "Kontrola salda końca roku (#169)."
+      },
+      "YearlyExportRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schoolYearId"
+        ]
       }
     },
     "x-rd-error-catalog": [

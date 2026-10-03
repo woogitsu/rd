@@ -265,14 +265,15 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-12)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-14)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
 etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
 etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; etap 9 — `events`; etap 10 — `news`; etap 11 — `login`,
-`mfa`; etap 12 — `admin`; etap 13 — `guardian-updates`, `import`, `year-close`, `privacy-notice`; razem 275 operacji)
+`mfa`; etap 12 — `admin`; etap 13 — `audit-history`, `audit-reviews`, `financial-reports`, `exports`, `print`, `board`,
+`representative`; etap 14 — `guardian-updates`, `import`, `year-close`, `privacy-notice`; razem 297 operacji)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
@@ -714,7 +715,53 @@ wniosku ma `requestBody.required: false`, schematy list, wniosków, kont, przydz
 - pominięcie każdego wymaganego pola ciała → `400` (pusta mapa klas → `422 class_map_required`) i każda odpowiedź sukcesu ze
   schematu (oba formaty eksportu) zwalidowana na prawdziwej odpowiedzi.
 
-Prawdziwe odpowiedzi etapu 13 (moduły `guardian-updates`, `import`, `privacy-notice`, `year-close`, 23 operacje) sprawdza
+Prawdziwe odpowiedzi etapu 13 (moduły `audit-history`, `audit-reviews`, `financial-reports`, `exports`, `print`, `board`,
+`representative` — 22 operacje) sprawdza `tests/openapi-contract-reports.test.js` (ten sam `createContractClient`, PGlite,
+dane syntetyczne `@example.invalid`, imiona syntetyczne). Kampania e-mail powstaje tylko jako szkic (obiekt historii), nic
+nie trafia do kolejki; pułapka sieci kończy się zerem. Osobny test sprawdza w specyfikacji, że `Idempotency-Key` mają tylko
+zapisy ścieżki KR, żadna operacja etapu nie ma nagłówka `Idempotency-Replayed`, ciało opcjonalne mają zamknięcie wątku KR i
+zatwierdzenie migawki, `mfa_stale` — eksport roczny i zatwierdzenie migawki, typy treści plików (lista klasy JSON/CSV/XLSX,
+sprawozdanie i migawka JSON/HTML, eksport zarządu CSV/XLSX, kartki wyłącznie JSON), kartki nie mają pól opiekunów, a próbki
+odmów obejmują każdą operację. Scenariusz:
+
+- **granice ról na każdej z 22 operacji**: brak sesji `401`; `403 forbidden` dla ról bez dostępu (admin, zarząd, skarbnik,
+  Komisja Rewizyjna, dyrekcja, przedstawiciel, przydział zarządu do klasy, konto bez przydziału — zależnie od trasy;
+  przedstawiciel 1B na kartkach i liście klasy 1A); bramka routera `mfa_enrollment_required` i `mfa_required`; obcy `Origin`
+  na każdym zapisie `invalid_origin`; odmowy niczego nie zapisują (uwagi KR, przebiegi eksportu);
+- **historia obiektu**: wpłata, wpis księgi, uzgodnienie i kampania (zarząd i skarbnik), bez adresów e-mail, rok bez
+  przydziału i obiekt nieistniejący — to samo `404 not_found`, zły identyfikator `400`, ślad `audit.viewed` przy każdym odczycie;
+- **ścieżka kontroli KR**: pytanie, ustalenie i pytanie o rok; ponowienie tym samym kluczem (`200`, `replayed: true`, bez
+  nagłówka), `idempotency_conflict`; odpowiedź skarbnika z ponowieniem, **cztery oczy** (osoba w KR i jako skarbnik nie
+  odpowiada na własne pytanie), zamknięcie bez treści z ponowieniem, drugie zamknięcie i odpowiedź po zamknięciu
+  `audit_review_closed`, wniosek końcowy z ponowieniem (obowiązuje najnowszy); cel z innego roku i nieistniejący
+  `audit_review_target_not_found`, `invalid_request`, `invalid_audit_review_body`, `422 personal_data_forbidden`, brak
+  klucza, `invalid_json`, `415`, `413`, `invalid_school_year_id`, `school_year_not_found`, MFA (`mfa_enrollment_required`),
+  rok spoza przydziału; lista z licznikami dla KR, zarządu i skarbnika;
+- **sprawozdanie i przepływy**: zarząd, skarbnik i dyrekcja (JSON, HTML z CSP), bez opisów wpisów; brak roku, rok
+  nieistniejący, rok spoza przydziału, dyrekcja bez MFA, zły `format`/`granularity`;
+- **migawki**: utworzenie i ponowienie tej samej treści, zatwierdzenie (`mfa_stale`, `201`, ponowienie `200`), korekta po
+  zmianie księgi (`report_snapshot_supersedes_required`, `invalid_reason`, `422`), autor nie zatwierdza
+  (`four_eyes_required`), zastąpiona migawka (`report_snapshot_superseded` przy korekcie i zatwierdzeniu), lista z łańcuchem
+  korekt, odczyt JSON (bez `generatedAt`) i HTML ze skrótem, migawka innego roku `403`, nieistniejąca `404`, błędy ciała;
+- **kartki**: brak opublikowanej informacji `409 privacy_notice_missing`; zakres szeroki z kwotami, danymi do wpłaty i
+  komunikacją strukturalną, rodzeństwo z innej klasy przy `classId`, rodzina z ograniczeniem przetwarzania pominięta
+  (`skippedRestricted` liczony w zakresie klasy), przedstawiciel bez kwot i tylko własna klasa (`class_required`, cudza klasa i
+  inny rok `403`), klasa innego roku `404 class_not_found`, rok nieistniejący, bez adresów opiekunów;
+- **lista klasy i eksport roczny**: JSON (skrót w nagłówku, e-mail tylko przy zgodzie, bez identyfikatorów rodzin), CSV,
+  XLSX; zarząd, admin, zarząd z przydziałem klasy; cudza klasa, klasa roku bez przydziału, przedstawiciel bez MFA
+  (`mfa_enrollment_required`) i z czynnikiem po haśle (`mfa_required`), `class_not_found`, `invalid_class`, `invalid_format`;
+  eksport roczny (manifest = pliki paczki, skrót w nagłówku), `mfa_stale`, rok spoza przydziału, `school_year_not_found`,
+  `invalid_school_year`, `invalid_json`, `415`, `413`; liczba przebiegów w `export_runs`;
+- **pulpity**: zarząd (zakres szkoły, odsetek `null` poniżej 5 gospodarstw, wpłaty nieprzypisane), zarząd z przydziałem klasy
+  (tylko klasa, bez kolumny wpłat — także w CSV), admin; brak roku, rok poza przydziałem i nieistniejący `404`; XLSX;
+  przedstawiciel — tylko przypisana klasa z datą ostatniego wydruku i najbliższym zebraniem, przydział innego roku `[]`;
+- **zamknięty rok** (osobne bazy, zamknięcie trasami listy kontrolnej): zapisy KR i zatwierdzenie migawki `409
+  school_year_closed`, odczyt zostaje, migawka o tej samej treści — ponowienie `200`, pierwsza migawka zamkniętego roku `409`,
+  eksport archiwum przez zarząd roku następnego (`year_close.archive_read`);
+- pominięcie każdego wymaganego pola ciała → `400` i każda odpowiedź sukcesu ze schematu (wszystkie formaty) zwalidowana na
+  prawdziwej odpowiedzi.
+
+Prawdziwe odpowiedzi etapu 14 (moduły `guardian-updates`, `import`, `privacy-notice`, `year-close`, 23 operacje) sprawdza
 `tests/openapi-contract-guardian-year.test.js` (ten sam `createContractClient`, PGlite, osobna baza na moduł, dane syntetyczne
 `@example.invalid`, imiona syntetyczne). Kod weryfikacyjny wysyła worker z transportem-atrapą wyłącznie na nowy adres z wniosku;
 pułapka sieci kończy się zerem. Osobny test sprawdza w specyfikacji, że klucz idempotencji ma tylko zapis importu (wymagany),
@@ -764,7 +811,7 @@ zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, us
 `tests/openapi-contract-reconciliation.test.js`, `tests/openapi-contract-email.test.js`,
 `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
 `tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js`,
-`tests/openapi-contract-admin.test.js` i `tests/openapi-contract-guardian-year.test.js`).
+`tests/openapi-contract-admin.test.js`, `tests/openapi-contract-reports.test.js` i `tests/openapi-contract-guardian-year.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 
