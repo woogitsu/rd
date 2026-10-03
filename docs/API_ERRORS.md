@@ -204,6 +204,7 @@ przy przydziale, nie błąd.
 | `import_has_conflicts` | Import zawiera konflikty lub błędy. Popraw plik albo zaznacz pominięcie tych wierszy. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `inconsistent_matches` | Dopasowania są niespójne. Odśwież widok. | Zależy od kontekstu (patrz moduł trasy). |
 | `invalid_access_kind` | Wybierz rodzaj odczytu z listy. | Nie — popraw dane żądania. |
+| `invalid_actor_id` | Niepoprawny identyfikator osoby wykonującej działanie (filtr dziennika). | Nie — popraw dane żądania. |
 | `invalid_agenda_order` | Nowa kolejność musi zawierać dokładnie wszystkie niewycofane punkty porządku obrad, każdy raz. Odśwież widok i spróbuj ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `invalid_allocation` | Niepoprawny podział wpisu na wydarzenia lub klasy. | Nie — popraw dane żądania. |
 | `invalid_alt_text` | Podaj opis zdjęcia (tekst alternatywny). | Nie — popraw dane żądania. |
@@ -220,6 +221,7 @@ przy przydziale, nie błąd.
 | `invalid_cents_value` | Niepoprawna kwota w EUR. | Nie — popraw dane żądania. |
 | `invalid_checklist_item` | Niepoprawny punkt listy kontrolnej. | Nie — popraw dane żądania. |
 | `invalid_class` | Niepoprawny identyfikator klasy. | Nie — popraw dane żądania. |
+| `invalid_class_id` | Niepoprawny identyfikator klasy (przydział, zaproszenie albo filtr listy). | Nie — popraw dane żądania. |
 | `invalid_class_map` | Mapa klas jest niepoprawna (identyfikatory klas, nazwy do 60 znaków, najwyżej 200 wpisów). | Nie — popraw dane żądania. |
 | `invalid_code` | Kod jest nieprawidłowy. Sprawdź aplikację i wpisz aktualny kod. | Nie — popraw dane żądania. |
 | `invalid_columns` | Niepoprawne kolumny importu. | Nie — popraw dane żądania. |
@@ -264,6 +266,7 @@ przy przydziale, nie błąd.
 | `invalid_explicit_license` | Niepoprawna licencja zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_format` | Wybierz format eksportu z listy (CSV albo JSON). | Nie — popraw dane żądania. |
 | `invalid_from` | Podaj poprawną datę początkową (RRRR-MM-DD). | Nie — popraw dane. |
+| `invalid_guardian_id` | Niepoprawny identyfikator opiekuna. | Nie — popraw dane żądania. |
 | `invalid_household_id` | Niepoprawny identyfikator gospodarstwa. | Nie — popraw dane żądania. |
 | `invalid_iban` | Numer rachunku (IBAN) jest niepoprawny — sprawdź sumę kontrolną. | Nie — popraw dane żądania. |
 | `invalid_id` | Niepoprawny identyfikator. | Nie — popraw dane żądania. |
@@ -344,6 +347,7 @@ przy przydziale, nie błąd.
 | `invalid_statement_file` | Nie udało się odczytać pliku wyciągu. Sprawdź format pliku. | Nie — popraw dane żądania. |
 | `invalid_statement_line` | Niepoprawna pozycja wyciągu. | Nie — popraw dane żądania. |
 | `invalid_status` | Niepoprawny status. | Nie — popraw dane żądania. |
+| `invalid_student_id` | Niepoprawny identyfikator ucznia. | Nie — popraw dane żądania. |
 | `invalid_subject` | Temat wiadomości musi mieć od 3 do 200 znaków w jednej linii. | Nie — popraw dane żądania. |
 | `invalid_taken_on` | Niepoprawna data wykonania zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_title` | Tytuł musi mieć od 3 do 200 znaków. | Nie — popraw dane żądania. |

@@ -1,4 +1,4 @@
-// Kontrakt API (#160, etapy 2-10): schematy ciał żądań i odpowiedzi w docs/openapi.json
+// Kontrakt API (#160, etapy 2-12): schematy ciał żądań i odpowiedzi w docs/openapi.json
 // (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
 // (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js;
 // preliminarz, kasa i centra kosztów (ledger-budget, ledger-cash, ledger-cost-centers)
@@ -6,7 +6,8 @@
 // w tests/openapi-contract-reconciliation.test.js; kampanie e-mail (email) w
 // tests/openapi-contract-email.test.js; zebrania (meetings) w tests/openapi-contract-meetings.test.js; dokumenty
 // (documents) w tests/openapi-contract-documents.test.js; wydarzenia (events) w tests/openapi-contract-events.test.js;
-// aktualności i galeria (news) w tests/openapi-contract-news.test.js.
+// aktualności i galeria (news) w tests/openapi-contract-news.test.js; administracja kont i ról (admin)
+// w tests/openapi-contract-admin.test.js.
 // Testy rejestru poniżej obejmują wszystkie pokryte moduły.
 //
 //  * rejestr pokrycia: każda trasa pokrytego modułu MA schemat; moduły bez schematów
@@ -36,7 +37,7 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 14;
+const MAX_UNCOVERED_MODULES = 13;
 // Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
 const POST_WITHOUT_BODY = new Set([
   'POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout',
@@ -49,6 +50,14 @@ const POST_WITHOUT_BODY = new Set([
   'POST /api/events/{eventId}/tasks/{taskId}/signups/{signupId}/withdraw',
   // Aktualności (#160 etap 10): wycofanie zgody na wizerunek wynika z odwołania w ścieżce, trasa nie czyta ciała.
   'POST /api/news-photo-consents/{consentDocumentRef}/withdraw',
+  // Administracja (#160 etap 12): zmiana wynika ze ścieżki (konto, wniosek, przydział, zaproszenie, żądanie osoby); trasy
+  // nie czytają ciała (eksport danych rodziny wybiera format parametrem zapytania).
+  'POST /api/admin/users/{userId}/disable', 'POST /api/admin/users/{userId}/enable', 'POST /api/admin/users/{userId}/revoke-sessions',
+  'POST /api/admin/account-requests/{requestId}/approve', 'POST /api/admin/account-requests/{requestId}/reject',
+  'POST /api/admin/grant-requests/{requestId}/approve', 'POST /api/admin/grants/{grantId}/revoke',
+  'POST /api/admin/invitations/{invitationId}/revoke', 'POST /api/admin/invitations/{invitationId}/reissue',
+  'POST /api/admin/data-requests/{requestId}/export', 'POST /api/admin/data-requests/{requestId}/restrict',
+  'POST /api/admin/data-requests/{requestId}/lift-restriction',
 ]);
 
 // Pliki pomocnicze trasy (ścieżki względem src/pg/), których kody błędów trasa zwraca bez zmiany:
@@ -57,8 +66,14 @@ const POST_WITHOUT_BODY = new Set([
 // moduł domenowy (src/pg/routes/meetings.js tylko go podpina; kody reguł bazy w DATABASE_CONFLICTS) i kursor list;
 // documents — kontrola struktury pliku (validateStructure w src/documents.js: document_active_content,
 // document_malformed) i kursor listy; events — moduł domenowy (src/pg/routes/events.js tylko go podpina) i kursor
-// publicznej listy; news — moduł domenowy (src/pg/routes/news.js tylko go podpina; kody reguł bazy w DB_ERRORS) i kursor list.
+// publicznej listy; news — moduł domenowy (src/pg/routes/news.js tylko go podpina; kody reguł bazy w DB_ERRORS) i kursor list;
+// admin — moduły wniosków (grant-requests.js, account-recovery.js), partii zaproszeń, promocji, ograniczenia przetwarzania,
+// eksportu danych rodziny, anonimizacji, resetu hasła/MFA (login.js, LoginError) i kursor list.
 const ROUTE_HELPER_SOURCES = {
+  admin: [
+    'account-recovery.js', 'anonymization.js', 'family-export.js', 'grant-requests.js', 'invitation-batch.js', 'list-cursor.js', 'login.js',
+    'processing-restrictions.js', 'promotions.js',
+  ],
   documents: ['../documents.js', 'list-cursor.js'],
   email: ['../email/content.js', '../email/brevo.js', 'list-cursor.js'],
   events: ['events.js', 'list-cursor.js'],
@@ -181,7 +196,7 @@ test('rejestr: kody błędów w schematach są w katalogu docs/API_ERRORS.md i w
   for (const module of SCHEMA_MODULES) {
     // Moduły z kodami poza plikiem trasy (ROUTE_HELPER_SOURCES: reconciliation — parsery CODA/CAMT.053, email — treść i Brevo,
     // meetings, events i news — moduły domenowe src/pg/meetings.js, src/pg/events.js i src/pg/news.js, documents — kontrola struktury
-    // pliku w src/documents.js).
+    // pliku w src/documents.js, admin — moduły wniosków, partii zaproszeń, promocji, RODO i resetu kont).
     const helpers = await Promise.all((ROUTE_HELPER_SOURCES[module.name] ?? [])
       .map((file) => readFile(new URL(`../src/pg/${file}`, import.meta.url), 'utf8')));
     const source = [await readFile(new URL(`../src/pg/routes/${module.name}.js`, import.meta.url), 'utf8'), ...helpers, ...shared].join('\n');

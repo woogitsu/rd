@@ -32,7 +32,9 @@ function serverErrorCodes() {
   // i count(input.identifiableAdults, 'invalid_identifiable_adults').
   // Szósta reguła (#160 etap 10): kod jako drugi element trójki mapowania błędu bazy `['komunikat', 'kod', status]`
   // (DB_ERRORS w src/pg/news.js, np. photo_rights_unverified; tak samo listy mapowań year-close i KR).
-  const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]|\[\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]|\b(?:optionalText|text|requireId|reference|count)\([^()]*,\s*['"]([a-z][a-z0-9_]*)['"]\s*\)|\[\s*['"][a-z][a-z0-9_]*['"]\s*,\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]/g;
+  // Siódma reguła (#160 etap 12): kod jako drugi argument `optionalId(…, 'kod')` w module administracji — pierwszy
+  // argument może zawierać jedno wywołanie, np. optionalId(params.get('actorId'), 'invalid_actor_id').
+  const pattern = /new (?!(?:Error|TypeError|RangeError|EmailTransportError)\b)[A-Z][A-Za-z]*\(\s*(?:\d{3}\s*,\s*)?['"]([a-z][a-z0-9_]*)['"]|\b(?:error|code)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]|\[\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]|\b(?:optionalText|text|requireId|reference|count)\([^()]*,\s*['"]([a-z][a-z0-9_]*)['"]\s*\)|\[\s*['"][a-z][a-z0-9_]*['"]\s*,\s*['"]([a-z][a-z0-9_]*)['"]\s*,\s*[1-5]\d\d\s*\]|\boptionalId\((?:[^()]|\([^()]*\))*?,\s*['"]([a-z][a-z0-9_]*)['"]\s*\)/g;
   // Kody zwracane przez funkcje pomocnicze (`return 'kod'`), których wzorce nie widzą: bramka MFA routera,
   // krok w górę MFA (freshMfaForbiddenCode, src/pg/authorization.js) i odmowa adresu wysyłki testowej
   // (previewRecipientRefusal, src/email/brevo.js; trasa zwraca go jako 403, #160 etap 6).
@@ -42,7 +44,7 @@ function serverErrorCodes() {
   const conflictList = /\bDATABASE_CONFLICTS\s*=\s*new Set\(\[([^\]]*)\]\)/g;
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
-    for (const match of text.matchAll(pattern)) codes.add(match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5]);
+    for (const match of text.matchAll(pattern)) codes.add(match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? match[6]);
     for (const list of text.matchAll(conflictList)) for (const item of list[1].matchAll(/['"]([a-z][a-z0-9_]*)['"]/g)) codes.add(item[1]);
   }
   return [...codes].sort();

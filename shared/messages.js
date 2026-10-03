@@ -175,6 +175,7 @@ export const MESSAGES = Object.freeze({
   invalid_next_school_year: "Niepoprawny następny rok szkolny.",
   next_school_year_not_found: "Nie znaleziono następnego roku szkolnego.",
   invalid_class: "Niepoprawny identyfikator klasy.",
+  invalid_class_id: "Niepoprawny identyfikator klasy (przydział, zaproszenie albo filtr listy).",
   class_required: "Wskaż klasę.",
   class_not_found: "Nie znaleziono klasy albo nie masz do niej dostępu.",
   class_not_in_school_year: "Klasa nie należy do wskazanego roku szkolnego.",
@@ -264,6 +265,9 @@ export const MESSAGES = Object.freeze({
   invalid_dry_run: "Pole dryRun musi być wartością logiczną.",
   invalid_plan_sha256: "Podaj skrót planu (planSha256) z podglądu.",
   invalid_household_id: "Niepoprawny identyfikator gospodarstwa.",
+  invalid_guardian_id: "Niepoprawny identyfikator opiekuna.",
+  invalid_student_id: "Niepoprawny identyfikator ucznia.",
+  invalid_actor_id: "Niepoprawny identyfikator osoby wykonującej działanie (filtr dziennika).",
 
   // --- Wpłaty, księga, uzgodnienia --------------------------------------------------------
   invalid_amount: "Niepoprawna kwota. Podaj kwotę w EUR większą od zera, np. 25,00.",
