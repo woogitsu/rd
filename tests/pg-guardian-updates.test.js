@@ -353,3 +353,165 @@ describe('wniosek rodzica o aktualizację kontaktu (#140)', () => {
     await db.close();
   });
 });
+
+// #748: trasy zarządu tego modułu wymagają MFA na samej trasie, nie tylko przez
+// bramkę routera (ta działa wyłącznie dla ról z MFA_REQUIRED_ROLES). Pusty
+// MFA_REQUIRED_ROLES wyłącza regułę 2 bramki — wtedy odmowę musi dać trasa.
+// Aktorzy bez zapisanego czynnika, więc bramka (reguła 1) ich nie zatrzymuje.
+describe('trasy zarządu: MFA na trasie niezależnie od MFA_REQUIRED_ROLES (#748)', () => {
+  const NO_GATE = { MFA_REQUIRED_ROLES: '' };
+  const TEMPLATE = {
+    subject: 'Potwierdzenie adresu e-mail dla Rady Rodziców',
+    bodyText: 'Twój kod potwierdzający nowy adres to {kod}. Kod jest ważny {waznosc} godzin.',
+  };
+
+  async function setupNoGate() {
+    const db = await createTestDb();
+    await seedSchoolYear(db, Y);
+    const env = { db, ...NO_GATE };
+    await seedGuardian(db, { id: 'g-m1', householdId: 'h-m1', studentId: 's-m1', classId: 'c-1a' });
+    await seedGuardian(db, { id: 'g-m2', householdId: 'h-m2', studentId: 's-m2', classId: 'c-1b' });
+    const cookies = {
+      adminMfa: await seedUserSession(db, { userId: 'u-admin-mfa', roles: [{ role: 'admin' }], mfa: true }),
+      boardMfa: await seedUserSession(db, { userId: 'u-board-mfa', roles: [{ role: 'board', schoolYearId: Y }], mfa: true }),
+      boardAuthor: await seedUserSession(db, { userId: 'u-board-author', roles: [{ role: 'board', schoolYearId: Y }], mfa: true }),
+      adminNoMfa: await seedUserSession(db, { userId: 'u-admin-nomfa', roles: [{ role: 'admin' }] }),
+      boardNoMfa: await seedUserSession(db, { userId: 'u-board-nomfa', roles: [{ role: 'board', schoolYearId: Y }] }),
+    };
+    // Dane do decyzji: dwa oczekujące wnioski (zmiana adresu) i szkic szablonu innego autora.
+    const requestIds = [];
+    for (const [guardianId, email] of [['g-m1', 'nowy-m1@example.invalid'], ['g-m2', 'nowy-m2@example.invalid']]) {
+      const link = await call(env, '/api/admin/guardian-links', { cookie: cookies.adminMfa, body: { guardianId } });
+      assert.equal(link.status, 201, JSON.stringify(link.data));
+      const sent = await call(env, '/api/public/guardian-update', { body: { token: link.data.token, email } });
+      assert.equal(sent.status, 201, JSON.stringify(sent.data));
+      requestIds.push(sent.data.requestId);
+    }
+    const draft = await call(env, '/api/admin/guardian-verify-templates', { cookie: cookies.boardAuthor, body: TEMPLATE });
+    assert.equal(draft.status, 201, JSON.stringify(draft.data));
+    return { db, env, cookies, requestIds, templateId: draft.data.template.id };
+  }
+
+  function boardRoutes({ requestIds, templateId }) {
+    return [
+      ['POST', '/api/admin/guardian-links', { guardianId: 'g-m1' }],
+      ['GET', '/api/admin/guardian-update-requests', undefined],
+      ['GET', '/api/admin/guardian-update-requests?status=approved', undefined],
+      ['POST', `/api/admin/guardian-update-requests/${requestIds[0]}/approve`, {}],
+      ['POST', `/api/admin/guardian-update-requests/${requestIds[1]}/reject`, {}],
+      ['GET', '/api/admin/guardian-verify-templates', undefined],
+      ['POST', '/api/admin/guardian-verify-templates', TEMPLATE],
+      ['POST', `/api/admin/guardian-verify-templates/${templateId}/approve`, {}],
+    ];
+  }
+
+  // Stan danych biznesowych modułu (bez śladu odmowy access.denied i jego licznika okna).
+  async function snapshot(db) {
+    const all = async (sql) => (await db.query(sql)).rows;
+    return {
+      links: await all('SELECT id, used_at FROM guardian_update_links ORDER BY id'),
+      requests: await all('SELECT id, status, decided_by FROM guardian_update_requests ORDER BY id'),
+      verifications: await all('SELECT id, state FROM guardian_update_verifications ORDER BY id'),
+      guardians: await all('SELECT id, email, contact_allowed FROM guardians ORDER BY id'),
+      contactChanges: await all('SELECT count(*)::int AS n FROM guardian_contact_changes'),
+      templates: await all('SELECT id, status, approved_by FROM guardian_verify_templates ORDER BY id'),
+      audit: await all("SELECT id, action FROM audit_events WHERE action <> 'access.denied' ORDER BY id"),
+    };
+  }
+
+  test('pusty MFA_REQUIRED_ROLES: admin i zarząd bez MFA dostają 403 forbidden na każdej trasie zarządu; dane bez zmian, ślad access.denied', async () => {
+    const ctx = await setupNoGate();
+    const before = await snapshot(ctx.db);
+    for (const [actor, cookie] of [['u-board-nomfa', ctx.cookies.boardNoMfa], ['u-admin-nomfa', ctx.cookies.adminNoMfa]]) {
+      for (const [method, path, body] of boardRoutes(ctx)) {
+        const result = await call(ctx.env, path, { cookie, method, body });
+        assert.deepEqual(result, { status: 403, data: { error: 'forbidden' } }, `${actor} ${method} ${path}`);
+      }
+      const { rows } = await ctx.db.query(
+        "SELECT count(*)::int AS n FROM audit_events WHERE action = 'access.denied' AND actor_id = $1", [actor],
+      );
+      assert.ok(rows[0].n >= 6, `odmowy ${actor} zostawiają ślad access.denied (${rows[0].n})`);
+    }
+    assert.deepEqual(await snapshot(ctx.db), before, 'odmowa bez MFA nie zmienia danych modułu ani audytu biznesowego');
+    const { rows: denied } = await ctx.db.query(
+      `SELECT metadata_json FROM audit_events
+        WHERE action = 'access.denied' AND actor_id = 'u-board-nomfa' AND entity_id = '/api/admin/guardian-links'`,
+    );
+    assert.equal(denied.length, 1);
+    const metadata = typeof denied[0].metadata_json === 'string' ? JSON.parse(denied[0].metadata_json) : denied[0].metadata_json;
+    assert.equal(metadata.requiredRole, 'admin,board');
+    await ctx.db.close();
+  });
+
+  test('pusty MFA_REQUIRED_ROLES: zarząd z MFA wykonuje te same trasy (kontrola pozytywna odmowy)', async () => {
+    const ctx = await setupNoGate();
+    const expected = [201, 200, 200, 200, 200, 200, 201, 200];
+    for (const [index, [method, path, body]] of boardRoutes(ctx).entries()) {
+      const result = await call(ctx.env, path, { cookie: ctx.cookies.boardMfa, method, body });
+      assert.equal(result.status, expected[index], `${method} ${path}: ${JSON.stringify(result.data)}`);
+    }
+    const { rows } = await ctx.db.query('SELECT id, email FROM guardians WHERE id IN ($1, $2) ORDER BY id', ['g-m1', 'g-m2']);
+    assert.deepEqual(rows, [
+      { id: 'g-m1', email: 'nowy-m1@example.invalid' },
+      { id: 'g-m2', email: 'stary@example.invalid' },
+    ], 'zatwierdzenie zmienia adres, odrzucenie — nie');
+    const templates = await ctx.db.query("SELECT count(*)::int AS n FROM guardian_verify_templates WHERE status = 'approved'");
+    assert.equal(templates.rows[0].n, 1);
+    assert.equal((await call(ctx.env, '/api/admin/guardian-update-requests', { cookie: ctx.cookies.adminMfa })).status, 200);
+    await ctx.db.close();
+  });
+
+  test('pusty MFA_REQUIRED_ROLES: trasy publiczne (właściciel tokenu) działają bez sesji i bez MFA', async () => {
+    const ctx = await setupNoGate();
+    const link = await call(ctx.env, '/api/admin/guardian-links', { cookie: ctx.cookies.boardMfa, body: { guardianId: 'g-m1' } });
+    assert.equal(link.status, 201);
+    const preview = await call(ctx.env, `/api/public/guardian-update?token=${link.data.token}`);
+    assert.deepEqual(preview, { status: 200, data: { guardianFirstName: 'Anna', classNames: ['c-1a'] } });
+    const submitted = await call(ctx.env, '/api/public/guardian-update', { body: { token: link.data.token, contactAllowed: false } });
+    assert.equal(submitted.status, 201);
+    assert.equal(submitted.data.status, 'pending');
+    // Potwierdzenie kodu odpowiada własnym błędem (nie 401/403); pełny przebieg z kodem
+    // przy pustym MFA_REQUIRED_ROLES — tests/pg-guardian-update-verify.test.js.
+    const verify = await call(ctx.env, '/api/public/guardian-update/verify', { body: { token: link.data.token, code: '00000000' } });
+    assert.deepEqual(verify, { status: 400, data: { error: 'invalid_or_expired_code' } });
+    await ctx.db.close();
+  });
+
+  test('błędne kodowanie procentowe identyfikatora: 400 invalid_request bez logu bug; GET na ścieżce decyzji nic nie zmienia', async () => {
+    const ctx = await setupNoGate();
+    const before = await snapshot(ctx.db);
+    const logged = [];
+    const original = console.error;
+    console.error = (...args) => { logged.push(args.join(' ')); };
+    const results = [];
+    try {
+      for (const path of [
+        '/api/admin/guardian-update-requests/%E0%A4%A/approve',
+        '/api/admin/guardian-update-requests/%E0%A4%A/reject',
+        '/api/admin/guardian-update-requests/%ZZ/reject',
+        '/api/admin/guardian-verify-templates/%E0%A4%A/approve',
+      ]) {
+        for (const cookie of [undefined, ctx.cookies.boardMfa, ctx.cookies.boardNoMfa]) {
+          results.push([path, Boolean(cookie), await call(ctx.env, path, { cookie, method: 'POST', body: {} })]);
+        }
+      }
+      // Poprawnie zakodowany identyfikator spoza wzorca — ta sama odpowiedź (identyfikator sprawdzany przed sesją).
+      results.push(['x%20y', false, await call(ctx.env, '/api/admin/guardian-update-requests/x%20y/approve', { method: 'POST', body: {} })]);
+    } finally {
+      console.error = original;
+    }
+    assert.equal(results.length, 13);
+    for (const [path, withCookie, result] of results) {
+      assert.deepEqual(result, { status: 400, data: { error: 'invalid_request' } }, `${path} (sesja: ${withCookie})`);
+    }
+    assert.deepEqual(logged.filter((line) => line.includes('api_route_error') || line.includes('"bug"')), [], 'bez logu błędu trasy');
+
+    // Decyzja wyłącznie metodą POST: GET z sesją zarządu (bez kontroli Origin) nie rozstrzyga wniosku.
+    for (const action of ['approve', 'reject']) {
+      const viaGet = await call(ctx.env, `/api/admin/guardian-update-requests/${ctx.requestIds[0]}/${action}`, { cookie: ctx.cookies.boardMfa });
+      assert.equal(viaGet.status, 404, `GET …/${action}`);
+    }
+    assert.deepEqual(await snapshot(ctx.db), before, 'żadne z tych żądań nie zmienia danych');
+    await ctx.db.close();
+  });
+});

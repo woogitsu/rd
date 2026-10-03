@@ -226,6 +226,27 @@ odmawia pod `node --test`), a przeglądarkowy spec podstawia odpowiedzi API prze
   brak progów przy wyłączonej fladze, brak adresów i kodów w odpowiedziach, ponowienie zadania.
   Liczby z `count(*)` są rzutowane `::int` w zapytaniach (w `pg` bez rzutowania wracają jako tekst).
 
+## Prośby o aktualizację kontaktu: MFA na trasie i błędne kodowanie identyfikatora (#748)
+
+Testy na PGlite z danymi syntetycznymi (`@example.invalid`), bez sieci. Środowisko ma `MFA_REQUIRED_ROLES=''`,
+więc bramka routera nie zatrzymuje admina ani zarządu bez czynnika — odmowę musi dać sama trasa.
+
+- `tests/pg-guardian-updates.test.js`, opis „trasy zarządu: MFA na trasie niezależnie od MFA_REQUIRED_ROLES”:
+  - admin i zarząd bez MFA dostają `403 forbidden` na każdej trasie zarządu modułu (link, kolejka, zatwierdzenie,
+    odrzucenie, szablony: lista, szkic, zatwierdzenie). Migawka tabel modułu, `guardians`, historii kontaktu
+    i audytu (bez `access.denied`) jest bez zmian. Odmowa zostawia ślad `access.denied` z `requiredRole`.
+  - kontrola pozytywna: zarząd z MFA wykonuje te same trasy, zatwierdzenie zmienia adres, odrzucenie nie.
+  - podgląd i formularz publiczny działają bez sesji i bez MFA.
+  - `%E0%A4%A` i `%ZZ` w `approve`/`reject` oraz w zatwierdzeniu szablonu, bez sesji i z sesją, dają
+    `400 invalid_request`. Przechwycony `console.error` nie ma `api_route_error` ani klasy `bug`. `GET` na ścieżce
+    decyzji daje 404 i nie rozstrzyga wniosku.
+- `tests/pg-guardian-update-verify.test.js`, test „#748: pusty MFA_REQUIRED_ROLES”: pełne potwierdzenie kodu przez
+  właściciela tokenu (worker z transportem-atrapą) działa bez sesji. Zarząd bez MFA dostaje 403 na kolejce
+  i szablonach.
+
+Kontrola pozytywna: na kodzie sprzed poprawki zarząd bez MFA dostaje `201` z tokenem przy wydaniu linku,
+a błędne kodowanie w `approve` daje `503 service_unavailable`. Oba testy wtedy nie przechodzą.
+
 ## Jakość asercji i izolacji (#214)
 
 `tests/test-quality-lint.test.js` przegląda wszystkie pliki `tests/*.test.js`.

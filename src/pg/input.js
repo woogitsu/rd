@@ -88,7 +88,8 @@ const DEFAULT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
  * @param {string} raw
  * @param {object} [options]
  * @param {RegExp} [options.pattern]
- * @param {() => ApiError} [options.notFound] błąd zwracany zamiast domyślnego 404 not_found
+ * @param {() => Error} [options.notFound] błąd zwracany zamiast domyślnego 404 not_found (np. ApiError
+ *   albo klasa błędu modułu trasy z własnym kodem 400)
  * @returns {string}
  */
 export function decodePathId(raw, { pattern = DEFAULT_ID_PATTERN, notFound } = {}) {
