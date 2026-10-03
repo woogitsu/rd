@@ -514,6 +514,40 @@ przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
 z 6 shardów).
 
+## Anonimizacja: odtworzenie i ponowne zastosowanie (#91)
+
+Trzy pliki, wyłącznie dane syntetyczne (znaczniki `MRK-*`, domeny `.invalid`):
+
+- `tests/pg-anonymization.test.js` — przebieg z trasy: rodzeństwo i opieka
+  dzielona, sumy netto, paczka roczna bez zmian liczb, wpłaty częściowe i korekty,
+  podwójne kliknięcie, odmowa bez polityki, granice ról, furtka w strażnikach.
+- `tests/pg-anonymization-reapply.test.js` — „odtworzenie eksportu sprzed
+  anonimizacji + ponowne zastosowanie przebiegów”: źródło → paczka roczna PRZED
+  przebiegami → dwa przebiegi (opieka dzielona) → dziennik do pliku poza bazą →
+  `restoreBundle` do pustej bazy (dane osobowe wracają, `anonymization_runs` puste)
+  → `scripts/reapply-anonymization.js`. Sprawdza: dane osobowe zastąpione i stan
+  równy źródłu po przebiegach; sumy wpłat (`household_payment_totals`), korekty,
+  zwroty, księga, relacje i sumy `*_cents` paczki rocznej bez zmian; `--dry-run`
+  niczego nie zmienia i zostawia tylko ślad podglądu; idempotencja (ponowienie,
+  równoległe uruchomienie, kopia już zawierająca pierwszy przebieg, gospodarstwo
+  nieobecne albo już zanonimizowane); kolejność dla osoby wspólnej; wiele plików
+  dziennika; jedna transakcja (wstrzyknięty błąd wycofuje całość); odmowy: brak
+  `--actor`, aktor bez roli `admin` (brak konta, inna rola, zablokowany, cofnięty
+  przydział), blokada środowiska bez `--allow-production`, plik uszkodzony,
+  edytowany albo z danymi osobowymi (np. e-mail zamiast identyfikatora
+  gospodarstwa); strażniki niezmienności po ponowieniu; dziennik i audyt bez danych
+  osobowych; eksport dziennika po ponowieniu równoważny pierwotnemu.
+- `tests/pg-anonymization-proposals.test.js` — raport „propozycja do
+  zatwierdzenia”: „brak polityk” przy pustym rejestrze, polityki niezatwierdzone i
+  opisowe, kandydaci przy komplecie polityk, gospodarstwa z nieupłyniętym okresem poza listą,
+  transakcja `READ ONLY` bez żadnego zapisu, zgodność skrótu planu z podglądem trasy,
+  brak ścieżki wykonania i brak crona w plikach `railway*.json`.
+
+Na prawdziwym PostgreSQL (odtworzenie paczki wymaga uprawnień
+superużytkownika, `session_replication_role`):
+`RD_TEST_PG_BACKEND=real node scripts/test-pg-real.js tests/pg-anonymization-reapply.test.js`
+(analogicznie `tests/pg-anonymization-proposals.test.js`). Nie `--all`.
+
 ## Pokrycie dziennikiem zdarzeń (#184)
 
 `AGENTS.md` wymaga trwałego dziennika z aktorem, czasem i identyfikatorem obiektu dla

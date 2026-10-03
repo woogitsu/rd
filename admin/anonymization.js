@@ -12,6 +12,14 @@ export const REASON_LABELS = Object.freeze({
   retention_policy: "Upłynął okres retencji z polityki (D-04)",
 });
 
+// Historia pokazuje także przebiegi ponowione po odtworzeniu kopii (`restore_reapply`, migracja
+// 0185, scripts/reapply-anonymization.js). To NIE jest powód do wyboru w formularzu: trasa
+// przyjmuje tylko REASON_LABELS, więc etykieta jest osobno.
+export const HISTORY_REASON_LABELS = Object.freeze({
+  ...REASON_LABELS,
+  restore_reapply: "Ponowione po odtworzeniu kopii (według dziennika poza bazą)",
+});
+
 // Klucze liczników w odpowiedzi API (src/pg/anonymization.js: planCounts).
 export const COUNT_LABELS = Object.freeze({
   guardians: "Opiekunowie (imię, nazwisko, e-mail)",

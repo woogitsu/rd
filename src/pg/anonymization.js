@@ -35,6 +35,12 @@
 //
 // Odpowiedź, dziennik (`anonymization_runs`) i zdarzenie audytu zawierają
 // wyłącznie identyfikatory i liczniki — nigdy imiona, e-maile ani teksty.
+//
+// Po odtworzeniu kopii sprzed przebiegu: dziennik poza bazą (anonymization-log.js) i
+// ponowne zastosowanie (anonymization-reapply.js, scripts/reapply-anonymization.js;
+// współdzielą planAnonymization i applyAnonymizationPlan). Raport kandydatów z polityki
+// „do zatwierdzenia” (anonymization-proposals.js) jest wyłącznie odczytem i niczego nie
+// wykonuje — wykonanie zostaje ręczne, ta funkcja anonymizeHousehold.
 
 import { createHash } from 'node:crypto';
 import { insertAuditEvent } from './audit.js';
@@ -215,7 +221,7 @@ export async function planAnonymization(tx, householdId) {
 // ten ostatni odrzuca klucze z „email” w nazwie, więc tabela migawek ma krótszą etykietę.
 const COUNT_LABELS = { email_campaign_recipients: 'campaign_recipients' };
 
-function planCounts(plan) {
+export function planCounts(plan) {
   return Object.fromEntries(Object.entries(plan.tables).map(([table, list]) => [COUNT_LABELS[table] ?? table, list.length]));
 }
 
@@ -263,8 +269,10 @@ async function checkDataRequest(tx, dataRequestId, householdId) {
   if (!belongs) throw new AnonymizationError('data_request_subject_mismatch');
 }
 
-// Tryb polityki (D-04): zatwierdzone polityki retain_for dla każdej kategorii i upłynięty okres.
-async function checkRetentionPolicies(tx, householdId) {
+// Tryb polityki (D-04), część niezależna od gospodarstwa: dla każdej kategorii
+// obowiązująca (najnowsza wersja, effective_from <= teraz) zatwierdzona polityka
+// retain_for. Zwraca identyfikatory polityk i okresy; inaczej AnonymizationError.
+export async function loadRetentionPolicies(tx) {
   const policyIds = [];
   const intervals = [];
   for (const category of ANONYMIZATION_POLICY_CATEGORIES) {
@@ -281,8 +289,13 @@ async function checkRetentionPolicies(tx, householdId) {
     policyIds.push(policy.id);
     intervals.push(policy.retain_for);
   }
-  // Koniec ostatniego roku szkolnego z aktywnością gospodarstwa (wpłaty, zapisy
-  // dzieci, kampanie) albo data założenia gospodarstwa, gdy nie ma żadnej.
+  return { policyIds, intervals };
+}
+
+// Tryb polityki (D-04), część gospodarstwa: koniec ostatniego roku szkolnego z
+// aktywnością (wpłaty, zapisy dzieci, kampanie) albo data założenia gospodarstwa,
+// gdy nie ma żadnej, plus najdłuższy okres musi być w przeszłości.
+export async function assertRetentionPeriodElapsed(tx, householdId, intervals) {
   const { rows } = await tx.query(
     `WITH activity AS (
        SELECT sy.ends_on FROM payment_entries p JOIN school_years sy ON sy.id = p.school_year_id WHERE p.household_id = $1
@@ -303,7 +316,31 @@ async function checkRetentionPolicies(tx, householdId) {
     const { rows: check } = await tx.query(`SELECT ${brusselsStartOfDaySql('$1::date + $2::interval')} <= now() AS elapsed`, [lastActivity, interval]);
     if (!check[0].elapsed) throw new AnonymizationError('retention_period_not_elapsed');
   }
+}
+
+// Tryb polityki (D-04): zatwierdzone polityki retain_for dla każdej kategorii i upłynięty okres.
+async function checkRetentionPolicies(tx, householdId) {
+  const { policyIds, intervals } = await loadRetentionPolicies(tx);
+  await assertRetentionPeriodElapsed(tx, householdId, intervals);
   return policyIds;
+}
+
+// Zmiana danych według planu (jedna transakcja, kontekst `rd.anonymization_run`
+// ustawiany tylko na czas UPDATE-ów). Współdzielone przez trasę (anonymizeHousehold)
+// i ponowne zastosowanie po odtworzeniu kopii (anonymization-reapply.js).
+export async function applyAnonymizationPlan(tx, plan, runId) {
+  await tx.query("SELECT set_config('rd.anonymization_run', $1, true)", [runId]);
+  const apply = async (table, set, list) => {
+    if (!list.length) return;
+    const { rows } = await tx.query(`UPDATE ${table} SET ${set} WHERE id = ANY($1::text[]) RETURNING id`, [list]);
+    if (rows.length !== list.length) throw new AnonymizationError('anonymization_row_mismatch');
+  };
+  await apply('guardians', `first_name = '${ANONYMIZED_TEXT}', last_name = '${ANONYMIZED_TEXT}', email = NULL, contact_allowed = false`, plan.tables.guardians);
+  await apply('students', `first_name = '${ANONYMIZED_TEXT}', last_name = '${ANONYMIZED_TEXT}'`, plan.tables.students);
+  for (const spec of [...CHILD_TABLES, { table: 'payment_entries', set: 'reference = NULL' }, ...PAYMENT_CHILD_TABLES]) {
+    await apply(spec.table, spec.set, plan.tables[spec.key ?? spec.table]);
+  }
+  await tx.query("SELECT set_config('rd.anonymization_run', '', true)");
 }
 
 /**
@@ -352,18 +389,7 @@ export async function anonymizeHousehold(db, {
     if (expectedPlanSha256 !== planSha256) throw new AnonymizationError('anonymization_plan_changed');
 
     const { rows: [{ run_id: runId }] } = await tx.query('SELECT gen_random_uuid()::text AS run_id');
-    await tx.query("SELECT set_config('rd.anonymization_run', $1, true)", [runId]);
-    const apply = async (table, set, list) => {
-      if (!list.length) return;
-      const { rows } = await tx.query(`UPDATE ${table} SET ${set} WHERE id = ANY($1::text[]) RETURNING id`, [list]);
-      if (rows.length !== list.length) throw new AnonymizationError('anonymization_row_mismatch');
-    };
-    await apply('guardians', `first_name = '${ANONYMIZED_TEXT}', last_name = '${ANONYMIZED_TEXT}', email = NULL, contact_allowed = false`, plan.tables.guardians);
-    await apply('students', `first_name = '${ANONYMIZED_TEXT}', last_name = '${ANONYMIZED_TEXT}'`, plan.tables.students);
-    for (const spec of [...CHILD_TABLES, { table: 'payment_entries', set: 'reference = NULL' }, ...PAYMENT_CHILD_TABLES]) {
-      await apply(spec.table, spec.set, plan.tables[spec.key ?? spec.table]);
-    }
-    await tx.query("SELECT set_config('rd.anonymization_run', '', true)");
+    await applyAnonymizationPlan(tx, plan, runId);
 
     await tx.query(
       `INSERT INTO anonymization_runs

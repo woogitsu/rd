@@ -1550,3 +1550,24 @@ strażników, DROP TABLE `guardian_update_verifications` i
 przywrócenie CHECK dziennika z 0056/0177 i DROP COLUMN `verification_id`; z
 wierszami — tylko po kopii zapasowej (wpisy dziennika limitu są tylko do
 dopisywania i wskazują wiersze weryfikacji).
+
+`0185_anonymization_reapply.sql` (#91, dług anonimizacji; bez nowej decyzji D-04)
+umożliwia ponowne zastosowanie przebiegów anonimizacji po odtworzeniu kopii bazy
+(`scripts/reapply-anonymization.js`, `docs/RETENTION.md`). W `anonymization_runs`
+dodaje kod powodu `restore_reapply` (trasa `POST /api/admin/anonymizations` dalej
+przyjmuje tylko `retention_policy` i `data_subject_request`) oraz kolumnę
+`source_run` (JSONB, NULL dla zwykłych przebiegów) z danymi przebiegu źródłowego z
+dziennika poza bazą: kod powodu, identyfikatory żądania/polityk, skrót planu, czas
+i wykonawca — tylko identyfikatory, kody i skróty. Żądanie osoby i polityki z
+przebiegu źródłowego mogą nie istnieć w odtworzonej bazie, więc nie są kluczami
+obcymi. Identyfikator wiersza to identyfikator przebiegu źródłowego (idempotencja
+przez klucz główny). Dwa CHECK (`anonymization_runs_reason_code_check`,
+`anonymization_runs_reason_shape`) są zastąpione równoważnymi dla dwóch
+dotychczasowych kodów plus regułą dla `restore_reapply` (komplet `source_run`, brak
+`data_subject_request_id` i polityk). Skutki dla danych: żaden istniejący wiersz nie
+jest zmieniany (ADD COLUMN bez wartości domyślnej nie przepisuje tabeli, dotychczasowe
+wiersze spełniają nowe reguły); tabela nadal jest tylko do dopisywania. Dane osobowe w
+tabelach rodzin zmienia dopiero uruchomiony ręcznie skrypt, tą samą furtką
+`rd.anonymization_run` co przebieg z trasy; kwot, dat ani księgi nie rusza. Wycofanie:
+na bazie bez wierszy `restore_reapply` — DROP obu CHECK, DROP COLUMN `source_run`,
+przywrócenie CHECK z 0174; z takimi wierszami — tylko po kopii zapasowej.
