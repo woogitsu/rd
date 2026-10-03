@@ -203,15 +203,10 @@ export const components = {
 
 const YEAR_QUERY = { schoolYearId: { required: true, schema: ref('Id') } };
 const READ_ERROR_SET = mergeErrors(READ_ERRORS, { 403: ['mfa_enrollment_required', 'mfa_required'] });
-// Uwaga: kody `resolution_amount_exceeded`, `resolution_expired` i `resolution_repealed` (409, trigger
-// c0_ledger_resolution_guard) trasa zwraca, ale tabela w mapDatabaseError zapisuje je w postaci
-// `marker: [kod, status]`, której test katalogu (tests/pg-api-errors-catalog.test.js) nie wykrywa,
-// więc nie ma ich w docs/API_ERRORS.md. Dopisanie ich do schematu wymaga najpierw rozszerzenia
-// wykrywania kodów w tym teście (osobny, mały PR).
 const ENTRY_WRITE_ERRORS = mergeErrors(WRITE_ERRORS, PII_ERRORS, {
   400: ['invalid_amount', 'invalid_category', 'invalid_payment_link', 'invalid_reference', 'invalid_source_document', 'resolution_expense_only', 'resolution_reference_mismatch', 'resolution_required'],
   404: ['resolution_not_found'],
-  409: ['payment_already_linked', 'resolution_not_adopted', 'resolution_not_current'],
+  409: ['payment_already_linked', 'resolution_amount_exceeded', 'resolution_expired', 'resolution_not_adopted', 'resolution_not_current', 'resolution_repealed'],
   422: ['date_outside_school_year', 'payment_amount_mismatch'],
 });
 
