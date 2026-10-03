@@ -23,15 +23,44 @@ const rows = coverage(locks, MUTANTS);
 const CATEGORIES = new Set(['zagnieżdżona', 'ograniczenie', 'luka']);
 const rowLockMutants = MUTANTS.filter((m) => m.kind !== 'advisory');
 
-// Funkcje najwyższego poziomu, które wołają `fn(…, { lock: true })`.
-function scanCallers(source, fn) {
+// Funkcje najwyższego poziomu, które wołają `fn(…, { lock: true })` — albo, z `lockOption:
+// false`, każde wywołanie `fn(…)` (bez definicji samej funkcji).
+function scanCallers(source, fn, { lockOption = true } = {}) {
   const names = [];
-  for (const match of source.matchAll(new RegExp(`\\b${fn}\\([^)]*\\{ lock: true \\}\\)`, 'g'))) {
+  const call = lockOption ? `\\b${fn}\\([^)]*\\{ lock: true \\}\\)` : `(?<!function )\\b${fn}\\(`;
+  for (const match of source.matchAll(new RegExp(call, 'g'))) {
     const before = source.slice(0, match.index);
     const header = [...before.matchAll(/^(?:export )?(?:async )?function (\w+)\(/gm)].pop();
-    if (header) names.push(header[1]);
+    if (header && !names.includes(header[1])) names.push(header[1]);
   }
   return names;
+}
+
+// Wyjątek „zagnieżdżona”: funkcja z blokadą woła wcześniej funkcję mutanta zewnętrznego
+// (`outer`), albo robi to każdy, kto ją woła. Zwraca listę naruszeń (pusta = w porządku).
+function nestedProblems(source, e, outer) {
+  const key = lockKey({ ...e, kind: e.kind ?? 'for-update' });
+  const body = (fn) => { const range = functionRange(source, fn); return range ? source.slice(...range) : ''; };
+  const callsOuter = (fn) => body(fn).includes(`${outer.fn}(`);
+  if (callsOuter(e.fn)) return [];
+  // Pomocnik z opcją `lock` (np. loadNotice): każde wywołanie z blokadą jest w funkcji,
+  // która wcześniej bierze blokadę zewnętrzną.
+  const lockCallers = scanCallers(source, e.fn);
+  if (lockCallers.length) {
+    return lockCallers.filter((caller) => !callsOuter(caller)).map((caller) => `${key}: ${caller} woła ${e.fn} z blokadą bez ${outer.fn}`);
+  }
+  // Pomocnik bez opcji `lock` (np. activeFactors w mfa.js): nieeksportowany, a każda funkcja
+  // modułu, która go woła, woła wcześniej funkcję blokady zewnętrznej.
+  if (new RegExp(`^export (?:async )?function ${e.fn}\\(|^export \\{[^}]*\\b${e.fn}\\b`, 'm').test(source)) {
+    return [`${key}: ${e.fn} jest eksportowana — wywołania spoza modułu mogą pominąć ${outer.fn}`];
+  }
+  const callers = scanCallers(source, e.fn, { lockOption: false });
+  if (!callers.length) return [`${key}: funkcja nie woła ${outer.fn} i nikt jej nie woła`];
+  return callers.filter((caller) => {
+    const text = body(caller);
+    const outerAt = text.indexOf(`${outer.fn}(`);
+    return outerAt < 0 || outerAt > text.search(new RegExp(`(?<!function )\\b${e.fn}\\(`));
+  }).map((caller) => `${key}: ${caller} woła ${e.fn} bez wcześniejszego ${outer.fn}`);
 }
 
 test('skaner: komentarze nie są blokadą, `OF alias` wskazuje tabelę aliasu, rozpoznaje FOR SHARE i FOR NO KEY UPDATE', () => {
@@ -86,15 +115,7 @@ test('wyjątki: każdy wskazuje istniejącą blokadę, ma kategorię, powód i s
       assert.ok(outer, `${key}: blokada zewnętrzna musi mieć mutant (outer = id z MUTANTS), jest: ${e.outer}`);
       // Blokada zewnętrzna jest w tym samym module (lockEvent, lockMeeting, loadReconciliation, lockGrantChanges).
       assert.equal(outer.file, e.file, `${key}: mutant ${e.outer} dotyczy innego pliku`);
-      const source = read(e.file);
-      const callsOuter = (fn) => { const range = functionRange(source, fn); return Boolean(range) && source.slice(...range).includes(`${outer.fn}(`); };
-      if (!callsOuter(e.fn)) {
-        // Pomocnik z opcją `lock` (np. loadNotice): każde wywołanie z blokadą jest w funkcji,
-        // która wcześniej bierze blokadę zewnętrzną.
-        const callers = scanCallers(source, e.fn);
-        assert.ok(callers.length > 0, `${key}: funkcja nie woła ${outer.fn} i nikt nie woła jej z { lock: true }`);
-        for (const caller of callers) assert.ok(callsOuter(caller), `${key}: ${caller} woła ${e.fn} z blokadą bez ${outer.fn}`);
-      }
+      assert.deepEqual(nestedProblems(read(e.file), e, outer), []);
     } else if (e.category === 'ograniczenie') {
       assert.ok(e.evidence && (e.evidence.migration || e.evidence.code), `${key}: brak evidence (migration albo code)`);
       if (e.evidence.migration) {
@@ -123,6 +144,20 @@ test('mutanty blokad wierszy: rodzaj ze skanera, a funkcja z kilkoma blokadami m
     }
     if (mutant.table) assert.ok(tables.has(mutant.table), `${mutant.id}: brak blokady tabeli ${mutant.table} w ${mutant.fn}`);
   }
+});
+
+test('kontrola pozytywna: wyjątek „zagnieżdżona” dla pomocnika bez opcji `lock` wykrywa wywołanie bez blokady zewnętrznej', () => {
+  const e = LOCK_EXCEPTIONS.find((x) => x.file === 'src/pg/mfa.js' && x.fn === 'activeFactors');
+  assert.ok(e, 'brak wyjątku activeFactors w LOCK_EXCEPTIONS');
+  const outer = MUTANTS.find((m) => m.id === e.outer);
+  const source = read(e.file);
+  assert.deepEqual(nestedProblems(source, e, outer), []);
+  const unlocked = `${source}\nasync function bezBlokady(tx, userId) {\n  return activeFactors(tx, userId);\n}\n`;
+  assert.deepEqual(nestedProblems(unlocked, e, outer), ['src/pg/mfa.js#activeFactors:user_mfa_factors:for-update: bezBlokady woła activeFactors bez wcześniejszego lockUser']);
+  const late = `${source}\nasync function zaPozno(tx, userId) {\n  const f = await activeFactors(tx, userId);\n  await lockUser(tx, userId);\n  return f;\n}\n`;
+  assert.equal(nestedProblems(late, e, outer).length, 1);
+  const exported = source.replace('async function activeFactors(', 'export async function activeFactors(');
+  assert.match(nestedProblems(exported, e, outer).join('\n'), /jest eksportowana/);
 });
 
 test('kontrola pozytywna: nowa blokada bez mutanta i bez wyjątku jest wykrywana, a wyjątek innej tabeli jej nie pokrywa', () => {

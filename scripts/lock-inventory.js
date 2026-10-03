@@ -285,6 +285,14 @@ export const LOCK_EXCEPTIONS = [
     reason: 'Wyzwalacz password_reset_token_guard (0020) odrzuca zmianę tokenu już użytego albo cofniętego, więc drugie użycie tego samego tokenu wycofuje całą transakcję (z nowym hasłem); bez blokady: błąd wyzwalacza zamiast 400 invalid_token.',
   },
   {
+    file: 'src/pg/mfa.js', fn: 'activeFactors', table: 'user_mfa_factors', category: 'zagnieżdżona', outer: 'mfa-lock-user',
+    reason: 'activeFactors wołają tylko enrollFactor, attemptFactor i revokeAllOwnSessions, każda zaraz po lockUser (wiersz konta FOR UPDATE). Każdy zapis user_mfa_factors (zapis i potwierdzenie czynnika, reset MFA w adminResetMfaInTx, rotacja klucza po lockAccount) bierze wcześniej blokadę konta, więc blokada czynnika jest drugą warstwą (mutant równoważny).',
+  },
+  {
+    file: 'src/pg/mfa-key-rotation.js', fn: 'rotateOneAccount', table: 'user_mfa_factors', category: 'zagnieżdżona', outer: 'mfa-key-rotation-account',
+    reason: 'Rotacja zaczyna od lockAccount (wiersz konta FOR UPDATE), tak jak weryfikacja i zapis czynnika (lockUser) oraz reset MFA; każdy zapis user_mfa_factors przechodzi przez blokadę konta, więc blokada czynnika jest drugą warstwą (mutant równoważny). Bez obu blokad rotacja przenosi krok sprzed weryfikacji (kontrola pozytywna w tests/pg-real-mfa-locks.test.js).',
+  },
+  {
     file: 'src/pg/routes/admin.js', fn: 'setUserDisabled', table: 'users', category: 'ograniczenie',
     evidence: { code: 'WHERE id = $1 AND disabled_at IS NULL RETURNING id' },
     reason: 'Wyłączenie i włączenie konta to warunkowe UPDATE (… AND disabled_at IS NULL / IS NOT NULL): drugi UPDATE czeka na pierwszy i po jego zatwierdzeniu nie zmienia wiersza (changed: false, bez zdarzenia). Wyścig z tworzeniem sesji (#256) zamyka FOR SHARE w createSession (mutant session-create-share).',
