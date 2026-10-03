@@ -1,6 +1,7 @@
-// Kontrakt API (#160, etap 2): schematy ciał żądań i odpowiedzi w docs/openapi.json
-// (src/pg/schemas/*) dla pierwszych modułów — wpłaty (payments, payment-references,
-// payment-instructions) i księga (ledger).
+// Kontrakt API (#160, etapy 2-3): schematy ciał żądań i odpowiedzi w docs/openapi.json
+// (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
+// (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js.
+// Testy rejestru poniżej obejmują wszystkie pokryte moduły.
 //
 //  * rejestr pokrycia: każda trasa pokrytego modułu MA schemat; moduły bez schematów
 //    są wymienione jawnie (UNCOVERED_MODULES) i lista może tylko maleć;
@@ -29,9 +30,9 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 25;
-// Zapisy bez ciała żądania (cały zapis wynika ze ścieżki).
-const POST_WITHOUT_BODY = new Set(['POST /api/ledger/categories/{categoryId}/deactivate']);
+const MAX_UNCOVERED_MODULES = 23;
+// Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
+const POST_WITHOUT_BODY = new Set(['POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout']);
 
 const openApiPath = (route) => route.path.split('?')[0].replace(/:([A-Za-z]\w*)/g, '{$1}');
 const routeKey = (route) => `${route.method} ${openApiPath(route)}`;
@@ -124,7 +125,9 @@ test('rejestr: operacje pokrytych modułów mają kształt dla każdego statusu 
       checked += 1;
       const key = `${method.toUpperCase()} ${path}`;
       for (const status of operation['x-rd-ok-status']) {
-        if (!operation.responses[String(status)]?.content) problems.push(`${key}: brak kształtu odpowiedzi ${status}`);
+        const hasContent = Boolean(operation.responses[String(status)]?.content);
+        // 204 nie ma treści; każdy inny status sukcesu musi mieć kształt.
+        if (status === 204 ? hasContent : !hasContent) problems.push(`${key}: ${status === 204 ? 'treść przy 204' : 'brak kształtu odpowiedzi'} ${status}`);
       }
       if (method === 'post' && !operation.requestBody && !POST_WITHOUT_BODY.has(key)) problems.push(`${key}: brak requestBody`);
       if (method === 'get' && operation.requestBody) problems.push(`${key}: GET z requestBody`);
