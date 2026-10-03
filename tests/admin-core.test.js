@@ -169,6 +169,20 @@ test('dziennik kont: słowniki typów obiektów i powodów pokrywają wartości 
   assert.equal(reasonLabel('nieznany_kod'), 'nieznany_kod');
 });
 
+// Powody pominięcia wiadomości przez zadanie wysyłki (last_error wiersza kolejki i `reason`
+// zdarzenia email.suppressed/email.skipped) nie mają literału `reason: '…'`, więc pierwszy skan
+// ich nie widzi — a zawiadomienia o zebraniach (#113) dodają ich kilka (klasa, przydział roli).
+test('dziennik: powody pominięcia z zadania wysyłki mają polskie etykiety', () => {
+  const worker = readFileSync(new URL('../src/email/worker.js', import.meta.url), 'utf8');
+  const codes = new Set([...worker.matchAll(/state: '(?:suppressed|skipped|failed|cancelled)', error: '([a-z_]+)'/g)].map((m) => m[1]));
+  for (const required of ['student_left_class', 'student_withdrawn', 'role_grant_inactive', 'consent_or_address_changed']) {
+    assert.ok(codes.has(required), `skan nie znalazł kodu ${required}`);
+  }
+  assert.ok(codes.size >= 10, `skan znalazł ${codes.size} kodów`);
+  for (const code of codes) assert.ok(REASON_LABELS[code], `brak etykiety powodu ${code}`);
+  assert.equal(reasonLabel('student_left_class'), 'dziecko nie jest już zapisane do klasy zebrania');
+});
+
 test('dziennik kont: autor jako nazwa konta z listy kont albo skrócony identyfikator', () => {
   const uuid = '3f2b8c1e-aaaa-bbbb-cccc-123456789012';
   assert.equal(accountName(uuid, [{ id: uuid, displayName: 'Anna Demo', email: 'a@example.invalid' }]), 'Anna Demo');
