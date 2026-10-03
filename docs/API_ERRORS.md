@@ -424,6 +424,8 @@ przy przydziale, nie błąd.
 | `quorum_rule_source_required` | Podaj źródło reguły quorum (np. regulamin). | Nie — popraw dane żądania. |
 | `rate_limited` | Zbyt wiele prób w krótkim czasie. Spróbuj ponownie za chwilę. | Zależy od kontekstu (patrz moduł trasy). |
 | `read_only` | Portal działa chwilowo w trybie tylko do odczytu. Zmiany będą możliwe po zakończeniu prac technicznych. | Zależy od kontekstu (patrz moduł trasy). |
+| `reapply_actor_not_admin` | Ponowne zastosowanie anonimizacji może uruchomić tylko aktywne konto administratora. | Nie — wskaż aktywne konto administratora. |
+| `reapply_actor_required` | Podaj konto administratora, który uruchamia ponowne zastosowanie anonimizacji. | Nie — popraw dane wywołania. |
 | `recipients_hash_mismatch` | Lista odbiorców zmieniła się od zatwierdzenia. Sprawdź ją i zatwierdź ponownie. | Nie — popraw dane żądania. |
 | `reconciliation_abandoned` | Szkic uzgodnienia został porzucony i nie można go już zmienić ani potwierdzić. | Nie — utwórz nowy szkic. |
 | `reconciliation_confirmed` | Uzgodnienie jest już potwierdzone i nie można go zmienić. | Zależy od kontekstu (patrz moduł trasy). |
