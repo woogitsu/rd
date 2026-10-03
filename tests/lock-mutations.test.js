@@ -6,7 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { MUTANTS, applyMutant, functionRange } from '../scripts/check-lock-mutations.js';
+import { MUTANTS, applyMutant, functionRange, selectMutantLocks } from '../scripts/check-lock-mutations.js';
+import { scanSource } from '../scripts/lock-inventory.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -22,8 +23,15 @@ test('każdy mutant usuwa istniejącą blokadę tylko w swojej funkcji', () => {
     // Poza ciałem funkcji nic się nie zmienia.
     assert.equal(mutated.slice(0, start), source.slice(0, start), `${mutant.id}: zmiana przed funkcją`);
     assert.equal(mutated.slice(mutated.length - (source.length - end)), source.slice(end), `${mutant.id}: zmiana po funkcji`);
-    const lock = mutant.kind === 'advisory' ? /pg_advisory_xact_lock\(/ : /FOR UPDATE/;
-    assert.doesNotMatch(mutated.slice(start, mutated.length - (source.length - end)), lock, `${mutant.id}: blokada usunięta w całości`);
+    if (mutant.kind === 'advisory') {
+      assert.doesNotMatch(mutated.slice(start, mutated.length - (source.length - end)), /pg_advisory_xact_lock\(/, `${mutant.id}: blokada usunięta w całości`);
+    } else {
+      // Znikają dokładnie wskazane blokady (rodzaj, opcjonalnie tabela); pozostałe
+      // blokady funkcji i komentarze zostają.
+      assert.deepEqual(selectMutantLocks(mutated, mutant), [], `${mutant.id}: blokada usunięta w całości`);
+      const inFunction = (text) => scanSource(text, mutant.file).filter((l) => l.fn === mutant.fn).length;
+      assert.equal(inFunction(mutated), inFunction(source) - hits, `${mutant.id}: usunięte tylko wskazane blokady`);
+    }
   }
 });
 
@@ -39,6 +47,19 @@ test('kontrola pozytywna: nieaktualny mutant (brak funkcji albo blokady) jest b�
   const source = "async function a(tx) { await tx.query('SELECT 1 FROM t WHERE id = $1 FOR UPDATE'); }\nasync function b(tx) { await tx.query('SELECT 1 FROM t FOR UPDATE'); }\n";
   const { source: mutated } = applyMutant(source, { id: 'x', file: 'x.js', fn: 'a', kind: 'for-update' });
   assert.equal(mutated, "async function a(tx) { await tx.query('SELECT 1 FROM t WHERE id = $1'); }\nasync function b(tx) { await tx.query('SELECT 1 FROM t FOR UPDATE'); }\n");
+  // Mutant z `table` usuwa tylko blokadę tej tabeli, `for-share` — tylko FOR SHARE; komentarz zostaje.
+  const two = [
+    'async function c(tx) {',
+    '  // FOR UPDATE w komentarzu',
+    "  await tx.query('SELECT 1 FROM t WHERE id = $1 FOR UPDATE');",
+    "  await tx.query('SELECT 1 FROM u WHERE id = $1 FOR UPDATE');",
+    "  await tx.query('SELECT 1 FROM w WHERE id = $1 FOR SHARE');",
+    '}',
+  ].join('\n');
+  assert.equal(applyMutant(two, { id: 'y', file: 'x.js', fn: 'c', kind: 'for-update', table: 'u' }).source,
+    two.replace("FROM u WHERE id = $1 FOR UPDATE'", "FROM u WHERE id = $1'"));
+  assert.equal(applyMutant(two, { id: 'z', file: 'x.js', fn: 'c', kind: 'for-share' }).source, two.replace(' FOR SHARE', ''));
+  assert.throws(() => applyMutant(two, { id: 'q', file: 'x.js', fn: 'c', kind: 'for-update', table: 'brak' }), /nieaktualna/);
 });
 
 test('npm run test:pg-mutations uruchamia skrypt, a CI wywołuje go w jobie test-pg-real', () => {
