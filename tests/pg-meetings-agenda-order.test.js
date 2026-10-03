@@ -22,6 +22,8 @@ async function setup(extraEnv = {}) {
     boardA: await s('u-bda', [{ role: 'board', schoolYearId: YEAR, classId: 'ca' }]),
     repA: await s('u-repa', [{ role: 'representative', schoolYearId: YEAR, classId: 'ca' }]),
     audit: await s('u-au', [{ role: 'audit', schoolYearId: YEAR }]),
+    principal: await s('u-pr', [{ role: 'principal', schoolYearId: YEAR }]),
+    treasurer: await s('u-tr', [{ role: 'treasurer', schoolYearId: YEAR }]),
   };
   const env = { db, APP_ENV: 'development', ...extraEnv };
   const raw = async (cookie, method, path, body, headers = {}) =>
@@ -198,6 +200,8 @@ test('zmiana kolejności: granice ról, MFA i odwołane zebranie', async () => {
     for (const [name, cookie, targets] of [
       ['repA', t.cookies.repA, [plenary, classA, classB]],
       ['audit', t.cookies.audit, [plenary, classA, classB]],
+      ['principal', t.cookies.principal, [plenary, classA, classB]],
+      ['treasurer', t.cookies.treasurer, [plenary, classA, classB]],
       ['boardA', t.cookies.boardA, [plenary, classB]],
     ]) {
       for (const meeting of targets) {
