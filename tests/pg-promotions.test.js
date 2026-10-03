@@ -3,6 +3,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
+import { insertGrantInTx } from '../src/pg/routes/admin.js';
 import { perTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
@@ -356,7 +357,7 @@ describe('przedłużenie przedstawicieli klas (#78)', () => {
       ['u-rep2', 'c-1a', 'd-2a', 'propose'],
       ['u-rep-off', 'c-2b', 'd-3b', 'user_disabled'],
     ]);
-    assert.deepEqual(data.counts, { propose: 2, already_granted: 0, user_disabled: 1 });
+    assert.deepEqual(data.counts, { propose: 2, already_granted: 0, user_disabled: 1, cannot_grant_self: 0 });
     assert.deepEqual(data.withoutRepresentative.map((c) => c.classId), ['d-3b']);
     assert.match(data.planDigest, /^[0-9a-f]{64}$/);
     assert.doesNotMatch(JSON.stringify(data), /Testowa|Nowak|example\.invalid/);
@@ -381,7 +382,7 @@ describe('przedłużenie przedstawicieli klas (#78)', () => {
       "SELECT action, metadata_json AS metadata FROM audit_events WHERE action IN ('role_grant.created', 'promotion.representatives_extended') ORDER BY action",
     )).rows;
     assert.deepEqual(audit.map((row) => row.action), ['promotion.representatives_extended', 'role_grant.created', 'role_grant.created']);
-    assert.deepEqual(audit[0].metadata, { schoolYearId: Y2, fromSchoolYearId: Y1, created: 2, alreadyGranted: 0, skipped: 1 });
+    assert.deepEqual(audit[0].metadata, { schoolYearId: Y2, fromSchoolYearId: Y1, created: 2, alreadyGranted: 0, skipped: 1, skippedSelf: 0 });
     assert.equal(audit.filter((row) => row.metadata.source === 'promotion').length, 2);
     assert.doesNotMatch(JSON.stringify(audit), /example\.invalid|Test u-/);
   });
@@ -399,7 +400,7 @@ describe('przedłużenie przedstawicieli klas (#78)', () => {
     assert.equal((await ctx.db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'promotion.representatives_extended'")).rows[0].n, 1);
     // Nowy podgląd widzi już przydziały jako istniejące; skrót zamiaru się nie zmienia.
     const after = (await preview(ctx)).data;
-    assert.deepEqual(after.counts, { propose: 0, already_granted: 2, user_disabled: 1 });
+    assert.deepEqual(after.counts, { propose: 0, already_granted: 2, user_disabled: 1, cannot_grant_self: 0 });
     assert.equal(after.planDigest, plan.planDigest);
   });
 
@@ -439,6 +440,127 @@ describe('przedłużenie przedstawicieli klas (#78)', () => {
     await ctx.db.query("UPDATE role_grants SET revoked_at = now(), revoked_by = 'u-admin' WHERE user_id = 'u-rep2' AND class_id = 'c-1a'");
     const { data } = await preview(ctx);
     assert.deepEqual(data.proposals.filter((p) => p.status === 'propose').map((p) => p.userId), ['u-rep']);
+  });
+});
+
+// #745: przedłużenie nie nadaje roli wykonującemu adminowi (zasada drugiej osoby z #146,
+// jak 409 cannot_grant_self w POST /api/admin/grants i wiersz partii zaproszeń).
+describe('przedłużenie przedstawicieli: własne konto admina (#745)', () => {
+  const REPS = '/api/admin/promotions/representatives';
+  const repBody = (extra = {}) => ({ fromSchoolYearId: Y1, toSchoolYearId: Y2, classMap: MAP, ...extra });
+
+  // Admin u-admin był w roku źródłowym przedstawicielem 1A (razem z u-rep i u-rep2) oraz 2B
+  // (razem z wyłączonym u-rep-off) — w 2B nie ma więc nikogo do przedłużenia. u-admin3 to drugi admin.
+  async function selfSetup() {
+    const ctx = await setup();
+    await seedRoleGrant(ctx.db, { userId: 'u-rep2', role: 'representative', classId: 'c-1a', schoolYearId: Y1 });
+    await seedRoleGrant(ctx.db, { userId: 'u-admin', role: 'representative', classId: 'c-1a', schoolYearId: Y1 });
+    await seedRoleGrant(ctx.db, { userId: 'u-admin', role: 'representative', classId: 'c-2b', schoolYearId: Y1 });
+    await seedUser(ctx.db, { userId: 'u-rep-off', disabled: true });
+    await ctx.db.query("INSERT INTO role_grants (id, user_id, role, class_id, school_year_id) VALUES ('rg-off', 'u-rep-off', 'representative', 'c-2b', $1)", [Y1]);
+    ctx.cookies.admin3 = await seedUserSession(ctx.db, { userId: 'u-admin3', roles: [{ role: 'admin' }], mfa: true });
+    return ctx;
+  }
+  const preview = (ctx, cookie = ctx.cookies.admin) => ctx.call(`${REPS}/preview`, { cookie, body: repBody() });
+  const apply = (ctx, digest, cookie = ctx.cookies.admin) => ctx.call(`${REPS}/apply`, {
+    cookie, body: repBody({ planDigest: digest, confirm: Y2 }),
+  });
+  const targetGrants = async (db) => (await db.query(
+    'SELECT user_id, class_id, granted_by FROM role_grants WHERE school_year_id = $1 AND revoked_at IS NULL ORDER BY class_id, user_id', [Y2],
+  )).rows.map((row) => [row.user_id, row.class_id, row.granted_by]);
+  const proposalsOf = (plan) => plan.proposals.map((p) => [p.userId, p.fromClassId, p.toClassId, p.status]);
+  const outcome = ({ data }) => ({
+    created: data.created, alreadyGranted: data.alreadyGranted, skipped: data.skipped, skippedSelf: data.skippedSelf, replayed: data.replayed,
+  });
+
+  test('podgląd: wiersz admina ma status cannot_grant_self, nie liczy się do obsady; skrót stały, zależny od aktora', async () => {
+    const ctx = await selfSetup();
+    const { status, data } = await preview(ctx);
+    assert.equal(status, 200);
+    assert.deepEqual(proposalsOf(data), [
+      ['u-admin', 'c-1a', 'd-2a', 'cannot_grant_self'],
+      ['u-rep', 'c-1a', 'd-2a', 'propose'],
+      ['u-rep2', 'c-1a', 'd-2a', 'propose'],
+      ['u-admin', 'c-2b', 'd-3b', 'cannot_grant_self'],
+      ['u-rep-off', 'c-2b', 'd-3b', 'user_disabled'],
+    ]);
+    assert.deepEqual(data.counts, { propose: 2, already_granted: 0, user_disabled: 1, cannot_grant_self: 2 });
+    // 2B miała tylko admina i wyłączone konto: pominięty wiersz admina nie jest obsadą klasy 3B.
+    assert.deepEqual(data.withoutRepresentative.map((c) => c.classId), ['d-3b']);
+    assert.equal((await preview(ctx)).data.planDigest, data.planDigest);
+    // Dla drugiego admina ten sam wiersz to zwykła propozycja — inny plan, inny skrót.
+    const other = (await preview(ctx, ctx.cookies.admin3)).data;
+    assert.deepEqual(other.counts, { propose: 4, already_granted: 0, user_disabled: 1, cannot_grant_self: 0 });
+    assert.notEqual(other.planDigest, data.planDigest);
+    assert.deepEqual(await targetGrants(ctx.db), []);
+  });
+
+  test('zapis: admin bez przydziału, pozostali przedłużeni, skipped i audyt liczą pominięcie; ponowienie idempotentne', async () => {
+    const ctx = await selfSetup();
+    const plan = (await preview(ctx)).data;
+    const first = await apply(ctx, plan.planDigest);
+    assert.equal(first.status, 201, JSON.stringify(first.data));
+    assert.deepEqual(outcome(first), { created: 2, alreadyGranted: 0, skipped: 3, skippedSelf: 2, replayed: false });
+    assert.deepEqual(await targetGrants(ctx.db), [['u-rep', 'd-2a', 'u-admin'], ['u-rep2', 'd-2a', 'u-admin']]);
+    assert.equal((await ctx.db.query('SELECT count(*)::int AS n FROM role_grants WHERE user_id = granted_by')).rows[0].n, 0);
+    const audit = (await ctx.db.query(
+      "SELECT action, metadata_json AS metadata FROM audit_events WHERE action IN ('role_grant.created', 'promotion.representatives_extended') ORDER BY action",
+    )).rows;
+    assert.deepEqual(audit.map((row) => row.action), ['promotion.representatives_extended', 'role_grant.created', 'role_grant.created']);
+    assert.deepEqual(audit[0].metadata, { schoolYearId: Y2, fromSchoolYearId: Y1, created: 2, alreadyGranted: 0, skipped: 3, skippedSelf: 2 });
+    assert.deepEqual(audit.slice(1).map((row) => row.metadata.userId).sort(), ['u-rep', 'u-rep2']);
+
+    // Podwójne kliknięcie / ponowienie: nic nowego, to samo pominięcie, jedno zdarzenie zbiorcze.
+    const second = await apply(ctx, plan.planDigest);
+    assert.equal(second.status, 200);
+    assert.deepEqual(outcome(second), { created: 0, alreadyGranted: 2, skipped: 3, skippedSelf: 2, replayed: true });
+    assert.equal((await ctx.db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'promotion.representatives_extended'")).rows[0].n, 1);
+    const after = (await preview(ctx)).data;
+    assert.deepEqual(after.counts, { propose: 0, already_granted: 2, user_disabled: 1, cannot_grant_self: 2 });
+    assert.equal(after.planDigest, plan.planDigest);
+    assert.deepEqual(await targetGrants(ctx.db), [['u-rep', 'd-2a', 'u-admin'], ['u-rep2', 'd-2a', 'u-admin']]);
+  });
+
+  test('skrót podglądu innego admina: 409 plan_stale; przydział adminowi nadaje drugi admin przez POST /grants', async () => {
+    const ctx = await selfSetup();
+    const other = (await preview(ctx, ctx.cookies.admin3)).data;
+    const stale = await apply(ctx, other.planDigest);
+    assert.deepEqual([stale.status, stale.data.error], [409, 'plan_stale']);
+    assert.deepEqual(await targetGrants(ctx.db), []);
+    const body = { userId: 'u-admin', role: 'representative', classId: 'd-3b' };
+    const self = await ctx.call('/api/admin/grants', { cookie: ctx.cookies.admin, body });
+    assert.deepEqual([self.status, self.data.error], [409, 'cannot_grant_self']);
+    const granted = await ctx.call('/api/admin/grants', { cookie: ctx.cookies.admin3, body });
+    assert.equal(granted.status, 201, JSON.stringify(granted.data));
+    // Przydział nadany przez drugą osobę jest obsadą 3B; wiersze admina nadal pominięte.
+    const plan = (await preview(ctx)).data;
+    assert.deepEqual(plan.withoutRepresentative, []);
+    assert.deepEqual(plan.proposals.filter((p) => p.userId === 'u-admin').map((p) => p.status), ['cannot_grant_self', 'cannot_grant_self']);
+    assert.equal((await apply(ctx, plan.planDigest)).status, 201);
+    assert.deepEqual(await targetGrants(ctx.db), [['u-rep', 'd-2a', 'u-admin'], ['u-rep2', 'd-2a', 'u-admin'], ['u-admin', 'd-3b', 'u-admin3']]);
+  });
+
+  test('tylko wiersz admina do przedłużenia: 422 nothing_to_extend, bez zapisu', async () => {
+    const ctx = await selfSetup();
+    const body = repBody({ classMap: { 'c-2b': 'd-3b' } });
+    const plan = (await ctx.call(`${REPS}/preview`, { cookie: ctx.cookies.admin, body })).data;
+    assert.deepEqual(plan.counts, { propose: 0, already_granted: 0, user_disabled: 1, cannot_grant_self: 1 });
+    const result = await ctx.call(`${REPS}/apply`, { cookie: ctx.cookies.admin, body: { ...body, planDigest: plan.planDigest, confirm: Y2 } });
+    assert.deepEqual([result.status, result.data.error], [422, 'nothing_to_extend']);
+    assert.deepEqual(await targetGrants(ctx.db), []);
+  });
+
+  test('ochrona w głębi: wspólny zapis przydziału odrzuca własne konto (409 cannot_grant_self), innym nadaje', async () => {
+    const ctx = await selfSetup();
+    const grant = (userId, actorId = 'u-admin') => ctx.db.transaction((tx) => insertGrantInTx(tx, actorId, {
+      userId, role: 'representative', classId: 'd-2a', schoolYearId: Y2,
+    }));
+    await assert.rejects(grant('u-admin'), (error) => error.code === 'cannot_grant_self' && error.status === 409);
+    await assert.rejects(grant('u-rep', ''), /actor_required/);
+    assert.deepEqual(await targetGrants(ctx.db), []);
+    assert.equal((await ctx.db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'role_grant.created'")).rows[0].n, 0);
+    assert.equal((await grant('u-rep')).created, true);
+    assert.deepEqual(await targetGrants(ctx.db), [['u-rep', 'd-2a', 'u-admin']]);
   });
 });
 

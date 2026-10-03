@@ -117,7 +117,10 @@ zamknięcie wniosku; drugie kliknięcie „Zatwierdź” dostaje `409
 grant_request_closed`, więc powstaje jeden przydział i jedno zdarzenie.
 Zasadę pilnuje też baza (`CHECK role_grant_requests_four_eyes`, trigger
 niezmienności, bez DELETE/TRUNCATE). Samonadanie jest nadal odrzucane od razu
-(`409 cannot_grant_self`, bez wiersza i zdarzenia).
+(`409 cannot_grant_self`, bez wiersza i zdarzenia). Dotyczy to każdej roli i każdej
+ścieżki: przedłużenie przedstawicieli na nowy rok pomija własny wiersz admina
+(status `cannot_grant_self`, #745), a wspólny zapis przydziału w `src/pg/routes/admin.js`
+(`insertGrantInTx`) odrzuca `userId` równy aktorowi (ochrona w głębi).
 
 Wyjątek (wariant zachowawczy do D-08, który nie blokuje pierwszego
 uruchomienia): gdy nie ma nikogo, kto mógłby zatwierdzić — np. jedyny

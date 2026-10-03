@@ -38,11 +38,13 @@ export function canApplyRepresentatives(plan) {
 export function representativesSummary(plan) {
   const counts = plan?.counts;
   if (!counts) return "";
-  const total = counts.propose + counts.already_granted + counts.user_disabled;
+  const self = counts.cannot_grant_self ?? 0;
+  const total = counts.propose + counts.already_granted + counts.user_disabled + self;
   if (!total) return "Wskazane klasy roku źródłowego nie mają aktywnych przedstawicieli. Nic nie zostanie zapisane.";
   const parts = [`Nowe przydziały do utworzenia: ${counts.propose}`, `już przydzieleni w roku docelowym: ${counts.already_granted}`];
   if (counts.user_disabled) parts.push(`konta wyłączone (pominięte): ${counts.user_disabled}`);
-  const hint = counts.propose ? "" : " Nic nie zostanie zapisane — przydziały już istnieją albo konta są wyłączone.";
+  if (self) parts.push(`Twoje konto (pominięte — przydział nadaje inny administrator): ${self}`);
+  const hint = counts.propose ? "" : " Nic nie zostanie zapisane — przydziały już istnieją albo wiersze są pominięte.";
   return `${parts.join("; ")}.${hint}`;
 }
 
@@ -88,6 +90,9 @@ export function representativesConfirmation(plan, labels) {
       plan.counts.user_disabled
         ? `Konta wyłączone (${plan.counts.user_disabled}) są pomijane — nie dostaną przydziału.`
         : "Konta wyłączone są pomijane.",
+      ...(plan.counts.cannot_grant_self
+        ? ["Twoje konto jest pomijane: rolę przedstawiciela nadaje Ci inny administrator (tabela przydziałów ról)."]
+        : []),
       "Zmiana jest zapisana w dzienniku zdarzeń. Pomyłkę poprawia się cofnięciem przydziału w tabeli przydziałów ról.",
       "Operacja wymaga świeżego potwierdzenia kodem MFA.",
     ],
@@ -97,7 +102,10 @@ export function representativesConfirmation(plan, labels) {
 
 export function representativesResultMessage(result) {
   if (result.replayed) return "Przydziały były już zapisane — nie utworzono nowych.";
-  const skipped = result.skipped ? `; pominięto konta wyłączone: ${result.skipped}` : "";
+  const self = result.skippedSelf ?? 0;
+  const disabled = (result.skipped ?? 0) - self;
+  const skipped = (disabled ? `; pominięto konta wyłączone: ${disabled}` : "")
+    + (self ? `; pominięto Twoje konto (przydział nadaje inny administrator): ${self}` : "");
   return `Przydziały przedstawicieli zapisane: nowe: ${result.created}, już istniały: ${result.alreadyGranted}${skipped}.`;
 }
 
