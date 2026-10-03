@@ -201,9 +201,47 @@ słowem „sekret” oznacza zmienną ustawianą wyłącznie w Railway.
 | `RAILWAY_PROJECT_ID` | aplikacja | nie (ustawia Railway) | brak | jak wyżej |
 | `RAILWAY_SERVICE_ID` | aplikacja | nie (ustawia Railway) | brak | jak wyżej |
 
-Nie ma tu zmiennych dla `--expect-database=<nazwa bazy>` ani znacznika
-środowiska w bazie (część #166 zależna od D-20): to osobny, jeszcze nie
-zrealizowany zakres.
+`--expect-database=<nazwa bazy>` to argument skryptów, nie zmienna środowiska
+(sekcja „Tożsamość bazy w skryptach operatora” niżej); znacznik środowiska
+zapisany w samej bazie nie istnieje (zależy od D-20).
+
+### Tożsamość bazy w skryptach operatora (#166, #191)
+
+`--allow-production` czyta `APP_ENV` z powłoki operatora, nie z bazy: adres
+produkcji wklejony do komendy z `APP_ENV=staging` przechodzi tę kontrolę.
+Dlatego każdy skrypt, który **zapisuje** do bazy, wymaga jawnego argumentu
+`--expect-database=<nazwa bazy z adresu>` i przed pierwszym zapisem porównuje go
+(1) z nazwą w adresie `DATABASE_MIGRATION_URL`/`DATABASE_URL` (bez łączenia się)
+i (2) z `current_database()` na otwartym połączeniu. Brak argumentu, niepoprawna
+nazwa albo niezgodność to kod wyjścia `1` z komunikatem „Nothing was changed”
+(komunikat zawiera nazwy baz, nigdy adresu ani hasła). Wynik nie zależy od
+`APP_ENV`; `--allow-production` nadal obowiązuje osobno.
+
+| Polecenie | Kiedy `--expect-database` jest wymagane |
+|---|---|
+| `npm run db:migrate:postgres` | zawsze |
+| `npm run db:restore:postgres -- <migawka> --apply` | z `--apply` (próba na sucho i `--check` nie łączą się z bazą) |
+| `node scripts/verify-export.js <paczka> --restore-database` | zawsze z `--restore-database` (nie dotyczy `--restore-pglite`) |
+| `npm run auth:bootstrap-admin -- <adres>` | zawsze |
+| `npm run mfa:rotate-key -- --apply` | z `--apply` (w próbie bez zapisu sprawdzane tylko, gdy podane) |
+
+Przykład: `DATABASE_MIGRATION_URL=<referencja> npm run db:migrate:postgres --
+--expect-database=railway`. Odtworzenie z migawki D1 odrzuca ponadto bazę, w
+której **jakakolwiek** tabela (poza `schema_migrations`) ma wiersze, także
+tabela spoza migawki (konto, kolejka e-mail, ślad MFA); lista tabel pochodzi z
+katalogu bazy.
+
+Ograniczenia, żeby nie przeceniać tej ochrony:
+
+- to ochrona przed pomyłką adresu, nie znacznik środowiska: gdy staging i
+  produkcja mają tę samą nazwę bazy (domyślna baza Railway nazywa się `railway`
+  w obu), argument ich nie odróżnia. Przed operacją na produkcji sprawdź też
+  host w adresie i wskaż osobną nazwę bazy tam, gdzie to możliwe;
+- znacznik środowiska w bazie (tabela, migracja) nie jest zrobiony: wymaga
+  decyzji (D-20) i zostaje w #166;
+- nie obejmuje poleceń tylko do odczytu ani kopii (`backup:postgres`,
+  `backup:storage`, `restore:drill`: baza docelowa próby jest osobnym adresem
+  w usłudze cron, bez miejsca na nazwę w poleceniu startowym; zostaje w #166).
 
 ### Walidacja konfiguracji przy starcie (#114)
 
@@ -264,7 +302,7 @@ Kroki (staging, potem produkcja po decyzji szkoły; hasła tylko w Railway,
 nigdy w repozytorium, logach ani zgłoszeniach):
 
 1. Zrób kopię i wykonaj migrator rolą właściciela: `DATABASE_MIGRATION_URL=<referencja>
-   npm run db:migrate:postgres` (`--allow-production` na produkcji). Migracja 0170
+   npm run db:migrate:postgres -- --expect-database=<nazwa bazy>` (`--allow-production` na produkcji). Migracja 0170
    tworzy `rd_app` jako NOLOGIN; jeśli wypisze `NOTICE … pominięto`, użytkownik
    migracji nie ma CREATEROLE — utwórz rolę ręcznie (`CREATE ROLE rd_app NOLOGIN`)
    i ponów GRANT-y z pliku 0170.
@@ -283,9 +321,20 @@ nigdy w repozytorium, logach ani zgłoszeniach):
 Test: `npm run test:pg-real -- tests/pg-real-app-role.test.js` (uprawnienia,
 meta-test każdej tabeli, wpłata i korekta przez `handlePgRequest`). Cały zestaw na
 roli: `RD_TEST_PG_APP_ROLE=rd_app npm run test:pg-real -- --all`.
+Worker e-mail na `rd_app`: `tests/pg-real-app-role.test.js` przepuszcza przez rolę
+cały obieg kampanii (szkic, migawka, zatwierdzenie, kolejka) i przebieg
+`runEmailBatch`, a ponowienie niczego nie wysyła.
 Nie ogranicza tego: `SET LOCAL rd.restore` (zwykły parametr sesji) i prawo
-`TEMPORARY` roli (domyślne dla PUBLIC); `/health/ready` nie ostrzega jeszcze o
-pracy aplikacji jako właściciel (zostaje w #101).
+`TEMPORARY` roli (domyślne dla PUBLIC).
+
+`/health/ready` przy `APP_ENV=production` (także `prod`) sprawdza w katalogu
+bazy, czy rola połączenia jest superużytkownikiem albo właścicielem (także
+przez członkostwo) tabeli `schema_migrations`. Wtedy zapisuje w logu ostrzeżenie
+`readiness_database_role_privileged` z polami `superuser` i `owner` (bez nazwy
+roli i danych), najwyżej raz na godzinę na instancję. To tylko ostrzeżenie:
+gotowość i publiczna odpowiedź są bez zmian, a przy `rd_app` i poza produkcją nie
+ma ani zapytania, ani wpisu. Alarm na ten wpis (Railway) i przełączenie
+`DATABASE_URL` na `rd_app` zostają do zrobienia na stagingu.
 
 ## Region i sieć
 
@@ -591,7 +640,7 @@ logowaniem):
 
 ```sh
 DATABASE_URL=<referencja z Railway> APP_ENV=staging \
-  npm run auth:bootstrap-admin -- <adres-pierwszego-administratora> [--ttl-hours=24]
+  npm run auth:bootstrap-admin -- <adres-pierwszego-administratora> --expect-database=<nazwa bazy> [--ttl-hours=24]
 ```
 
 - Skrypt działa tylko, gdy **nie ma aktywnego administratora** (przydział
@@ -641,7 +690,8 @@ i format `MFA_ENCRYPTION_KEYS`: `docs/AUTH.md`.
    Redeploy usługi.
 3. Tryb próbny: `DATABASE_URL=<referencja> MFA_ENCRYPTION_KEYS=2:<nowy>,1:<stary> npm run mfa:rotate-key`
    — sprawdzić liczbę kont do rotacji i `missing key` (musi być 0).
-4. Zapis: to samo z `-- --apply`. Skrypt jest idempotentny — bezpiecznie
+4. Zapis: to samo z `-- --apply --expect-database=<nazwa bazy>` (nazwa bazy jest
+   wymagana przy zapisie, sekcja „Tożsamość bazy w skryptach operatora”). Skrypt jest idempotentny — bezpiecznie
    uruchomić ponownie, gdyby coś przerwało pierwsze uruchomienie.
 5. Po potwierdzeniu, że raport pokazuje 0 kont na starej wersji (kolejne
    uruchomienie skryptu, `rotated: 0`), usunąć stary klucz z pierścienia
@@ -969,7 +1019,7 @@ D-20 zapisana, okno serwisowe uzgodnione z zarządem.
 5. Porównać raport zgodności (liczności, sumy wpłat, przychody/wydatki);
    podpis dwóch osób (np. skarbnik + członek zarządu).
 6. Wydać zaproszenie pierwszemu administratorowi (`npm run auth:bootstrap-admin
-   -- <adres> --allow-production`, sekcja „Pierwszy administrator”); administrator
+   -- <adres> --expect-database=<nazwa bazy> --allow-production`, sekcja „Pierwszy administrator”); administrator
    ustawia hasło i MFA, potem zaprasza pozostałe konta.
 7. Wykonać ręczny deploy produkcji na Railway, sprawdzić `/health`, logowanie,
    panel wpłat i księgi na koncie testowym.

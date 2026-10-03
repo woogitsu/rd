@@ -164,9 +164,11 @@ test('migrate-postgres: odmowa bez --allow-production przy production/prod/brak/
   assert.match(run('migrate-postgres.js', [], undefined).stderr, /APP_ENV: brak/);
   assert.match(run('migrate-postgres.js', [], 'prodution').stderr, /nieznana wartość/);
   for (const [args, appEnv] of [[[], 'staging'], [[], 'Staging'], [['--allow-production'], 'Production'], [['--allow-production'], undefined]]) {
-    const passed = run('migrate-postgres.js', args, appEnv);
+    // #166: --expect-database=rd_test zgodne z UNREACHABLE_DB; testy tożsamości bazy: tests/database-identity.test.js.
+    const passed = run('migrate-postgres.js', [...args, '--expect-database=rd_test'], appEnv);
     assert.doesNotMatch(passed.stderr, /requires explicit --allow-production/, String(appEnv));
     assert.match(passed.stderr, /Migration failed/, String(appEnv)); // bramka przepuszcza, dalej nieosiągalna baza
+    assert.doesNotMatch(passed.stderr, /expect-database|identity/, String(appEnv));
   }
 });
 

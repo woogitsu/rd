@@ -71,7 +71,7 @@ Kontrolowany eksport, snapshot, transakcyjny import do pustej bazy i rollback
 opisuje [`docs/D1_POSTGRES_MIGRATION.md`](../docs/D1_POSTGRES_MIGRATION.md).
 
 Migrator uruchamia się **wyłącznie ręcznie**: `DATABASE_URL=... npm run
-db:migrate:postgres`. Nie startuje wraz z aplikacją. Każdy plik SQL jest
+db:migrate:postgres -- --expect-database=<nazwa bazy>`. Nie startuje wraz z aplikacją. Każdy plik SQL jest
 zatwierdzany w osobnej transakcji, pod blokadą advisory lock. Ponowne
 uruchomienie pomija zapisane migracje, a zmiana sumy kontrolnej lub brak
 wcześniej wykonanej migracji zatrzymują proces. Nie należy edytować wykonanych
@@ -79,7 +79,7 @@ plików SQL; zmianę schematu dodaje się jako następny plik.
 
 Na środowisku z `APP_ENV=production` (także `prod`/`Production`, a zachowawczo również przy braku lub nieznanej wartości `APP_ENV`; `src/app-env.js`) trzeba dodatkowo przekazać argument
 `--allow-production`; użycie wymaga wcześniej kopii zapasowej, zatwierdzonego
-planu przywracania i decyzji administratora szkoły. Flaga `--allow-production` sprawdza wyłącznie `APP_ENV` z powłoki operatora, nie oznaczenie docelowej bazy: `DATABASE_URL` produkcji podany z `APP_ENV=staging` przejdzie tę kontrolę. Realnie chroni przed pomyłką (brak lub literówka w `APP_ENV` daje odmowę), nie przed świadomym wpisaniem innego środowiska. Znacznik środowiska w bazie i `--expect-database` czekają na D-20 (#166); do tego czasu przed każdą operacją sprawdź host i nazwę bazy w `DATABASE_URL`. Nie wpisywać URL bazy ani
+planu przywracania i decyzji administratora szkoły. Flaga `--allow-production` sprawdza wyłącznie `APP_ENV` z powłoki operatora, nie oznaczenie docelowej bazy: `DATABASE_URL` produkcji podany z `APP_ENV=staging` przejdzie tę kontrolę. Realnie chroni przed pomyłką (brak lub literówka w `APP_ENV` daje odmowę), nie przed świadomym wpisaniem innego środowiska. Dlatego migrator wymaga też `--expect-database=<nazwa bazy>` (`npm run db:migrate:postgres -- --expect-database=<nazwa>`): nazwa jest porównywana z adresem i z `current_database()` przed pierwszym zapisem, niezależnie od `APP_ENV` (#166). To ochrona przed pomyłką adresu, a nie znacznik środowiska: gdy staging i produkcja mają tę samą nazwę bazy (Railway: `railway`), argument ich nie odróżnia, więc przed operacją sprawdź też host. Znacznik środowiska zapisany w bazie czeka na D-20. Nie wpisywać URL bazy ani
 jej zawartości do repozytorium, logów czy zgłoszeń. Najpierw testować na
 pustej bazie z danymi syntetycznymi.
 

@@ -7,7 +7,13 @@
 //      awaryjny) przy normalnym `APP_WRITE_MODE` to 503 `database: "read_only"`,
 //      bez żadnego zapisu kontrolnego i bez tworzenia danych,
 //   2. czy tabela schema_migrations zawiera wszystkie pliki z postgres/migrations,
-//   3. czy suma kontrolna każdego nałożonego pliku zgadza się z repozytorium (#79).
+//   3. czy suma kontrolna każdego nałożonego pliku zgadza się z repozytorium (#79),
+//   4. przy APP_ENV=production: czy aplikacja nie działa rolą właściciela tabel
+//      ani superużytkownikiem (SR-05, #101). To tylko OSTRZEŻENIE w logu
+//      (`readiness_database_role_privileged`, bez nazwy roli i danych), nie
+//      zmienia gotowości i nie trafia do publicznej odpowiedzi; powtarza się
+//      najwyżej raz na godzinę na instancję bazy. Rola `rd_app` (migracja 0170)
+//      nie jest właścicielem i nie ostrzega.
 // Odpowiedź zawiera wyłącznie stan techniczny: liczby i nazwy brakujących
 // migracji (nazwy plików z repozytorium), nigdy danych z tabel ani treści błędów.
 // 503 = niegotowy (brak bazy, błąd/timeout bazy, brakujące migracje, niezgodna
@@ -32,11 +38,13 @@
 // przez PGlite w testach.
 
 import { fileURLToPath } from 'node:url';
+import { isProductionEnv } from './app-env.js';
 import { loadMigrations } from './postgres-migrations.js';
 import { describeError, log } from './log.js';
 import { isReadOnly, WRITE_MODE_NORMAL, WRITE_MODE_READ_ONLY } from './write-mode.js';
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 2000;
+export const PRIVILEGED_ROLE_WARN_INTERVAL_MS = 60 * 60 * 1000;
 const MIGRATIONS_DIR = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 let cachedMigrations = null;
@@ -62,6 +70,25 @@ function withTimeout(promise, timeoutMs) {
 // `db` (WeakMap), więc różne środowiska (różne pule/testy) nigdy się nie
 // mieszają, a wpis znika sam, gdy `db` przestaje być używane.
 const inflightChecks = new WeakMap();
+// Ostatnie ostrzeżenie o roli uprzywilejowanej dla danej instancji `env.db`.
+const lastRoleWarning = new WeakMap();
+
+// Czy rola połączenia jest superużytkownikiem albo właścicielem (także przez
+// członkostwo) tabeli schema_migrations. Tylko katalog systemowy, żadnych danych.
+// Błąd lub nietypowa odpowiedź (atrapa bazy) = brak ostrzeżenia, nigdy niegotowość.
+async function privilegedRole(q) {
+  try {
+    const { rows } = await q.query(
+      `SELECT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false) AS superuser,
+              COALESCE((SELECT pg_has_role(current_user, relowner, 'USAGE') FROM pg_class WHERE oid = to_regclass('public.schema_migrations')), false) AS owner`,
+    );
+    const row = rows?.[0];
+    if (!row || (row.superuser !== true && row.owner !== true)) return null;
+    return { superuser: row.superuser === true, owner: row.owner === true };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * @returns {Promise<{ ready: boolean, body: object }>}
@@ -74,7 +101,7 @@ export async function checkReadiness(env = {}, options = {}) {
   }
   const existing = inflightChecks.get(env.db);
   if (existing) return existing.then(withWriteMode);
-  const promise = performReadinessCheck(env.db, { ...options, expectWritable: writeMode === WRITE_MODE_NORMAL });
+  const promise = performReadinessCheck(env.db, { appEnv: env.APP_ENV, ...options, expectWritable: writeMode === WRITE_MODE_NORMAL });
   inflightChecks.set(env.db, promise);
   try {
     return withWriteMode(await promise);
@@ -90,16 +117,19 @@ async function performReadinessCheck(db, {
   migrations: migrationsProvider = repositoryMigrations,
   logger = log,
   expectWritable = true,
+  appEnv,
+  now = () => Date.now(),
 } = {}) {
   try {
     const expected = await migrationsProvider();
+    const warnPrivileged = isProductionEnv(appEnv);
     const runChecks = async (q) => {
       const probeRow = await q.query("SELECT current_setting('transaction_read_only') AS read_only");
       const readOnly = probeRow.rows?.[0]?.read_only === 'on';
       const table = await q.query("SELECT to_regclass('public.schema_migrations') IS NOT NULL AS present");
-      if (!table.rows?.[0]?.present) return { applied: null, readOnly };
+      if (!table.rows?.[0]?.present) return { applied: null, readOnly, privileged: null };
       const { rows } = await q.query('SELECT name, checksum FROM schema_migrations');
-      return { applied: new Map(rows.map((row) => [row.name, row.checksum])), readOnly };
+      return { applied: new Map(rows.map((row) => [row.name, row.checksum])), readOnly, privileged: warnPrivileged ? await privilegedRole(q) : null };
     };
     // Prawdziwa pula (src/db.js) udostępnia `probe`: zapytania mają budżet
     // czasu po stronie serwera (SET LOCAL statement_timeout), więc po
@@ -108,6 +138,14 @@ async function performReadinessCheck(db, {
     const result = typeof db.probe === 'function'
       ? await db.probe(runChecks, { timeoutMs })
       : await withTimeout(runChecks(db), timeoutMs);
+    if (result.privileged) {
+      const at = now();
+      const last = lastRoleWarning.get(db);
+      if (last === undefined || at - last >= PRIVILEGED_ROLE_WARN_INTERVAL_MS) {
+        lastRoleWarning.set(db, at);
+        logger.warn('readiness_database_role_privileged', result.privileged);
+      }
+    }
     if (result.readOnly && expectWritable) {
       logger.error('readiness_database_read_only', {});
       return { ready: false, body: { status: 'not_ready', checks: { database: 'read_only' } } };

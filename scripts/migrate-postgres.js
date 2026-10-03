@@ -2,6 +2,7 @@ import { migrationDatabaseUrl } from '../src/migration-url.js';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
 import { appEnvWarning, guardDangerousOperation } from '../src/app-env.js';
+import { assertConnectedDatabase, requireExpectedDatabase } from '../src/database-identity.js';
 import { applyMigrations, loadMigrations } from '../src/postgres-migrations.js';
 
 if (!migrationDatabaseUrl()) {
@@ -16,7 +17,10 @@ if (!migrationDatabaseUrl()) {
   const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
   const client = new Client({ connectionString: migrationDatabaseUrl() });
   try {
+    // #166: nazwa bazy z --expect-database musi zgadzać się z adresem i z current_database(), zanim cokolwiek zostanie zapisane.
+    const expectedDatabase = requireExpectedDatabase({ url: migrationDatabaseUrl(), args: process.argv.slice(2) });
     await client.connect();
+    await assertConnectedDatabase(client, expectedDatabase);
     const allowOutOfOrder = process.argv.includes('--allow-out-of-order');
     const completed = await applyMigrations(client, await loadMigrations(directory), { allowOutOfOrder });
     console.log(completed.length ? `Applied migrations: ${completed.join(', ')}` : 'No pending migrations.');

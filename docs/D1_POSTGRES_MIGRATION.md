@@ -43,12 +43,17 @@ backup i cutover prowadzi issue #41 po zatwierdzeniu administratora danych.
 
    ```sh
    DATABASE_URL='...' APP_ENV=staging npm run db:restore:postgres -- \
-     /private/path/rd-snapshot.json --apply
+     /private/path/rd-snapshot.json --apply --actor=<userId> --expect-database=<nazwa bazy>
    ```
 
    `APP_ENV=staging` wpisane w powłoce nie dowodzi, że `DATABASE_URL` wskazuje
-   staging: strażnik `--allow-production` go nie weryfikuje. Przed `--apply`
-   sprawdź host i nazwę bazy w adresie; twardą blokadą pozostaje wymóg pustej bazy.
+   staging: strażnik `--allow-production` go nie weryfikuje. Dlatego `--apply`
+   wymaga `--expect-database=<nazwa bazy>`, porównywanej z adresem i z
+   `current_database()` przed zapisem (#166; ograniczenia: sekcja „Tożsamość bazy
+   w skryptach operatora” w [RAILWAY_OPERATIONS.md](RAILWAY_OPERATIONS.md)).
+   Przed `--apply` sprawdź też host w adresie. Twardą blokadą pozostaje wymóg
+   pustej bazy: **każda** tabela poza `schema_migrations` musi być pusta, także
+   spoza migawki (konta, kolejka e-mail, ślady MFA).
 
 5. Zachować raport bez danych osobowych: liczności wszystkich tabel, sumę
    netto wpłat, sumy przychodów i wydatków oraz odcisk SHA-256 każdej tabeli
@@ -140,8 +145,9 @@ triggery D1 blokują ich poprawkę w miejscu. Dlatego:
   konto wyłączone lub nieznane przerywa import przed zapisem. Zdarzenie jest
   w domenie „Dokumenty, eksporty i wydruki” dziennika, widoczne tylko dla `admin`.
   Nie zrealizowano (poza zakresem tej zmiany): zamrożenie zapisów D1, punkt
-  odniesienia D1, deterministyczna historia pochodna (triggery 0014),
-  `--expect-database` i okno wycofania. Wobec #227 (Worker nigdy nie był
+  odniesienia D1, deterministyczna historia pochodna (triggery 0014)
+  i okno wycofania (`--expect-database` oraz pusta baza we wszystkich tabelach
+  są zrobione, #166). Wobec #227 (Worker nigdy nie był
   wdrożony) część dotycząca przeniesienia danych z D1 ma niski priorytet.
 - Zgodność z migracjami 0004, 0008 i 0009 oraz wyniki porównania API opisuje
   [EQUIVALENCE.md](EQUIVALENCE.md).
