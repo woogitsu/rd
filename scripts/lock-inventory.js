@@ -254,10 +254,6 @@ export const LOCK_EXCEPTIONS = [
     reason: 'Blokada (tylko z decideRequest, po blokadzie wniosku z mutantem guardian-update-decide) ustala stan weryfikacji zapisany w audycie decyzji. Anulowanie kodu jest warunkowym UPDATE … AND state = \'queued\', więc nie nadpisuje wysyłki workera; bez blokady audyt może pokazać stan sprzed równoległego potwierdzenia kodu (bez zmiany danych).',
   },
   {
-    file: 'src/pg/routes/guardian-updates.js', fn: 'confirmCode', table: 'guardian_update_verifications', category: 'luka',
-    reason: 'Brak testu z barierą: bez blokady równoległe próby kodu czytają ten sam licznik failed_attempts (limit VERIFY_MAX_FAILED_ATTEMPTS można przekroczyć o liczbę równoległych żądań; CHECK ≤ 5 w 0184 przerywa dopiero zapis ponad 5), a dwa poprawne kody dopisują dwa zdarzenia verification_confirmed. Test wymaga zasiania wysłanego kodu — dalszy zakres #208.',
-  },
-  {
     file: 'src/pg/routes/guardian-updates.js', fn: 'approveTemplate', table: 'guardian_verify_templates', category: 'ograniczenie',
     evidence: { migration: 'guardian_verify_template_guard' },
     reason: 'Wyzwalacz guardian_verify_template_guard (0184) dopuszcza wyłącznie przejście draft → approved, więc drugie zatwierdzenie nie nadpisze approved_by; bez blokady kończy się błędem wyzwalacza zamiast powtórki/409.',
@@ -289,22 +285,6 @@ export const LOCK_EXCEPTIONS = [
     reason: 'Wyzwalacz password_reset_token_guard (0020) odrzuca zmianę tokenu już użytego albo cofniętego, więc drugie użycie tego samego tokenu wycofuje całą transakcję (z nowym hasłem); bez blokady: błąd wyzwalacza zamiast 400 invalid_token.',
   },
   {
-    file: 'src/pg/login.js', fn: 'adminResetMfaInTx', table: 'users', category: 'luka',
-    reason: 'Podwójny reset jest bezpieczny (warunkowe UPDATE … AND disabled_at IS NULL: drugi zwraca changed: false), ale bez blokady konta reset nie czeka na równoległe rozpoczęcie zapisu czynnika (lockUser w mfa.js) i nie widzi wstawianego czynnika, który przetrwa reset. Brak testu z barierą — dalszy zakres #208.',
-  },
-  {
-    file: 'src/pg/mfa.js', fn: 'lockUser', table: 'users', category: 'luka',
-    reason: 'Para z activeFactors (ta sama transakcja): każda z blokad osobno serializuje weryfikację kodu TOTP (last_used_step) i zapis czynnika, więc mutant jednej przeżyje (mutant równoważny); usunięcie obu pozwala powtórzyć ten sam kod w dwóch równoległych żądaniach. Brak testu z barierą i mutanta dwóch funkcji — dalszy zakres #208.',
-  },
-  {
-    file: 'src/pg/mfa.js', fn: 'activeFactors', table: 'user_mfa_factors', category: 'luka',
-    reason: 'Druga z pary z lockUser (zawsze wołana po niej): sama nie jest jedynym punktem serializacji, a razem z lockUser chroni last_used_step przed powtórzeniem kodu TOTP. Brak testu z barierą — dalszy zakres #208.',
-  },
-  {
-    file: 'src/pg/mfa-key-rotation.js', fn: 'rotateOneAccount', table: 'user_mfa_factors', category: 'luka',
-    reason: 'Skrypt operatora (mfa:rotate-key) przepisuje czynnik z last_used_step; bez blokady równoległa weryfikacja kodu w tej samej chwili zapisze krok na starym, właśnie wyłączanym wierszu, a nowy dostanie krok sprzed niej (jednorazowe powtórzenie kodu w tym samym kroku). Brak testu z barierą — dalszy zakres #208.',
-  },
-  {
     file: 'src/pg/routes/admin.js', fn: 'setUserDisabled', table: 'users', category: 'ograniczenie',
     evidence: { code: 'WHERE id = $1 AND disabled_at IS NULL RETURNING id' },
     reason: 'Wyłączenie i włączenie konta to warunkowe UPDATE (… AND disabled_at IS NULL / IS NOT NULL): drugi UPDATE czeka na pierwszy i po jego zatwierdzeniu nie zmienia wiersza (changed: false, bez zdarzenia). Wyścig z tworzeniem sesji (#256) zamyka FOR SHARE w createSession (mutant session-create-share).',
@@ -323,10 +303,6 @@ export const LOCK_EXCEPTIONS = [
     file: 'src/pg/routes/email.js', fn: 'approveResolution', table: 'email_outbox', category: 'ograniczenie',
     evidence: { migration: 'resolution_id TEXT NOT NULL UNIQUE' },
     reason: 'Jedno zatwierdzenie na rozstrzygnięcie: UNIQUE email_outbox_resolution_approvals.resolution_id (0156); bez blokady drugie kliknięcie dostaje 23505 zamiast powtórki, bez drugiego zapisu.',
-  },
-  {
-    file: 'src/pg/routes/email.js', fn: 'recordWebhookEvent', table: 'email_outbox', category: 'luka',
-    reason: 'Zdarzenie dostawcy (bounce, skarga) czyta stan wiersza kolejki i może go zmienić na bounced oraz dopisać blokadę adresu. Powtórzenia tego samego zdarzenia odcina UNIQUE dedupe_key, ale bez blokady dwa RÓŻNE zdarzenia jednego adresu mogą dopisać dwie aktywne blokady, a zdarzenie w trakcie zapisu stanu przez worker — przeoczyć przejście sent → bounced. Brak testu z barierą (wymaga przebiegu workera w trakcie) — dalszy zakres #208.',
   },
   {
     file: 'src/pg/routes/privacy-notice.js', fn: 'approveNotice', table: 'privacy_notices', category: 'ograniczenie',

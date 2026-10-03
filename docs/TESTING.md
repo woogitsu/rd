@@ -702,9 +702,48 @@ blokady w obu przypadkach powstają dwa wiersze — tabele nie mają indeksu uni
 wiersz. Kampania źródłowa przechodzi przez worker z atrapą transportu; nic nie wychodzi do sieci.
 Mutanty: `email-outbox-resolution`, `email-suppression-release`.
 
-Każdy z mutantów trzech plików powyżej i `ledger-category-deactivate` pada także na samym skutku
-(sprawdzone jednorazowo z wyłączonymi asercjami miejsca czekania w `tests/helpers/pg-race.js`), a nie
-tylko na tym, gdzie czeka drugie żądanie.
+`tests/pg-real-guardian-verify-locks.test.js` (#208, dawna luka inwentaryzacji, pomijany bez `RD_TEST_PG_URL`):
+kod weryfikacyjny nowego adresu z wniosku rodzica (#140 pkt 5). Kod wysyła worker z atrapą transportu; po czterech
+błędnych próbach poprawny kod wpisany razem z piątą błędną czeka na blokadę wiersza weryfikacji (`confirmCode`) i
+jest odrzucony (`400`, limit wyczerpany, bez `verification_confirmed`). Bez blokady poprawny kod czyta licznik sprzed
+piątej próby i potwierdza adres mimo wyczerpanego limitu (wyzwalacz 0184 nie wiąże potwierdzenia z licznikiem; CHECK
+`failed_attempts ≤ 5` przerywa tylko dwie równoległe BŁĘDNE próby — błędem zamiast odmowy). Mutant:
+`guardian-verify-confirm`.
+
+`tests/pg-real-mfa-locks.test.js` (#208, dawne luki inwentaryzacji, pomijany bez `RD_TEST_PG_URL`): blokady MFA.
+Para `lockUser`/`activeFactors` (`mfa.js`): przy dwóch weryfikacjach tego samego kodu TOTP w dwóch sesjach każda z
+blokad osobno wystarcza (druga weryfikacja czeka i dostaje `400`, kod przyjęty raz) — mutant jednej z nich pada tam
+tylko na miejscu czekania, a usunięcie obu naraz pokazuje kontrola pozytywna w tym pliku (`rewrite` w `race`: ten
+sam kod przyjęty dwa razy). Każda blokada ma też własny scenariusz: podwójne „Włącz MFA” przy pierwszym zapisie
+czynnika (bez `lockUser` nie ma czego blokować w `activeFactors`, drugie żądanie dostaje 23505 na
+`user_mfa_factors_one_pending` zamiast zastąpienia czynnika oczekującego — mutant `mfa-lock-user`) oraz rotacja
+klucza w chwili, gdy weryfikacja odczytała czynnik (bez blokady czynnika rotacja bierze wiersz pierwsza, a jej
+`INSERT` przez klucz obcy czeka na `lockUser` weryfikacji — zakleszczenie 40P01 zamiast czekania; mutant
+`mfa-active-factors`). Rotacja w trakcie weryfikacji (`rotateOneAccount`) czeka na blokadę czynnika i przenosi
+zużyty krok; bez blokady nowy wiersz dostaje krok sprzed weryfikacji i ten sam kod przechodzi drugi raz (mutant
+`mfa-key-rotation`). Reset MFA przez administratora w trakcie ponownego zapisu czynnika czeka na blokadę konta i
+wyłącza też nowy czynnik oczekujący; bez niej `UPDATE` resetu czeka tylko na wiersz wyłączany przez zapis czynnika,
+nowego wiersza nie ma w jego migawce — reset kończy się `changed: false` (bez wylogowania i zdarzenia), a czynnik
+przetrwa reset (mutant `mfa-admin-reset`). Podwójny reset sam w sobie jest bezpieczny (warunkowe `UPDATE … AND
+disabled_at IS NULL`). Znane, nienaprawione w tym zakresie: kolejność blokad w `rotateOneAccount` (czynnik, potem
+przez klucz obcy konto) jest odwrotna niż w `mfa.js` i `adminResetMfaInTx` (konto, potem czynnik). Gdy rotacja
+wyłączyła już stary wiersz, a nie wstawiła nowego, weryfikacja, zapis czynnika albo reset MFA biorące w tej chwili
+blokadę konta kończą się zakleszczeniem (40P01) także z kompletem blokad. `src/db.js` ponawia 40P01, więc stan
+końcowy jest poprawny, ale jedna operacja czeka ok. 1 s (`deadlock_timeout`) i powtarza się. Naprawa (blokada konta
+na początku `rotateOneAccount`) zmienia rolę blokad czynnika (staną się drugą warstwą) — osobny zakres.
+
+`tests/pg-real-webhook-locks.test.js` (#208, dawna luka inwentaryzacji, pomijany bez `RD_TEST_PG_URL`): zdarzenia
+dostawcy (atrapa webhooka Brevo, worker z atrapą transportu). Twarde odbicie zgłoszone, gdy worker zapisuje wynik
+wysyłki (`sending → sent`, bez COMMIT), czeka na blokadę wiersza kolejki w `recordWebhookEvent` i oznacza wiadomość
+jako `bounced`; bez blokady czyta stan `sending` i wiadomość zostaje `sent`. Dwa różne zdarzenia odbicia tej samej
+wiadomości dają jedną blokadę adresu (bez blokady — dwie, bo tabela nie ma indeksu unikalnego na aktywną blokadę).
+To samo zdarzenie dwa razy daje jeden zapis także bez blokady (UNIQUE `dedupe_key`, `ON CONFLICT DO NOTHING`) —
+test dokumentuje tę gwarancję. Mutant: `email-webhook-outbox`.
+
+Każdy z mutantów plików powyżej (od `pg-real-request-locks`) i `ledger-category-deactivate` pada także na samym
+skutku (sprawdzone jednorazowo z wyłączonymi asercjami miejsca czekania w `tests/helpers/pg-race.js`), a nie tylko
+na tym, gdzie czeka drugie żądanie. `mfa-active-factors` pada na zakleszczeniu (40P01), pozostałe na danych albo
+odpowiedzi.
 
 `tests/pg-real-record-locks.test.js` (#208, #111, pomijany bez `RD_TEST_PG_URL`): bariera dla kolejnych blokad
 wiersza, których jedynym punktem serializacji jest zapytanie `FOR UPDATE` z kodu trasy. Rodziny: dwie identyczne
@@ -791,7 +830,8 @@ może porównywać `rows[0].n === 0` ani dodawać wartości `bigint` bez `toSafe
 (`FOR UPDATE` albo `pg_advisory_xact_lock` w jednej funkcji) w kopii kodu w katalogu
 tymczasowym i uruchamia wskazany plik testów na prawdziwym PostgreSQL; mutant musi dać
 czerwony test. Najpierw przebieg bez mutacji (musi być zielony). Kod repozytorium nie
-jest zmieniany. CI uruchamia to w jobie `test-pg-real` po `npm run test:pg-real`.
+jest zmieniany. CI uruchamia to w jobie `test-pg-mutations` podzielonym na 3 części
+(`npm run test:pg-mutations -- --shard=i/3`; „Podział mutantów na części” niżej), nocny workflow — wszystkie naraz.
 `tests/lock-mutations.test.js` (zwykłe shardy) pilnuje, żeby lista się nie zestarzała.
 Obecnie lista obejmuje: korektę i przypisanie wpłaty, zwrot, ponowne przypisanie, części wpłaty i ich cofnięcie, storno przeniesienia kasa ↔ rachunek, przeksięgowanie wpisu księgi, korektę wpisu księgi i ujęcie
 wpłaty w księdze, blokadę uzgodnienia, blokadę kampanii (zatwierdzenie i anulowanie),
@@ -812,11 +852,64 @@ Mutanty z polem `table` usuwają blokadę jednej tabeli w funkcji z kilkoma blok
 Inwentaryzacja blokad dodała mutanty z `tests/pg-real-request-locks.test.js`,
 `tests/pg-real-auth-locks.test.js`, `tests/pg-real-email-locks.test.js` i `ledger-category-deactivate`
 (opisy wyżej) oraz blokady z istniejącymi testami z barierą: `lockGrantRequest` (`grant-request-lock`,
-`pg-real-double-click`) i `createSession`. Blokady wierszy spoza listy mają wpis w `LOCK_EXCEPTIONS` — tabela niżej.
+`pg-real-double-click`) i `createSession`. Domknięcie luk inwentaryzacji dodało `guardian-verify-confirm`,
+`mfa-lock-user`, `mfa-active-factors`, `mfa-key-rotation`, `mfa-admin-reset` i `email-webhook-outbox`. Blokady wierszy spoza listy mają wpis w `LOCK_EXCEPTIONS` — tabela niżej.
 Poza skanem zostają blokady doradcze bez mutanta (`promotions.js`, `anonymization.js`,
 `invitation-batch.js`, `processing-restrictions.js`, `reconciliation.js` — `bank_statement_file_import`,
 `privacy-notice.js`, `email.js` — limit dostawcy), `LOCK TABLE` w `createOpening` i `bootstrap-admin.js`
 oraz blokady w wyzwalaczach migracji.
+
+### Podział mutantów na części (#111)
+
+Do #111 job `test-pg-real` uruchamiał po kolei testy na PostgreSQL i wszystkie mutanty; na GitHub trwał 8,3–9,3 min
+i wyznaczał czas PR (shardy `test` 2,2–5,4 min). Pomiar z kroków trzech przebiegów z 3 października 2026
+(runy 37120800949, 37121017225, 37121057725; `gh api repos/<repo>/actions/jobs/<id>` → `steps`):
+
+| krok jobu `test-pg-real` | przebiegi 1 / 2 / 3 |
+|---|---|
+| przygotowanie (kontener `postgres`, checkout, `npm ci`) | 21 / 23 / 26 s |
+| `npm run test:pg-real` (27 plików) | 127 / 127 / 106 s |
+| `npm run test:pg-mutations` (57 mutantów, 13 plików bez mutacji ok. 60 s) | 404 / 399 / 361 s |
+| cały job | 555 / 552 / 496 s |
+
+Kontrola mutacyjna to ok. 3/4 czasu jobu, więc biegnie teraz w osobnym jobie `test-pg-mutations` z macierzą `part: [1, 2, 3]`;
+każda część ma własną usługę `postgres` (ten sam digest), a `ci-ok` wymaga obu jobów. Job `test-pg-real` uruchamia już tylko
+`npm run test:pg-real`.
+
+- **Podział.** `npm run test:pg-mutations -- --shard=i/N` uruchamia część i/N; listę liczy
+  `scripts/lock-mutation-shards.js` wyłącznie z listy `MUTANTS` i N (bez stanu maszyny). Mutanty są ułożone grupami według
+  pliku testów (kolejność pierwszego wystąpienia), a ciąg jest pocięty na N kolejnych, niepustych kawałków o najmniejszym
+  najdłuższym szacunku (programowanie dynamiczne). Kawałki kolejne, bo każda część najpierw uruchamia bez mutacji pliki
+  swoich mutantów: plik testów jest przecięty najwyżej na granicy części, więc przebieg bez mutacji powtarza się najwyżej
+  N−1 razy. Szacunek części = jeden przebieg pliku na mutant + jeden przebieg bez mutacji na plik; czasy plików
+  (`TEST_SECONDS`) to średnie z tych trzech przebiegów, a plik spoza tabeli dostaje `DEFAULT_TEST_SECONDS` (5 s).
+  Podgląd: `node scripts/lock-mutation-shards.js --plan 3`; lista części: `npm run test:pg-mutations -- --list --shard=2/3`.
+  `--shard` nie łączy się z wyborem mutantów po id. Nocny workflow uruchamia wszystkie mutanty w jednym kroku (bez `--shard`).
+- **Strażnicy.** `tests/lock-mutations.test.js`: części 1..N (N = 1..8, także z nowym mutantem i nowym plikiem testów) są
+  rozłączne, niepuste, a ich suma to wszystkie mutanty; `shardMutants` zwraca część planu, a plan jest powtarzalny;
+  przebiegów bez mutacji jest najwyżej „pliki + N − 1”; `--shard` odrzuca zły numer; `ci.yml` ma macierz 1..N bez luk,
+  `--shard=${{ matrix.part }}/N` z N równym macierzy i `fail-fast: false`; CLI `--list --shard=i/N` dla każdej części CI
+  daje rozłączne listy o sumie `MUTANTS`; `test-pg-mutations` ma usługę o tym samym obrazie co `test-pg-real` i
+  `RD_TEST_PG_URL`; `test-pg-real` nie uruchamia już mutantów; `ci-ok` ma oba joby w `needs` i sprawdza ich wynik;
+  najdłuższa szacowana część CI mieści się w 125% średniej. `tests/ci-supply-chain.test.js`: `ci-ok` wymaga obu jobów,
+  a wszystkie usługi w `ci.yml` mają ten sam obraz przypięty do digestu.
+- **Szacunek i pomiar.** Plan dla N = 3 (57 mutantów, szacunek całości 384 s wobec zmierzonych 361–404 s):
+
+  | część | mutanty | pliki testów | szacunek |
+  |---|---|---|---|
+  | 1/3 | 11 | `pg-real-double-click` | 132 s |
+  | 2/3 | 24 | `pg-real-payment-locks` … `pg-real-budget-locks`, początek `pg-real-record-locks` | 132 s |
+  | 3/3 | 22 | reszta `pg-real-record-locks`, `pg-real-replay-23505` … `pg-real-email-locks` | 127 s |
+
+  Oczekiwany najdłuższy job PG na GitHub: ok. 130 s kroku + ok. 25 s przygotowania ≈ 2,6 min (`test-pg-real`: ok.
+  2,5 min), czyli poniżej najdłuższego shardu `test`; przed zmianą 8,3–9,3 min.
+  Lokalnie (kontener: 4 rdzenie, 16 GB, PostgreSQL 16 bez `RD_TEST_PG_URL`, czyli własny serwer `initdb` na każdy przebieg
+  pliku): `npm run test:pg-mutations -- --shard=3/3` — 6 plików bez mutacji, 22 mutanty zabite, 226 s; różnica względem
+  szacunku to głównie start własnego serwera przy każdym z 28 przebiegów (w CI serwer jest jeden, z usługi `postgres`).
+- **Kiedy zmienić N albo czasy.** Gdy podsumowanie przebiegu pokaże część `test-pg-mutations` dłuższą niż najdłuższy shard
+  `test` (np. po dodaniu kilku mutantów do `pg-real-double-click`, ok. 11 s na mutant), dopisz czas nowego pliku do
+  `TEST_SECONDS` albo zwiększ N — macierz `part` i `--shard=…/N` w `ci.yml` zmieniają się razem (pilnuje tego strażnik).
+  Każda dodatkowa część to osobny runner z ok. 25 s przygotowania i jednym dodatkowym przebiegiem bez mutacji.
 
 ### Inwentaryzacja blokad wierszy (`tests/lock-inventory.test.js`)
 
@@ -840,9 +933,11 @@ i powodem — nowa blokada bez mutanta i bez wyjątku oblewa test. Kategorie wyj
   skutek.
 
 Funkcja z blokadami kilku tabel wymaga mutanta na konkretną tabelę (`table`), żeby dowód dotyczył
-jednej blokady. Stan: 84 blokady wierszy, 51 z mutantem (57 mutantów, w tym blokady doradcze), 33 wyjątki:
-8 zagnieżdżonych, 19 ograniczeń i 6 luk (`confirmCode` w `guardian-updates.js`, `adminResetMfaInTx`,
-`lockUser`/`activeFactors` w `mfa.js`, `rotateOneAccount`, `recordWebhookEvent`).
+jednej blokady. Stan: 84 blokady wierszy, 57 z mutantem (63 mutanty, w tym blokady doradcze), 27 wyjątków:
+8 zagnieżdżonych i 19 ograniczeń; luk nie ma. Sześć dawnych luk (`confirmCode` w `guardian-updates.js`,
+`adminResetMfaInTx`, `lockUser`/`activeFactors` w `mfa.js`, `rotateOneAccount`, `recordWebhookEvent`) ma testy z
+barierą w `tests/pg-real-guardian-verify-locks.test.js`, `tests/pg-real-mfa-locks.test.js` i
+`tests/pg-real-webhook-locks.test.js` (opisy wyżej, w „Testy wyścigów”).
 Tabelę poniżej generuje `node scripts/lock-inventory.js --markdown`; test wymaga, żeby była równa
 wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
 
@@ -863,7 +958,7 @@ wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
 | `login.js` `acceptInvitationWithPassword` | `users` | FOR UPDATE | wyjątek, ograniczenie: Zaproszenie blokuje lockInvitation (mutant invitation-accept); nowe konto chroni ON CONFLICT (email) DO NOTHING (409 conflict) i klucz główny user_passwords, a wyłączenie konta w trakcie — FOR SHARE w createSession (mutant session-create-share). Blokada konta ustala tylko porównanie skrótu hasła z chwili sprawdzenia. |
 | `login.js` `resetPasswordWithToken` | `password_reset_tokens` | FOR UPDATE | wyjątek, ograniczenie: Wyzwalacz password_reset_token_guard (0020) odrzuca zmianę tokenu już użytego albo cofniętego, więc drugie użycie tego samego tokenu wycofuje całą transakcję (z nowym hasłem); bez blokady: błąd wyzwalacza zamiast 400 invalid_token. |
 | `login.js` `issuePasswordResetInTx` | `users` | FOR UPDATE | mutant `password-reset-issue` (`tests/pg-real-auth-locks.test.js`) |
-| `login.js` `adminResetMfaInTx` | `users` | FOR UPDATE | wyjątek, luka: Podwójny reset jest bezpieczny (warunkowe UPDATE … AND disabled_at IS NULL: drugi zwraca changed: false), ale bez blokady konta reset nie czeka na równoległe rozpoczęcie zapisu czynnika (lockUser w mfa.js) i nie widzi wstawianego czynnika, który przetrwa reset. Brak testu z barierą — dalszy zakres #208. |
+| `login.js` `adminResetMfaInTx` | `users` | FOR UPDATE | mutant `mfa-admin-reset` (`tests/pg-real-mfa-locks.test.js`) |
 | `meetings.js` `updateMeeting` | `meetings` | FOR UPDATE | mutant `meetings-update` (`tests/pg-real-record-locks.test.js`) |
 | `meetings.js` `recordAttendance` | `meeting_attendees` | FOR UPDATE | mutant `meetings-attendance` (`tests/pg-real-record-locks.test.js`) |
 | `meetings.js` `updateResolution` | `resolutions` | FOR UPDATE | mutant `meetings-resolution-update` (`tests/pg-real-record-locks.test.js`) |
@@ -871,9 +966,9 @@ wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
 | `meetings.js` `withdrawAgendaItem` | `meeting_agenda_items` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): Wycofanie punktu porządku obrad wywołuje wcześniej lockMeeting; jedyny zapis withdrawn_at jest w tej funkcji, więc blokada punktu jest drugą warstwą (mutant równoważny). |
 | `meetings.js` `reorderAgendaItems` | `meeting_agenda_items` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): Zmiana kolejności wywołuje wcześniej lockMeeting; pozycje zmienia wyłącznie ta funkcja, więc blokada punktów jest drugą warstwą (mutant równoważny). |
 | `meetings.js` `loadNotice` | `meeting_notices` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): loadNotice(…, { lock: true }) wołają tylko approveMeetingNotice i createNoticeCampaignDraft, obie po lockMeeting; zawiadomienia powstają (createNoticeDraft) też pod lockMeeting. |
-| `mfa-key-rotation.js` `rotateOneAccount` | `user_mfa_factors` | FOR UPDATE | wyjątek, luka: Skrypt operatora (mfa:rotate-key) przepisuje czynnik z last_used_step; bez blokady równoległa weryfikacja kodu w tej samej chwili zapisze krok na starym, właśnie wyłączanym wierszu, a nowy dostanie krok sprzed niej (jednorazowe powtórzenie kodu w tym samym kroku). Brak testu z barierą — dalszy zakres #208. |
-| `mfa.js` `lockUser` | `users` | FOR UPDATE | wyjątek, luka: Para z activeFactors (ta sama transakcja): każda z blokad osobno serializuje weryfikację kodu TOTP (last_used_step) i zapis czynnika, więc mutant jednej przeżyje (mutant równoważny); usunięcie obu pozwala powtórzyć ten sam kod w dwóch równoległych żądaniach. Brak testu z barierą i mutanta dwóch funkcji — dalszy zakres #208. |
-| `mfa.js` `activeFactors` | `user_mfa_factors` | FOR UPDATE | wyjątek, luka: Druga z pary z lockUser (zawsze wołana po niej): sama nie jest jedynym punktem serializacji, a razem z lockUser chroni last_used_step przed powtórzeniem kodu TOTP. Brak testu z barierą — dalszy zakres #208. |
+| `mfa-key-rotation.js` `rotateOneAccount` | `user_mfa_factors` | FOR UPDATE | mutant `mfa-key-rotation` (`tests/pg-real-mfa-locks.test.js`) |
+| `mfa.js` `lockUser` | `users` | FOR UPDATE | mutant `mfa-lock-user` (`tests/pg-real-mfa-locks.test.js`) |
+| `mfa.js` `activeFactors` | `user_mfa_factors` | FOR UPDATE | mutant `mfa-active-factors` (`tests/pg-real-mfa-locks.test.js`) |
 | `news.js` `lockPost` | `news_posts` | FOR UPDATE | mutant `news-lock` (`tests/pg-real-domain-locks.test.js`) |
 | `news.js` `lockPhoto` | `news_photos` | FOR UPDATE | mutant `news-photo-lock` (`tests/pg-real-record-locks.test.js`) |
 | `processing-restrictions.js` `changeProcessingRestriction` | `data_subject_requests` | FOR UPDATE | mutant `processing-restriction-request` (`tests/pg-real-request-locks.test.js`) |
@@ -887,7 +982,7 @@ wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
 | `routes/email.js` `providerPauseLift` | `email_provider_pauses` | FOR UPDATE | wyjątek, ograniczenie: Zdjęcie wstrzymania dostawcy to warunkowy UPDATE … AND lifted_at IS NULL: drugi czeka na pierwszy i nie zmienia wiersza, a brak wiersza przerywa transakcję razem z wpisem audytu. Bez blokady: błąd zamiast powtórki, bez podwójnego zapisu. |
 | `routes/email.js` `createResolution` | `email_outbox` | FOR UPDATE | mutant `email-outbox-resolution` (`tests/pg-real-email-locks.test.js`) |
 | `routes/email.js` `approveResolution` | `email_outbox` | FOR UPDATE | wyjątek, ograniczenie: Jedno zatwierdzenie na rozstrzygnięcie: UNIQUE email_outbox_resolution_approvals.resolution_id (0156); bez blokady drugie kliknięcie dostaje 23505 zamiast powtórki, bez drugiego zapisu. |
-| `routes/email.js` `recordWebhookEvent` | `email_outbox` | FOR UPDATE | wyjątek, luka: Zdarzenie dostawcy (bounce, skarga) czyta stan wiersza kolejki i może go zmienić na bounced oraz dopisać blokadę adresu. Powtórzenia tego samego zdarzenia odcina UNIQUE dedupe_key, ale bez blokady dwa RÓŻNE zdarzenia jednego adresu mogą dopisać dwie aktywne blokady, a zdarzenie w trakcie zapisu stanu przez worker — przeoczyć przejście sent → bounced. Brak testu z barierą (wymaga przebiegu workera w trakcie) — dalszy zakres #208. |
+| `routes/email.js` `recordWebhookEvent` | `email_outbox` | FOR UPDATE | mutant `email-webhook-outbox` (`tests/pg-real-webhook-locks.test.js`) |
 | `routes/email.js` `release` | `email_suppression_release_requests` | FOR UPDATE | mutant `email-suppression-release` (`tests/pg-real-email-locks.test.js`) |
 | `routes/families.js` `updateGuardianContact` | `guardians` | FOR UPDATE | mutant `families-contact` (`tests/pg-real-domain-locks.test.js`) |
 | `routes/families.js` `checkRectificationRequest` | `data_subject_requests` | FOR SHARE | mutant `families-rectification-request` (`tests/pg-real-request-locks.test.js`) |
@@ -904,7 +999,7 @@ wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
 | `routes/guardian-updates.js` `verificationsByRequest` | `guardian_update_verifications` | FOR UPDATE | wyjątek, ograniczenie: Blokada (tylko z decideRequest, po blokadzie wniosku z mutantem guardian-update-decide) ustala stan weryfikacji zapisany w audycie decyzji. Anulowanie kodu jest warunkowym UPDATE … AND state = 'queued', więc nie nadpisuje wysyłki workera; bez blokady audyt może pokazać stan sprzed równoległego potwierdzenia kodu (bez zmiany danych). |
 | `routes/guardian-updates.js` `decideRequest` | `guardian_update_requests` | FOR UPDATE | mutant `guardian-update-decide` (`tests/pg-real-request-locks.test.js`) |
 | `routes/guardian-updates.js` `decideRequest` | `guardians` | FOR UPDATE | mutant `guardian-update-decide-guardian` (`tests/pg-real-request-locks.test.js`) |
-| `routes/guardian-updates.js` `confirmCode` | `guardian_update_verifications` | FOR UPDATE | wyjątek, luka: Brak testu z barierą: bez blokady równoległe próby kodu czytają ten sam licznik failed_attempts (limit VERIFY_MAX_FAILED_ATTEMPTS można przekroczyć o liczbę równoległych żądań; CHECK ≤ 5 w 0184 przerywa dopiero zapis ponad 5), a dwa poprawne kody dopisują dwa zdarzenia verification_confirmed. Test wymaga zasiania wysłanego kodu — dalszy zakres #208. |
+| `routes/guardian-updates.js` `confirmCode` | `guardian_update_verifications` | FOR UPDATE | mutant `guardian-verify-confirm` (`tests/pg-real-guardian-verify-locks.test.js`) |
 | `routes/guardian-updates.js` `approveTemplate` | `guardian_verify_templates` | FOR UPDATE | wyjątek, ograniczenie: Wyzwalacz guardian_verify_template_guard (0184) dopuszcza wyłącznie przejście draft → approved, więc drugie zatwierdzenie nie nadpisze approved_by; bez blokady kończy się błędem wyzwalacza zamiast powtórki/409. |
 | `routes/ledger-budget.js` `deactivateCategory` | `ledger_categories` | FOR UPDATE | mutant `budget-category` (`tests/pg-real-budget-locks.test.js`) |
 | `routes/ledger-budget.js` `reviseLine` | `ledger_budget_lines` | FOR UPDATE | mutant `budget-revision` (`tests/pg-real-budget-locks.test.js`) |
@@ -968,13 +1063,14 @@ czerwieni cztery testy równoległych zamknięć (dwie osoby, podwójne kliknię
 `rowCount`/`affectedRows` — kontrakt `src/db.js` zwraca tylko `{ rows }`, a PGlite
 dodaje `rowCount`, więc taki kod przechodził testy i psuł się na serwerze.
 
-### CI: job `test-pg-real`
+### CI: joby `test-pg-real` i `test-pg-mutations`
 
 CI działa na runnerach GitHub `ubuntu-latest` (repozytorium jest publiczne).
 Job `test-pg-real` (`.github/workflows/ci.yml`, wymagany przez `ci-ok`) uruchamia
 `npm run test:pg-real` z usługą `services: postgres` (obraz `postgres@sha256:…`
 przypięty do digestu — `tests/ci-supply-chain.test.js`; przy aktualizacji zmień
-digest obrazu `postgres:16`). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
+digest obrazu `postgres:16` we wszystkich jobach PG naraz). Job `test-pg-mutations` (też wymagany przez `ci-ok`)
+uruchamia kontrolę mutacyjną w 3 częściach, każdą z własną usługą `postgres` („Podział mutantów na części”). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
 `scripts/test-pg-real.js` nie stawia własnego serwera, tylko używa wskazanego;
 bez zmiennej działa jak wcześniej (`initdb` w katalogu tymczasowym).
 Zwykłe shardy (`test`) nadal biegną na PGlite i pomijają testy wyścigów.
@@ -993,7 +1089,8 @@ Nocny przebieg (#111, #101): osobny workflow `.github/workflows/nightly-pg-real.
   (`### Przebieg na roli rd_app`); kryterium „pełny zestaw testów przechodzi na `rd_app`” z #101 jest otwarte do czasu
   sklasyfikowania tej listy (test zgodny z rolą albo jawna lista wyjątków z uzasadnieniem, jak `TRIGGER_BYPASS_ALLOWED`);
 - `nightly-concurrency` (90 min): 20 powtórzeń plików z barierą (`pg-real-double-click`, `pg-real-domain-locks`,
-  `pg-real-record-locks`, `pg-real-replay-23505`, `pg-real-payment-locks`) i 50 powtórzeń podwójnego przyjęcia zaproszenia
+  `pg-real-record-locks`, `pg-real-replay-23505`, `pg-real-payment-locks`, `pg-real-request-locks`, `pg-real-auth-locks`,
+  `pg-real-email-locks`, `pg-real-guardian-verify-locks`, `pg-real-mfa-locks`, `pg-real-webhook-locks`) i 50 powtórzeń podwójnego przyjęcia zaproszenia
   (`--repeat=50 --name='zaproszenia'`, kryterium z #111). Testy z barierą wymuszają przeplot, więc powtórzenia nie są
   „szczęśliwymi przebiegami”, tylko wykrywają niestabilność (czas, kolejność zatwierdzeń, ponowienia 40001/40P01).
   `tests/nightly-workflow.test.js` pilnuje, żeby `--name` pasowało do dokładnie jednego testu (wzorzec bez dopasowania to
@@ -1004,8 +1101,10 @@ przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
 `tests/ci-supply-chain.test.js` (dla wszystkich plików w `.github/workflows`);
 przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
-z 6 shardów wyznaczonych przez `scripts/ci-shard-files.js`; „Podział na shardy według czasu”). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27). Inwentaryzacja blokad dodała 15 mutantów
-(razem 57) i trzy pliki z barierą; pierwszy przebieg po niej (#720) trwał ok. 9 min, więc limit zostaje.
+z 6 shardów wyznaczonych przez `scripts/ci-shard-files.js`; „Podział na shardy według czasu”). Job `test-pg-real` miał limit 45 min
+(było 30; 42 mutanty zamiast 27), a po inwentaryzacji blokad (57 mutantów, potem 63 po domknięciu jej luk) trwał ok. 9 min.
+Po wydzieleniu mutantów (#111) `test-pg-real` i każda część `test-pg-mutations` mają limit 15 min (pomiar: krok testów
+106–127 s, szacunek części ok. 130–145 s; zapas wielokrotnie powyżej 20%).
 
 ## Pokrycie dziennikiem zdarzeń (#184)
 
