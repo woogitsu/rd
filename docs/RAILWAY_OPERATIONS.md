@@ -1192,8 +1192,8 @@ jednym shardzie zmierzona i opisana tutaj.
   106–127 s, kontrola mutacyjna 361–404 s). Kontrola mutacyjna biegnie teraz w osobnym jobie `test-pg-mutations` w 3
   częściach (`--shard=i/3`, każda z własną usługą `postgres`, wszystkie wymagane przez `ci-ok`); szacunek części
   127–132 s, oczekiwany najdłuższy job PG ok. 2,6 min zamiast ok. 9 min. Podział, strażnicy i pomiar lokalny:
-  `docs/TESTING.md`, „Podział mutantów na części”. Czas na GitHub po tej zmianie jeszcze niezmierzony; trzy przebiegi
-  wpisać tutaj.
+  `docs/TESTING.md`, „Podział mutantów na części”. Na GitHub: części 142–186 s,
+  `test-pg-real` 140–160 s (wynik niżej, „Wynik #111”).
 - **Stan pomiarów (podział według czasu, #111).** GitHub po #717 (dane z #111, czasy jobów `test` 1/6–6/6):
   185, 218, 206, 152, 165 i **467 s**; przed #717: 229, 271, 322, 210, 495, 186 s. Wąskim gardłem był shard 6/6
   (`--test-shard` dał mu `pg-authz-matrix`, ok. 400 s w jednym procesie). Po podziale według wag, macierzy uprawnień w
@@ -1201,8 +1201,7 @@ jednym shardzie zmierzona i opisana tutaj.
   `--test-concurrency=2`): najdłuższy shard 443,5 s (6/6 przed) → 185,1 s (shardy po: 174–185 s), największy proces
   testowy w shardzie 3275 MiB → najwyżej 1671 MiB, „dwa największe naraz” 4963 MiB → najwyżej 3011 MiB;
   `pg-promotions` 5572 → 1124 MiB, `pg-anonymization-reapply` 4079 → 1239 MiB. Szczegóły: `docs/TESTING.md`, „Podział na
-  shardy według czasu”. Czas na GitHub po tej zmianie jeszcze niezmierzony (oczekiwanie: każdy shard ok. 200 s plus
-  przygotowanie joba); trzy przebiegi wpisać tutaj.
+  shardy według czasu”. Na GitHub shardy `test` trwają 123–224 s (wynik niżej, „Wynik #111”).
 - **Stan pomiarów (szablon PGlite, #717).** Z GitHub runnerów są czasy jobów z pojedynczych przebiegów (wyżej), nie 3
   kolejne przebiegi PR. Lokalnie, w kontenerze
   z 4 rdzeniami: szablon bazy PGlite skrócił 17 reprezentatywnych plików `pg-*` z 1323 s do 700 s, a największy proces
@@ -1210,8 +1209,19 @@ jednym shardzie zmierzona i opisana tutaj.
   tych samych 723 testach, a szczyt RSS jednego procesu wyniósł 5935 MB przed i 5589 MB po (`pg-promotions`, baza
   na każdy test, nigdy niezamykana; drugi to `pg-anonymization-reapply`, ok. 4 GB; oba zamykają już bazę po teście, patrz
   wyżej). Dwa takie pliki w jednym shardzie przekraczały 7 GB runnera, więc tabela pamięci z jobu `test` miała pokazać, czy to się zdarza (tabela i opis metody w `docs/TESTING.md`,
-  „Szablon bazy PGlite i czas testów”). Kryteria „połowa krócej na 3 przebiegach” i „zapas 20%” zostają niepotwierdzone do pierwszych przebiegów z
-  tym podsumowaniem; wynik wpisać w tym miejscu.
+  „Szablon bazy PGlite i czas testów”). Kryteria „połowa krócej na 3 przebiegach” i „zapas 20%” potwierdza „Wynik #111” niżej.
+- **Wynik #111 (3 kolejne przebiegi PR po #722 i #726, 3 października 2026).** Czas PR liczony od startu pierwszego
+  jobu do końca `ci-ok`:
+
+  | Przebieg | PR | Czas PR | Najdłuższy `test` | `test-pg-real` | Najdłuższa część `test-pg-mutations` |
+  |---|---|---|---|---|---|
+  | `37122246315` | #726 | 3:47 | 223 s | 160 s | 181 s |
+  | `37122929976` | #727 | 3:31 | 203 s | 144 s | 186 s |
+  | `37122981587` | #728 | 3:50 | 224 s | 140 s | 179 s |
+
+  Przed zmianami #717, #722 i #726: 8:23 (#716, `37110922756`), 7:54 (#717) i 8:39 (#719), wąskim gardłem były
+  najpierw jeden shard `test` (467–512 s), potem `test-pg-real` (496–555 s). Czas PR spadł o ok. 55%. Zapas: najdłuższy
+  shard `test` to 19% limitu 20 min, `test-pg-real` i części mutacji to 16–21% limitu 15 min.
 
 ### Historia: runner self-hosted
 

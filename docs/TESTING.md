@@ -424,8 +424,8 @@ naraz (`--test-concurrency=2`) dają górne oszacowanie ponad 9 GB. Oba pliki za
 
 `pg-authz-matrix` (330 testów, ~6,5 min) praktycznie się nie zmienia: dominuje w nim praca testów, nie migracje
 (od podziału na trzy pliki — niżej — ok. 2 min na część).
-Czas przebiegów PR na GitHub (kryterium „co najmniej o połowę krótszy, zmierzone na 3 kolejnych przebiegach”) trzeba
-zmierzyć po scaleniu: metoda w `docs/RAILWAY_OPERATIONS.md`, „Pomiar czasu i pamięci testów w CI”.
+Czas przebiegów PR na GitHub (kryterium „co najmniej o połowę krótszy, zmierzone na 3 kolejnych przebiegach”) po #722 i
+#726: 3:31–3:50 min zamiast 7:54–8:39 min; tabela w `docs/RAILWAY_OPERATIONS.md`, „Wynik #111”.
 
 ## Podział na shardy według czasu (#111)
 
