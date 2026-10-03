@@ -96,10 +96,12 @@
   ],
   "x-rd-schema-coverage": {
     "covered": [
+      "families",
       "ledger",
       "payment-instructions",
       "payment-references",
-      "payments"
+      "payments",
+      "session"
     ],
     "uncovered": [
       "admin",
@@ -110,7 +112,6 @@
       "email",
       "events",
       "exports",
-      "families",
       "financial-reports",
       "guardian-updates",
       "import",
@@ -125,12 +126,11 @@
       "privacy-notice",
       "reconciliation",
       "representative",
-      "session",
       "year-close"
     ],
     "operations": {
       "total": 297,
-      "withSchema": 32
+      "withSchema": 48
     }
   },
   "paths": {
@@ -139,20 +139,28 @@
         "operationId": "session_access",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Aktywne przydziały ról konta. Sesja zatrzymana przez bramkę MFA dostaje pustą listę i `mfaRequired: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessState"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
           },
           "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "description": "Status z macierzy tras (x-rd-deny-status); trasa go nie zwraca, więc lista kodów jest pusta.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": []
           }
         },
         "security": [
@@ -4325,9 +4333,52 @@
     "/api/classes": {
       "get": {
         "operationId": "families_classes",
+        "parameters": [
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Zawęża do roku; nie poszerza zakresu wywołującego."
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Klasy widoczne dla wywołującego (od najnowszego roku).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "classes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FamilyClass"
+                      }
+                    }
+                  },
+                  "required": [
+                    "classes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4340,7 +4391,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           }
         },
         "security": [
@@ -4402,13 +4456,36 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Uczniowie klasy (bieżące przypisania) z gospodarstwami.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "class": {
+                      "$ref": "#/components/schemas/FamilyClassRef"
+                    },
+                    "students": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FamilyClassStudent"
+                      }
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "students"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4421,7 +4498,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -4431,7 +4511,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -9285,13 +9368,84 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardianContactRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kontakt opiekuna po zmianie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "guardian": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "contactAllowed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "contactAllowed"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    }
+                  },
+                  "required": [
+                    "guardian",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_email",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9304,7 +9458,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "guardian_shared_outside_scope",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -9314,7 +9473,50 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -9398,7 +9600,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -9406,13 +9608,85 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipEndRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zakończone członkostwo opiekuna w gospodarstwie (tylko zakres szeroki).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "membership": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "guardianId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "householdId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "endsOn": {
+                          "$ref": "#/components/schemas/IsoDate"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "guardianId",
+                        "householdId",
+                        "endsOn"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    },
+                    "withoutHousehold": {
+                      "type": "boolean",
+                      "description": "true: opiekun nie ma już żadnego bieżącego gospodarstwa."
+                    }
+                  },
+                  "required": [
+                    "membership",
+                    "changed",
+                    "withoutHousehold"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_ended_on",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9425,7 +9699,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -9435,7 +9713,63 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -9486,13 +9820,78 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Imię i nazwisko opiekuna po sprostowaniu (historia w identity_changes).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "guardian": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "firstName": {
+                          "type": "string"
+                        },
+                        "lastName": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "firstName",
+                        "lastName"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    }
+                  },
+                  "required": [
+                    "guardian",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_data_request_id",
+              "invalid_json",
+              "invalid_person_name",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9505,7 +9904,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "guardian_shared_outside_scope",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -9515,7 +9919,67 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "data_request_not_found",
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "data_request_closed",
+              "data_request_identity_not_verified",
+              "data_request_kind_not_rectification",
+              "data_request_subject_mismatch"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -9599,7 +10063,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -9607,13 +10071,81 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationContactRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zgoda na kontakt w relacji opiekun–dziecko (#190).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "relation": {
+                      "type": "object",
+                      "properties": {
+                        "guardianId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "studentId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "contactAllowed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "guardianId",
+                        "studentId",
+                        "contactAllowed"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "guardianContactAllowed": {
+                      "type": "boolean",
+                      "description": "Zgoda opiekuna; kampania wymaga obu zgód."
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    }
+                  },
+                  "required": [
+                    "relation",
+                    "guardianContactAllowed",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9626,7 +10158,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -9636,7 +10172,63 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "relation_ended"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -9690,7 +10282,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -9698,13 +10290,84 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipEndRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zakończona relacja opiekun–dziecko; relacje z rodzeństwem i drugi opiekun bez zmian.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "relation": {
+                      "type": "object",
+                      "properties": {
+                        "guardianId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "studentId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "endsOn": {
+                          "$ref": "#/components/schemas/IsoDate"
+                        }
+                      },
+                      "required": [
+                        "guardianId",
+                        "studentId",
+                        "endsOn"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    },
+                    "campaignsToReview": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EntityId"
+                      },
+                      "description": "Kampanie zatwierdzone lub w wysyłce, w których opiekun jest adresatem (do przeglądu); puste przy `changed: false`."
+                    }
+                  },
+                  "required": [
+                    "relation",
+                    "changed",
+                    "campaignsToReview"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_ended_on",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9717,7 +10380,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -9727,7 +10394,63 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -9781,13 +10504,20 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Karta gospodarstwa (rodzeństwo, opiekunowie, opieka dzielona).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HouseholdCard"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -9800,7 +10530,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -9810,7 +10543,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -13723,7 +14459,20 @@
         "operationId": "session_logout",
         "responses": {
           "204": {
-            "description": "Sukces, bez treści."
+            "description": "Sesja (jeśli była) cofnięta, cookie wyczyszczone; bez treści. Bez sesji też 204."
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
           }
         },
         "security": [],
@@ -22186,20 +22935,28 @@
         "operationId": "session_get",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Stan bieżącej sesji (bez `mfaVerifiedAt`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
           },
           "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "description": "Status z macierzy tras (x-rd-deny-status); trasa go nie zwraca, więc lista kodów jest pusta.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": []
           }
         },
         "security": [
@@ -22384,13 +23141,84 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zmiana klasy w roku albo ta sama klasa (`changed: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enrollment": {
+                      "$ref": "#/components/schemas/Enrollment"
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    }
+                  },
+                  "required": [
+                    "enrollment",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Nowe przypisanie ucznia do klasy w roku.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enrollment": {
+                      "$ref": "#/components/schemas/Enrollment"
+                    },
+                    "changed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "enrollment",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "class_year_mismatch",
+              "invalid_effective_on",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22403,7 +23231,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -22413,7 +23245,64 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "class_not_found",
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -22467,7 +23356,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -22475,13 +23364,76 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentEndRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zakończone przypisanie (odejście ze szkoły, #86); ponowienie zwraca zapisaną datę.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enrollment": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "studentId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "endedOn": {
+                          "$ref": "#/components/schemas/IsoDate"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "studentId",
+                        "endedOn"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    }
+                  },
+                  "required": [
+                    "enrollment",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_ended_on",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22494,7 +23446,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -22504,7 +23460,63 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -22558,13 +23570,82 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentHouseholdAddRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ponowienie: to samo członkostwo już dodane przez API (`changed: false`, ten sam identyfikator).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "membership": {
+                      "$ref": "#/components/schemas/StudentHouseholdMembership"
+                    },
+                    "changed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "membership",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Nowe członkostwo ucznia w gospodarstwie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "membership": {
+                      "$ref": "#/components/schemas/StudentHouseholdMembership"
+                    },
+                    "changed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "membership",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_effective_on",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22577,7 +23658,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -22587,7 +23672,64 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed",
+              "student_household_overlap"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -22637,7 +23779,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -22645,13 +23787,85 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipEndRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zakończone członkostwo ucznia w gospodarstwie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "membership": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "studentId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "householdId": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "endsOn": {
+                          "$ref": "#/components/schemas/IsoDate"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "studentId",
+                        "householdId",
+                        "endsOn"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    },
+                    "withoutPrimaryHousehold": {
+                      "type": "boolean",
+                      "description": "true: uczeń nie ma już bieżącego gospodarstwa głównego (wypada z kampanii i kartek)."
+                    }
+                  },
+                  "required": [
+                    "membership",
+                    "changed",
+                    "withoutPrimaryHousehold"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_ended_on",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22664,7 +23878,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -22674,7 +23892,63 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -22728,13 +24002,78 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Imię i nazwisko ucznia po sprostowaniu (historia w identity_changes).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "student": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "firstName": {
+                          "type": "string"
+                        },
+                        "lastName": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "firstName",
+                        "lastName"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = stan już był taki (ponowienie, podwójne kliknięcie); bez nowego wpisu historii."
+                    }
+                  },
+                  "required": [
+                    "student",
+                    "changed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_data_request_id",
+              "invalid_json",
+              "invalid_person_name",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22747,7 +24086,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -22757,7 +24100,67 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "data_request_not_found",
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "data_request_closed",
+              "data_request_identity_not_verified",
+              "data_request_kind_not_rectification",
+              "data_request_subject_mismatch"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -23155,6 +24558,30 @@
       }
     },
     "schemas": {
+      "AccessState": {
+        "type": "object",
+        "properties": {
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoleGrant"
+            }
+          },
+          "hasActiveRole": {
+            "type": "boolean",
+            "description": "true, gdy co najmniej jeden przydział ma rolę z działającymi trasami (#176)."
+          },
+          "mfaRequired": {
+            "const": true,
+            "description": "Obecne tylko, gdy bramka MFA zatrzymałaby sesję (#189): wtedy `grants` jest puste, a `hasActiveRole` = false."
+          }
+        },
+        "required": [
+          "grants",
+          "hasActiveRole"
+        ],
+        "additionalProperties": false
+      },
       "AmountCents": {
         "type": "integer",
         "minimum": 1,
@@ -23165,6 +24592,85 @@
         "type": "integer",
         "minimum": 0,
         "description": "Liczba (zero lub więcej)."
+      },
+      "Enrollment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "studentId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "classId": {
+            "$ref": "#/components/schemas/EntityId"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "schoolYearId",
+          "classId"
+        ],
+        "additionalProperties": false
+      },
+      "EnrollmentEndRequest": {
+        "type": "object",
+        "properties": {
+          "endedOn": {
+            "$ref": "#/components/schemas/IsoDate",
+            "description": "Ostatni dzień w szkole; może być w przyszłości."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód zmiany (3-500 znaków po przycięciu spacji). Trafia do niezmiennej historii; bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "endedOn",
+          "reason"
+        ]
+      },
+      "EnrollmentRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "classId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Klasa w zakresie wywołującego, z tego samego roku."
+          },
+          "effectiveOn": {
+            "$ref": "#/components/schemas/IsoDate",
+            "description": "Data zmiany zapisywana w historii przypisań."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód zmiany (3-500 znaków po przycięciu spacji). Trafia do niezmiennej historii; bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "classId",
+          "effectiveOn",
+          "reason"
+        ]
       },
       "EntityId": {
         "type": "string",
@@ -23676,6 +25182,349 @@
         ],
         "description": "Kody z docs/API_ERRORS.md."
       },
+      "FamilyClass": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearLabel": {
+            "type": "string"
+          },
+          "studentCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Liczba bieżących przypisań do klasy (bez uczniów po odejściu)."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "schoolYearId",
+          "schoolYearLabel",
+          "studentCount"
+        ],
+        "additionalProperties": false
+      },
+      "FamilyClassRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearLabel": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "schoolYearId",
+          "schoolYearLabel"
+        ],
+        "additionalProperties": false
+      },
+      "FamilyClassStudent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "households": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FamilyHouseholdLink"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "firstName",
+          "lastName",
+          "households"
+        ],
+        "additionalProperties": false
+      },
+      "FamilyHouseholdLink": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "isPrimary": {
+            "type": "boolean",
+            "description": "Gospodarstwo główne ucznia; pole tylko dla zakresu szerokiego."
+          }
+        },
+        "required": [
+          "householdId"
+        ],
+        "additionalProperties": false,
+        "description": "Bieżące członkostwo ucznia w gospodarstwie. Zakres klasowy widzi tylko gospodarstwa kontaktowe (#95), bez `isPrimary`."
+      },
+      "GuardianContactRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 254
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Nowy e-mail (normalizowany do małych liter); null albo pusty tekst usuwa adres."
+          },
+          "contactAllowed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód zmiany (3-500 znaków po przycięciu spacji). Trafia do niezmiennej historii; bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "email"
+            ]
+          },
+          {
+            "required": [
+              "contactAllowed"
+            ]
+          }
+        ]
+      },
+      "HouseholdCard": {
+        "type": "object",
+        "properties": {
+          "household": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "archived": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "archived"
+            ],
+            "additionalProperties": false
+          },
+          "students": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/HouseholdStudent"
+            }
+          },
+          "guardians": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HouseholdGuardian"
+            }
+          },
+          "paymentTotals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HouseholdPaymentTotal"
+            },
+            "description": "Tylko role finansowe (admin, zarząd, skarbnik) z przydziałem bez klasy i potwierdzonym MFA."
+          }
+        },
+        "required": [
+          "household",
+          "students",
+          "guardians"
+        ],
+        "additionalProperties": false,
+        "description": "Karta gospodarstwa: uczniowie w zakresie wywołującego, opiekunowie i relacje. Bez pól zadłużenia."
+      },
+      "HouseholdGuardian": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Członkostwo opiekuna w tym gospodarstwie."
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Zakres klasowy: tylko przy zgodzie opiekuna i zgodzie relacji z widocznym dzieckiem, inaczej null (założenie D-08)."
+          },
+          "contactAllowed": {
+            "type": "boolean"
+          },
+          "relations": {
+            "type": "array",
+            "description": "Aktywne relacje opiekuna z uczniami widocznymi na karcie.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "studentId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "contactAllowed": {
+                  "type": "boolean"
+                },
+                "isPrimaryContact": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "studentId",
+                "contactAllowed",
+                "isPrimaryContact"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "membershipId",
+          "firstName",
+          "lastName",
+          "email",
+          "contactAllowed",
+          "relations"
+        ],
+        "additionalProperties": false
+      },
+      "HouseholdPaymentTotal": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "netAmountCents": {
+            "$ref": "#/components/schemas/NonNegativeCents",
+            "description": "Suma netto zapisanych wpłat (po korektach i zwrotach); nie jest należnością."
+          },
+          "paymentCount": {
+            "$ref": "#/components/schemas/Count"
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "netAmountCents",
+          "paymentCount"
+        ],
+        "additionalProperties": false
+      },
+      "HouseholdStudent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Członkostwo ucznia w tym gospodarstwie (do zakończenia: .../households/{membershipId}/end)."
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "isPrimaryHousehold": {
+            "type": "boolean",
+            "description": "Czy to gospodarstwo główne ucznia; pole tylko dla zakresu szerokiego."
+          },
+          "classes": {
+            "type": "array",
+            "description": "Bieżące przypisania ucznia do klas w zakresie wywołującego (rodzeństwo w innej klasie ma własny wpis).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "classId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "className": {
+                  "type": "string"
+                },
+                "schoolYearId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "enrollmentId": {
+                  "$ref": "#/components/schemas/EntityId"
+                }
+              },
+              "required": [
+                "classId",
+                "className",
+                "schoolYearId",
+                "enrollmentId"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "otherHouseholds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FamilyHouseholdLink"
+            },
+            "description": "Pozostałe bieżące gospodarstwa ucznia (opieka dzielona)."
+          }
+        },
+        "required": [
+          "id",
+          "membershipId",
+          "firstName",
+          "lastName",
+          "classes",
+          "otherHouseholds"
+        ],
+        "additionalProperties": false
+      },
       "Id": {
         "type": "string",
         "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
@@ -23685,6 +25534,62 @@
         "type": "string",
         "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$",
         "description": "Klucz idempotencji (8-128 znaków). Ten sam klucz z tą samą treścią odtwarza zapis (200, `Idempotency-Replayed: true`); z inną treścią daje 409 `idempotency_conflict`."
+      },
+      "IdentityRequest": {
+        "type": "object",
+        "properties": {
+          "firstName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^@]*$",
+            "description": "Imię albo nazwisko (1-100 znaków po normalizacji NFC i scaleniu spacji); bez `@` i znaków sterujących."
+          },
+          "lastName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^@]*$",
+            "description": "Imię albo nazwisko (1-100 znaków po normalizacji NFC i scaleniu spacji); bez `@` i znaków sterujących."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód zmiany (3-500 znaków po przycięciu spacji). Trafia do niezmiennej historii; bramka danych osobowych (#152)."
+          },
+          "dataRequestId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Żądanie sprostowania z rejestru (UUID, małe litery); wyłącznie admin (D-07)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "firstName"
+            ]
+          },
+          {
+            "required": [
+              "lastName"
+            ]
+          }
+        ]
       },
       "IsoDate": {
         "type": "string",
@@ -24805,6 +26710,29 @@
         "additionalProperties": false,
         "description": "Bilans otwarcia, przychody, wydatki i bilans zamknięcia roku (EUR, eurocenty)."
       },
+      "MembershipEndRequest": {
+        "type": "object",
+        "properties": {
+          "endsOn": {
+            "$ref": "#/components/schemas/IsoDate",
+            "description": "Data zakończenia; nie wcześniej niż początek i nie w zamkniętym roku szkolnym."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód zmiany (3-500 znaków po przycięciu spacji). Trafia do niezmiennej historii; bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "endsOn",
+          "reason"
+        ]
+      },
       "NonNegativeCents": {
         "type": "integer",
         "minimum": 0,
@@ -25539,9 +27467,216 @@
         ],
         "description": "recorded = przypisana do gospodarstwa, unmatched = nieprzypisana do wyjaśnienia (nie „dłużnik”)."
       },
+      "RelationContactRequest": {
+        "type": "object",
+        "properties": {
+          "contactAllowed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód zmiany (3-500 znaków po przycięciu spacji). Trafia do niezmiennej historii; bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "contactAllowed",
+          "reason"
+        ]
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "admin",
+          "board",
+          "treasurer",
+          "representative",
+          "audit",
+          "principal"
+        ],
+        "description": "Rola przydziału. Zakres uprawnień ról to założenie D-08/D-09 (docs/AUTHORIZATION.md), do zatwierdzenia."
+      },
+      "RoleGrant": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "classId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schoolYearId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "role",
+          "classId",
+          "schoolYearId",
+          "expiresAt"
+        ],
+        "additionalProperties": false,
+        "description": "Aktywny przydział (bez cofniętych i wygasłych)."
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "mfaVerified": {
+            "type": "boolean",
+            "description": "true, gdy w tej sesji potwierdzono drugi składnik."
+          },
+          "user": {
+            "$ref": "#/components/schemas/SessionUser"
+          },
+          "writeMode": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "read_only"
+            ],
+            "description": "read_only = okno serwisowe (#143); panele wyłączają przyciski zapisu, a serwer i tak odrzuca zapis."
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "auditLedgerRead": {
+                "const": true
+              }
+            },
+            "required": [
+              "auditLedgerRead"
+            ],
+            "additionalProperties": false,
+            "description": "Wyłącznie konto z rolą `audit` (MFA, przydział bez klasy) przy włączonej fladze AUDIT_LEDGER_READ (D-09, #137). W pozostałych przypadkach pola nie ma wcale."
+          }
+        },
+        "required": [
+          "sessionId",
+          "expiresAt",
+          "mfaVerified",
+          "user",
+          "writeMode"
+        ],
+        "additionalProperties": false
+      },
+      "SessionUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "email": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Adres konta (małe litery)."
+          },
+          "displayName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "displayName"
+        ],
+        "additionalProperties": false
+      },
       "SignedCents": {
         "type": "integer",
         "description": "Kwota ze znakiem w eurocentach (EUR); saldo może być ujemne."
+      },
+      "StudentHouseholdAddRequest": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "isPrimary": {
+            "type": "boolean",
+            "description": "Domyślnie false; drugie główne gospodarstwo w tym samym czasie daje 409."
+          },
+          "startsOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód zmiany (3-500 znaków po przycięciu spacji). Trafia do niezmiennej historii; bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "householdId",
+          "startsOn",
+          "reason"
+        ]
+      },
+      "StudentHouseholdMembership": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "studentId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "householdId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "isPrimary": {
+            "type": "boolean"
+          },
+          "startsOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "householdId",
+          "isPrimary",
+          "startsOn"
+        ],
+        "additionalProperties": false
       }
     },
     "x-rd-error-catalog": [

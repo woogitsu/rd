@@ -254,13 +254,13 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etap 2)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-3)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
-`tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Od etapu 2 operacje modułów z
-`COVERED_MODULES` (`src/pg/schemas/index.js`: `payments`, `payment-references`, `payment-instructions`,
-`ledger`) mają schematy ciał żądań i odpowiedzi (`src/pg/schemas/<moduł>.js`, opis mechanizmu w
-`docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
+`tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
+(`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
+etap 3 — `families`, `session`; razem 48 operacji) mają schematy ciał żądań i odpowiedzi
+(`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
 - rejestr pokrycia: każda trasa macierzy pokrytego modułu ma schemat (kontrola pozytywna: detektor wskazuje
   dopisaną trasę bez schematu), każdy schemat ma trasę, moduły macierzy = pokryte + jawnie niepokryte, a lista
@@ -273,12 +273,34 @@ w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując 
   przeksięgowanie, uchwała z upoważnieniem, widok Komisji Rewizyjnej, eksporty (typ pliku), odmowy 401/403/404,
   konflikty 409 i błędy walidacji; kod błędu musi być w `x-rd-error-codes` danego statusu;
 - każda odpowiedź sukcesu opisana w schematach została zwalidowana na prawdziwej odpowiedzi, a pominięcie każdego
-  wymaganego pola ciała daje błąd i w schemacie, i na serwerze (400).
+  wymaganego pola ciała daje błąd i w schemacie, i na serwerze (400); odpowiedź `204` nie ma treści w schemacie.
+
+Rejestr pokrycia i katalog kodów w tym pliku obejmują wszystkie pokryte moduły. Prawdziwe odpowiedzi etapu 3 sprawdza
+`tests/openapi-contract-families.test.js` (ten sam `createContractClient`, PGlite, dane syntetyczne `@example.invalid`):
+
+- `families`: karta gospodarstwa z **rodzeństwem w dwóch klasach i dwojgiem opiekunów** przy obojgu dzieciach
+  (kryterium #160), **opieka dzielona** (dziecko w dwóch gospodarstwach, karta drugiego domu i `otherHouseholds`),
+  węższy kształt karty i listy klasy dla przedstawiciela (bez rodzeństwa z innej klasy, bez `isPrimary*` i
+  `paymentTotals`), suma wpłat dla ról finansowych z MFA; zapisy kontaktu, sprostowania imienia, zgody w relacji,
+  przypisania do klasy (201 i zmiana klasy 200), odejścia, zakończenia relacji i członkostw, dodania członkostwa
+  (201) — każdy z ponowieniem (`200`, `changed: false`; moduł nie używa `Idempotency-Key`, listy nie mają kursora);
+  granice ról: przedstawiciel poza swoją klasą 404, bez prawa zapisu 403, zarząd z przydziałem klasy przy opiekunie
+  rodzeństwa z innej klasy `403 guardian_shared_outside_scope`, Komisja Rewizyjna 403, brak sesji 401; błędy
+  400 (`invalid_email`, `invalid_person_name`, `invalid_data_request_id`, `class_year_mismatch`, …), 404
+  (`class_not_found`, `data_request_not_found`), 409 (`relation_ended`, `student_household_overlap`), 415, 422;
+- `session`: logowanie hasłem, `GET /api/session` i `GET /api/access` przed MFA (bramka: `grants: []`,
+  `mfaRequired: true`) i po zapisie MFA (rotacja sesji, `mfaVerified: true`), przydział klasowy z terminem,
+  `writeMode: read_only`, `capabilities` Komisji Rewizyjnej tylko przy fladze, wylogowanie `204` bez treści
+  (sesja cofnięta → 401, ponowienie i brak sesji też 204) i `403 invalid_origin`.
+
+`409 school_year_closed` (zamknięty rok) jest w schematach rodzin, ale nie w tym teście: wymaga obejścia triggerów
+(`TRIGGER_BYPASS_ALLOWED` w `tests/test-quality-lint.test.js`), a reakcję tras sprawdza `tests/pg-family-changes.test.js`.
 
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
-`tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`).
+`tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`, jak
+`tests/openapi-contract-families.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 
