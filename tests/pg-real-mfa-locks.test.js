@@ -3,25 +3,24 @@
 // activeFactors w src/pg/mfa.js, rotateOneAccount w src/pg/mfa-key-rotation.js oraz
 // blokada konta w adminResetMfaInTx (src/pg/login.js).
 //
-// Para lockUser/activeFactors: przy dwóch weryfikacjach TEGO SAMEGO kodu TOTP każda z blokad
-// osobno serializuje odczyt last_used_step (druga czeka na pierwszą i widzi zużyty krok), więc
-// ten scenariusz zabija mutant jednej blokady tylko miejscem czekania. Każda z nich ma jednak
-// własny scenariusz, w którym druga jej nie zastępuje:
+// Kolejność blokad: każda operacja na czynnikach MFA blokuje najpierw wiersz konta, potem
+// wiersz czynnika — weryfikacja i zapis czynnika (lockUser, potem activeFactors), reset MFA
+// (adminResetMfaInTx) i rotacja klucza (lockAccount, potem czynnik w rotateOneAccount).
+// Blokady czynnika są przez to drugą warstwą (wyjątki „zagnieżdżona” w LOCK_EXCEPTIONS),
+// a punktem serializacji jest blokada konta:
 //  - lockUser: pierwszy zapis czynnika (brak wierszy do zablokowania w activeFactors) —
 //    podwójne „Włącz MFA” bez blokady konta kończy się 23505 na indeksie
 //    user_mfa_factors_one_pending zamiast zastąpienia czynnika oczekującego;
-//  - activeFactors: rotacja klucza (mfa:rotate-key) nie bierze blokady konta, tylko wiersza
-//    czynnika, a jej INSERT nowego wiersza bierze przez klucz obcy FOR KEY SHARE na users.
-//    Gdy weryfikacja trzyma już lockUser, a nie trzyma wiersza czynnika, rotacja bierze wiersz
-//    pierwsza i czeka na konto, a weryfikacja czeka na wiersz — zakleszczenie (40P01).
-//    Poprawność po ponowieniu (src/db.js ponawia 40P01) zostaje, ale jedna z operacji jest
-//    przerywana; blokada czynnika w activeFactors zamienia to na zwykłe czekanie.
-// Usunięcie obu naraz pokazuje kontrola pozytywna (rewrite bariery): ten sam kod przyjęty dwa razy.
-//
-// Znane (nie naprawione w tym zakresie, opis w docs/TESTING.md): odwrotny przeplot — rotacja
-// wyłączyła już stary wiersz, ale jeszcze nie wstawiła nowego, a weryfikacja (albo reset MFA)
-// bierze blokadę konta — kończy się zakleszczeniem także z kompletem blokad (kolejność
-// czynnik → konto w rotateOneAccount, konto → czynnik w mfa.js i adminResetMfaInTx).
+//  - lockAccount (rotacja): rotacja staje po wyłączeniu starego wiersza, przed wstawieniem
+//    nowego; weryfikacja, zapis czynnika i reset MFA czekają na blokadę konta i po
+//    zatwierdzeniu rotacji widzą nowy wiersz. Bez blokady konta rotacja trzyma tylko wiersz
+//    czynnika: drugie żądanie bierze konto i czeka na wiersz, a INSERT rotacji (klucz obcy →
+//    FOR KEY SHARE na users) czeka na konto — zakleszczenie 40P01 (przy `retries: 0` w
+//    barierze: 503 retry_later; src/db.js ponawia je w zwykłym trybie, ale operacja traci
+//    ok. 1 s, `deadlock_timeout`). Tak działał kod przed ujednoliceniem kolejności (#723).
+// Przy dwóch weryfikacjach TEGO SAMEGO kodu i przy rotacji w trakcie weryfikacji każda z blokad
+// (konta albo czynnika) osobno serializuje odczyt last_used_step; usunięcie obu naraz pokazują
+// kontrole pozytywne (rewrite bariery): ten sam kod przyjęty dwa razy.
 //
 // Schemat jak w pg-real-record-locks (tests/helpers/pg-race.js): pierwsze żądanie staje W
 // TRANSAKCJI, drugie startuje osobnym połączeniem i musi czekać w bazie na zapytanie z
@@ -31,7 +30,7 @@
 // Plik działa wyłącznie z RD_TEST_PG_URL (npm run test:pg-real); bez niej jest pomijany.
 // Wyłącznie dane syntetyczne (@example.invalid), klucze szyfrowania losowane w teście.
 // Kontrola mutacyjna: scripts/check-lock-mutations.js (mutanty mfa-lock-user,
-// mfa-active-factors, mfa-key-rotation, mfa-admin-reset).
+// mfa-key-rotation-account, mfa-admin-reset).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -49,8 +48,8 @@ const RING = { MFA_ENCRYPTION_KEYS: `2:${KEY_V2},1:${KEY_V1}` };
 const USER = 'u-mfa';
 
 const LOCK_USER_SQL = /^SELECT id FROM users WHERE id = \$1 AND disabled_at IS NULL FOR UPDATE/;
-const ACTIVE_FACTORS_SQL = /^SELECT id, method, secret_ciphertext, secret_iv, secret_tag, key_version, confirmed_at, last_used_step\s+FROM user_mfa_factors\s+WHERE user_id = \$1 AND disabled_at IS NULL/;
-const ROTATION_SQL = /^SELECT id, method, secret_ciphertext, secret_iv, secret_tag, key_version, confirmed_at, last_used_step\s+FROM user_mfa_factors\s+WHERE user_id = \$1 AND confirmed_at IS NOT NULL AND disabled_at IS NULL/;
+// Blokada konta w adminResetMfaInTx i w lockAccount (rotacja klucza), bez warunku disabled_at.
+const ACCOUNT_LOCK_SQL = /^SELECT id FROM users WHERE id = \$1 FOR UPDATE/;
 
 const verify = (env, cookie, code) => callApi(env, 'POST', '/api/mfa/verify', cookie, { code });
 const accepted = (db) => countRows(db, "SELECT count(*)::int AS n FROM audit_events WHERE action = 'mfa.verified' AND metadata_json->>'kind' = 'verify'");
@@ -141,33 +140,7 @@ test('#208 (bariera, MFA, kontrola pozytywna): bez obu blokad (lockUser i active
   });
 });
 
-test('#208 (bariera, MFA): rotacja klucza, gdy weryfikacja kodu właśnie odczytała czynnik — rotacja czeka na blokadę czynnika, bez zakleszczenia; krok przeniesiony', { skip }, async () => {
-  await withReal(async (db) => {
-    const { nextStep, nextCode } = await enrolled(db);
-    const cookie = await seedUserSession(db, { userId: USER });
-    const r = await race(db, {
-      // Weryfikacja staje po lockUser i activeFactors, przed zapisem kroku.
-      pauseAfter: ACTIVE_FACTORS_SQL,
-      first: (env) => verify(env, cookie, nextCode),
-      second: (env) => rotateMfaKeys(env, { apply: true }),
-      extra: RING,
-    });
-    assertWaitsOn(r, ROTATION_SQL, 'rotacja czeka na blokadę wiersza czynnika');
-    // Bez blokady czynnika w activeFactors rotacja bierze wiersz czynnika pierwsza, a jej
-    // INSERT nowego wiersza (klucz obcy → FOR KEY SHARE na users) czeka na lockUser
-    // weryfikacji; weryfikacja czeka potem na wiersz czynnika — zakleszczenie (40P01), jedna
-    // z transakcji jest przerywana (tu bez ponowień: 503 albo błąd rotacji).
-    assert.deepEqual(r.errors, []);
-    assert.equal(r.a.status, 200, JSON.stringify(r.a.body));
-    assert.equal(r.b.rotated, 1);
-    assert.deepEqual((await activeFactors(db)).map((row) => Number(row.last_used_step)), [nextStep]);
-    const replay = await verify({ db, ...RING }, await seedUserSession(db, { userId: USER }), nextCode);
-    assert.deepEqual([replay.status, replay.body.error], [400, 'invalid_code']);
-    assert.equal(await accepted(db), 1);
-  });
-});
-
-test('#208 (bariera, MFA): rotacja klucza w trakcie weryfikacji kodu — rotacja czeka na blokadę czynnika i przenosi zużyty krok; powtórzenie kodu odrzucone', { skip }, async () => {
+test('#208 (bariera, MFA): rotacja klucza w trakcie weryfikacji kodu — rotacja czeka na blokadę konta i przenosi zużyty krok; powtórzenie kodu odrzucone', { skip }, async () => {
   await withReal(async (db) => {
     const { nextStep, nextCode } = await enrolled(db);
     const cookie = await seedUserSession(db, { userId: USER });
@@ -177,17 +150,111 @@ test('#208 (bariera, MFA): rotacja klucza w trakcie weryfikacji kodu — rotacja
       second: (env) => rotateMfaKeys(env, { apply: true }),
       extra: RING,
     });
-    assertWaitsOn(r, ROTATION_SQL, 'rotacja czeka na blokadę wiersza czynnika');
+    assertWaitsOn(r, ACCOUNT_LOCK_SQL, 'rotacja czeka na blokadę wiersza konta');
+    assert.deepEqual(r.errors, []);
     assert.equal(r.a.status, 200, JSON.stringify(r.a.body));
     assert.equal(r.b.rotated, 1);
-    // Bez blokady rotacja czyta last_used_step sprzed weryfikacji i przenosi go na nowy
-    // wiersz (UPDATE disabled_at tylko czeka na weryfikację), więc ten sam kod przechodzi drugi raz.
+    // Rotacja czyta czynnik dopiero po zatwierdzeniu weryfikacji i przenosi zużyty krok.
+    // Ten sam skutek daje sama blokada czynnika (rotacja czeka wtedy na wiersz czynnika);
+    // bez obu (kontrola pozytywna niżej) ten sam kod przechodzi drugi raz.
     const [current] = await activeFactors(db);
     assert.equal(Number(current.last_used_step), nextStep);
     const replay = await verify({ db, ...RING }, await seedUserSession(db, { userId: USER }), nextCode);
     assert.deepEqual([replay.status, replay.body.error], [400, 'invalid_code']);
     assert.equal(await accepted(db), 1);
     assert.equal(await auditCount(db, 'mfa.key_rotated'), 1);
+  });
+});
+
+test('#208 (bariera, MFA, kontrola pozytywna): rotacja bez obu blokad (konta i czynnika) przenosi krok sprzed weryfikacji — ten sam kod przechodzi drugi raz', { skip }, async () => {
+  await withReal(async (db) => {
+    const { nextCode } = await enrolled(db);
+    const cookie = await seedUserSession(db, { userId: USER });
+    const r = await race(db, {
+      pauseAfter: /UPDATE user_mfa_factors SET last_used_step/,
+      first: (env) => verify(env, cookie, nextCode),
+      second: (env) => rotateMfaKeys(env, { apply: true }),
+      extra: RING,
+      // Mutacja obu blokad rotateOneAccount naraz (zapytania weryfikacji mają inny tekst:
+      // lockUser z `AND disabled_at IS NULL`, activeFactors bez `confirmed_at IS NOT NULL`).
+      rewrite: dropForUpdate(/^SELECT id FROM users WHERE id = \$1 FOR UPDATE|confirmed_at IS NOT NULL AND disabled_at IS NULL/),
+    });
+    // Rotacja czyta czynnik bez blokady i czeka dopiero na UPDATE disabled_at (wiersz trzyma weryfikacja).
+    assertWaitsOn(r, /^UPDATE user_mfa_factors SET disabled_at/, 'bez blokad rotacja czeka dopiero na wyłączenie wiersza');
+    assert.equal(r.a.status, 200, JSON.stringify(r.a.body));
+    assert.equal(r.b.rotated, 1);
+    const replay = await verify({ db, ...RING }, await seedUserSession(db, { userId: USER }), nextCode);
+    assert.equal(replay.status, 200, JSON.stringify(replay.body));
+    assert.equal(await accepted(db), 2);
+  });
+});
+
+// Rotacja pierwsza: staje po wyłączeniu starego wiersza, przed wstawieniem nowego (trzyma
+// blokadę konta i wiersza czynnika). Drugie żądanie czeka na blokadę konta i po zatwierdzeniu
+// rotacji widzi już nowy wiersz. Bez blokady konta w rotateOneAccount (mutant
+// mfa-key-rotation-account) drugie żądanie bierze konto, czeka na wiersz czynnika, a INSERT
+// rotacji (klucz obcy → FOR KEY SHARE na users) czeka na konto — zakleszczenie 40P01; przy
+// `retries: 0` w barierze jedna z transakcji jest przerywana (API: 503 retry_later).
+const ROTATION_DISABLES_OLD_ROW = /^UPDATE user_mfa_factors SET disabled_at = now\(\) WHERE id = \$1$/;
+
+async function rotationFirst(db, second) {
+  const r = await race(db, {
+    pauseAfter: ROTATION_DISABLES_OLD_ROW,
+    first: (env) => rotateMfaKeys(env, { apply: true }),
+    second,
+    extra: RING,
+  });
+  assert.deepEqual(r.errors, [], 'bez zakleszczenia (40P01) i innych błędów transakcji');
+  assert.equal(r.a.rotated, 1);
+  assert.equal(await auditCount(db, 'mfa.key_rotated'), 1);
+  return r;
+}
+
+test('#208 (bariera, MFA): weryfikacja kodu w trakcie rotacji klucza — weryfikacja czeka na blokadę konta i przyjmuje kod na nowym wierszu; bez zakleszczenia', { skip }, async () => {
+  await withReal(async (db) => {
+    const { nextStep, nextCode } = await enrolled(db);
+    const cookie = await seedUserSession(db, { userId: USER });
+    const r = await rotationFirst(db, (env) => verify(env, cookie, nextCode));
+    assertWaitsOn(r, LOCK_USER_SQL, 'weryfikacja czeka na blokadę wiersza konta');
+    // Weryfikacja czyta czynniki nowym zapytaniem po zatwierdzeniu rotacji, więc widzi nowy
+    // wiersz (a nie 409 mfa_not_enrolled, które daje czekanie na wiersz czynnika: stary
+    // wiersz jest już wyłączony, a nowego nie ma w migawce czekającego zapytania).
+    assert.equal(r.b.status, 200, JSON.stringify(r.b.body));
+    const [current] = await activeFactors(db);
+    assert.equal(Number(current.last_used_step), nextStep);
+    const { rows } = await db.query("SELECT metadata_json->>'factorId' AS factor FROM audit_events WHERE action = 'mfa.verified' AND metadata_json->>'kind' = 'verify'");
+    assert.deepEqual(rows.map((row) => row.factor), [current.id]);
+  });
+});
+
+test('#208 (bariera, MFA): ponowny zapis czynnika w trakcie rotacji klucza — zapis czeka na blokadę konta i dodaje czynnik oczekujący obok obróconego; bez zakleszczenia', { skip }, async () => {
+  await withReal(async (db) => {
+    await enrolled(db);
+    // Wymiana potwierdzonego czynnika wymaga sesji ze świeżym MFA.
+    const cookie = await seedUserSession(db, { userId: USER, mfa: true });
+    const r = await rotationFirst(db, (env) => callApi(env, 'POST', '/api/mfa/enroll', cookie));
+    assertWaitsOn(r, LOCK_USER_SQL, 'zapis czynnika czeka na blokadę wiersza konta');
+    assert.equal(r.b.status, 201, JSON.stringify(r.b.body));
+    const { rows } = await db.query(
+      'SELECT id, confirmed_at IS NOT NULL AS confirmed, key_version FROM user_mfa_factors WHERE user_id = $1 AND disabled_at IS NULL ORDER BY created_at', [USER],
+    );
+    assert.deepEqual(rows.map((row) => [row.confirmed, Number(row.key_version)]), [[true, 2], [false, 2]]);
+    assert.equal(rows[1].id, r.b.body.factorId);
+  });
+});
+
+test('#208 (bariera, MFA): reset MFA przez administratora w trakcie rotacji klucza — reset czeka na blokadę konta i wyłącza obrócony czynnik; bez zakleszczenia', { skip }, async () => {
+  await withReal(async (db) => {
+    await enrolled(db);
+    const admin = await seedUserSession(db, { userId: 'u-admin-1', mfa: true, roles: [{ role: 'admin' }] });
+    const r = await rotationFirst(db, (env) => callApi(env, 'POST', `/api/admin/users/${USER}/mfa-reset`, admin, { confirm: USER }));
+    assertWaitsOn(r, ACCOUNT_LOCK_SQL, 'reset czeka na blokadę wiersza konta');
+    assert.equal(r.b.status, 200, JSON.stringify(r.b.body));
+    assert.deepEqual([r.b.body.changed, r.b.body.disabledFactors], [true, 1]);
+    assert.ok(r.b.body.invalidatedRecoveryCodes > 0, JSON.stringify(r.b.body));
+    assert.deepEqual(await activeFactors(db), []);
+    assert.equal(await countRows(db, 'SELECT count(*)::int AS n FROM mfa_recovery_codes WHERE user_id = $1 AND used_at IS NULL AND invalidated_at IS NULL', [USER]), 0);
+    assert.equal(await auditCount(db, 'mfa.reset'), 1);
   });
 });
 
@@ -204,7 +271,7 @@ test('#208 (bariera, MFA): reset MFA przez administratora w trakcie ponownego za
       second: (env) => callApi(env, 'POST', `/api/admin/users/${USER}/mfa-reset`, admin, { confirm: USER }),
       extra: SINGLE,
     });
-    assertWaitsOn(r, /^SELECT id FROM users WHERE id = \$1 FOR UPDATE/, 'reset czeka na blokadę wiersza konta');
+    assertWaitsOn(r, ACCOUNT_LOCK_SQL, 'reset czeka na blokadę wiersza konta');
     assert.equal(r.a.status, 201, JSON.stringify(r.a.body));
     // Bez blokady konta UPDATE resetu czeka tylko na wiersz wyłączany przez zapis czynnika,
     // a nowego czynnika nie ma w jego migawce: reset kończy się changed: false (bez wylogowania

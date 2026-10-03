@@ -11,10 +11,14 @@
 //      (niezmienny) zostaje wskazaniem historycznym,
 //   5. zapisuje zdarzenie audytu mfa.key_rotated (identyfikatory i wersje,
 //      bez sekretów).
-// Cały krok jednego konta biegnie w jednej transakcji z `SELECT … FOR UPDATE`
-// na wierszu czynnika — dwa równoległe uruchomienia skryptu na tym samym
-// koncie serializują się na tej blokadzie; drugie po odblokowaniu widzi już
-// przestawiony (disabled_at) stary wiersz i pomija konto (idempotencja).
+// Cały krok jednego konta biegnie w jednej transakcji, która najpierw blokuje
+// wiersz konta (`lockAccount`), a dopiero potem wiersz czynnika — w tej samej
+// kolejności co weryfikacja i zapis czynnika (lockUser, potem activeFactors w
+// mfa.js) oraz reset MFA (adminResetMfaInTx). Odwrotna kolejność (czynnik, potem
+// konto przez klucz obcy INSERT-u) dawała zakleszczenie 40P01 z każdą z tych
+// operacji (#208). Dwa równoległe uruchomienia skryptu na tym samym koncie
+// serializują się na blokadzie konta; drugie widzi już przestawiony
+// (disabled_at) stary wiersz i pomija konto (idempotencja).
 //
 // dryRun (domyślnie true w CLI) nie zapisuje niczego — tylko liczy, ile
 // czynników wymagałoby rotacji i czy dla którejś starej wersji brakuje klucza
@@ -66,7 +70,17 @@ export async function rotateMfaKeys(env, { apply = false } = {}) {
   return report;
 }
 
+// Blokada konta jak w adminResetMfaInTx — bez warunku disabled_at: czynnik wyłączonego
+// konta też przechodzi na bieżący klucz (inaczej starego klucza nie da się usunąć).
+async function lockAccount(tx, userId) {
+  const { rows } = await tx.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+  return Boolean(rows[0]);
+}
+
 async function rotateOneAccount(tx, userId, keys, apply) {
+  if (!(await lockAccount(tx, userId))) return { status: 'no_factor' };
+  // Blokada czynnika jest drugą warstwą: każdy zapis user_mfa_factors bierze wcześniej
+  // blokadę konta (LOCK_EXCEPTIONS w scripts/lock-inventory.js).
   const { rows } = await tx.query(
     `SELECT id, method, secret_ciphertext, secret_iv, secret_tag, key_version, confirmed_at, last_used_step
        FROM user_mfa_factors
