@@ -51,6 +51,10 @@ Odpowiedzi:
 
 Ponowienie tego samego żądania (podwójne kliknięcie, ponowiona sieć) z tym samym `Idempotency-Key` zwraca `200` z `replayed: true` i tym samym dokumentem; nie powstaje drugi wpis ani drugi obiekt.
 
+Kontrakt OpenAPI tych tras (#160 etap 8: przesłanie jako surowe bajty, lista z kursorem, metadane, treść jako plik bez
+schematu JSON, opis, zastąpienie, unieważnienie) opisuje `src/pg/schemas/documents.js` (`docs/openapi.json`), a prawdziwe
+odpowiedzi sprawdza `tests/openapi-contract-documents.test.js`; cechy i rozbieżności — `docs/API.md`, „Cechy modułu etapu 8”.
+
 Pobranie ma nagłówki `Content-Disposition: attachment; filename="dokument-<id>.<ext>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cross-Origin-Resource-Policy: same-origin` i `Referrer-Policy: no-referrer`. Przed wydaniem pliku serwer porównuje rozmiar i SHA-256 obiektu z bazą; niezgodność blokuje pobranie.
 
 ## Wersje i unieważnienie (issue #82)

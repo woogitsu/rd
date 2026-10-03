@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-7)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-8)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -204,11 +204,12 @@ Plik nie jest edytowany ręcznie; role w `x-rd-roles` pozostają założeniami D
 
 Schemat modułu eksportuje `name`, `components` (schematy współdzielone) i `routes`:
 `{ 'POST /api/payments': { body, idempotencyKey, query, responses, errors } }`. Generator dołącza do
-operacji `requestBody`, parametry (zapytanie, `Idempotency-Key`), odpowiedzi sukcesu z kształtem
+operacji `requestBody` (JSON z `body`; ciało inne niż JSON — od etapu 8 surowe bajty przesyłanego dokumentu — z mapy
+`bodyContent` typ treści → schemat), parametry (zapytanie, `Idempotency-Key`), odpowiedzi sukcesu z kształtem
 (200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; `replayed` może być listą `['false', 'true']`,
 gdy ten sam status zwraca obie wartości — od etapu 5 zatwierdzenie, porzucenie i cofnięcia uzgodnień; zapis bez klucza,
 który wysyła nagłówek `true` tylko przy ponowieniu, ma w specyfikacji nagłówek z `required: false` — helper
-`replayedOnRetry`, etap 6; eksporty CSV/XLSX i plik kalendarza `.ics` z typem pliku;
+`replayedOnRetry`, etap 6; eksporty CSV/XLSX, plik kalendarza `.ics` i treść dokumentu z typem pliku;
 trasa z kilkoma formatami wybieranymi parametrem `format` ma mapę `content` typ treści → schemat, helper
 `formatsResponse` w `src/pg/schemas/common.js`; wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
 per status, wyłącznie z katalogu. Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
@@ -219,19 +220,21 @@ schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
 `tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
-`tests/openapi-contract-email.test.js` i `tests/openapi-contract-meetings.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js` i `tests/openapi-contract-documents.test.js`
+(opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
 dopasowania z cofnięciem, raport Komisji Rewizyjnej, zebranie z porządkiem obrad, zawiadomieniem, obecnością,
-uchwałami i protokołem, zamknięty rok, odmowy i błędy) przechodzą
+uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i treścią po autoryzacji, zamknięty rok,
+odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (135 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (157 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents` |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -354,6 +357,48 @@ Cechy modułu etapu 7 (`meetings`, zebrania — opis stanu, nie zmiana tras):
   `mfa: false`, choć trasa wymaga MFA jak każde zarządzanie zebraniem (`meetingForManage`).
 - `409 school_year_closed` (zamknięty rok) jest w schematach zapisów i w teście kontraktu — rok zamykają trasy
   `year-close`; zamknięcie wygasza przydziały roku, więc zapis próbuje zarząd z przydziałem bez roku.
+
+Cechy modułu etapu 8 (`documents`, prywatne dokumenty Rady i dowody finansowe — opis stanu, nie zmiana tras):
+
+- Macierz tras rozdziela jedną trasę serwera `/api/documents/{id}` (z `/content`, `/description`, `/supersede`, `/void`) na
+  cztery rodzaje dokumentu z osobnym parametrem ścieżki (`{financialDocumentId}`, `{boardDocumentId}`, `{classDocumentId}`,
+  `{council_sharedDocumentId}`), więc specyfikacja ma 20 operacji dla 5 tras serwera (razem z listą i przesłaniem — 22).
+  Schemat jest ten sam dla każdego rodzaju; odczyt metadanych przypina `document.kind` do rodzaju ścieżki. Rodzaj nie
+  pochodzi z żądania: serwer czyta go z bazy (klient kontraktu wybiera szablon opcją `template`).
+- Przesłanie (`POST /api/documents?kind=…&schoolYearId=…[&classId=…][&linkedEntityType=…&linkedEntityId=…]`): ciało to
+  **surowe bajty pliku** (`application/pdf`, `image/png`, `image/jpeg` — `requestBody` z trzema typami treści i schematem
+  `string`/`binary`), nie JSON ani multipart; typ musi zgadzać się z sygnaturą, a plik przejść kontrolę struktury
+  (`415 unsupported_media_type`, `document_active_content`, `document_malformed`); `413 document_too_large` po limicie
+  `DOCUMENT_MAX_BYTES`, `400 empty_document`, `503 upload_busy` (z `Retry-After`) i `503 storage_unavailable` bez odczytu ciała.
+  Dowód `financial` może wskazywać wpis księgi albo wpłatę tego samego roku (`linkedEntityType`, `400 invalid_link`).
+- Treść (`GET …/content`): odpowiedź `200` to plik o typie z bazy, opisany w specyfikacji typem treści bez schematu JSON
+  (jak eksporty wpłat; `string`/`binary` dla każdego z trzech typów). Każde żądanie przechodzi autoryzację (sesja, rola, MFA,
+  rok, klasa) — nie ma adresu z tokenem ani podpisanego linku; wygasła sesja daje `401`. `?disposition=inline` tylko dla
+  obrazów (PDF → `400 pdf_inline_not_allowed`, #705), `?purpose=preview` wydaje bajty PDF do PDF.js jako załącznik po ponownej
+  kontroli struktury (`409 document_preview_blocked`); inna wartość → `400 invalid_disposition`. Brak obiektu w buckecie to
+  `409 document_content_missing`, niezgodny rozmiar lub SHA-256 — `503 service_unavailable`.
+- Zapisy (przesłanie, opis, zastąpienie, unieważnienie) wymagają `Idempotency-Key`, ale **nie** wysyłają nagłówka
+  `Idempotency-Replayed`: zapis zwraca `201`, a ponowienie — `200` z polem `replayed: true` w treści (przesłanie i opis: ten
+  sam klucz i treść; zastąpienie i unieważnienie także ta sama zmiana innym kluczem). Brak klucza to
+  `400 idempotency_key_required` (inne moduły: `invalid_idempotency_key`), a zły typ treści zapisu JSON — `400
+  invalid_content_type` (inne moduły: `415`).
+- Odczyt i zapis dokumentu poza zakresem, brak MFA modułu dla `financial` i nieznany identyfikator dają to samo
+  `404 not_found`; przesłanie poza zakresem — `403 forbidden`. `403` przy odczycie dokumentu to wyłącznie bramka MFA routera
+  (`mfa_enrollment_required`/`mfa_required`), której macierz tras nie wymienia w `x-rd-deny-status` (tam tylko `404`).
+  Komisja Rewizyjna za flagą `AUDIT_LEDGER_READ` czyta listę, metadane (z `description: null` w historii opisu) i treść
+  dowodów `financial` z kategorii bez danych płatników, niepowiązanych z wpłatą; bez MFA lista daje `403
+  mfa_enrollment_required`/`mfa_required`, bez flagi — `403 forbidden` i `404`.
+- Lista ma kursor (`limit` 1-100, `cursor` → `nextCursor`, `truncated`; przy `sort=documentDate` stronicuje przestarzały
+  `offset`, a `nextCursor` jest zawsze `null`); filtry `from`, `to` i `validation` też należą do zakresu kursora (tabela
+  list z kursorem wyżej wymienia tylko część filtrów).
+- **Zamknięty rok** (trasy `year-close`): przesłanie, opis i zastąpienie dają `409 school_year_closed`; unieważnienie
+  pozostaje możliwe (`201`, wariant zachowawczy do D-04/D-07, docs/DOCUMENTS.md), odczyt treści działa.
+- Rozbieżności z dokumentacją (opis, trasy bez zmian): `docs/API_ERRORS.md` wymienia `document_integrity_mismatch`, ale
+  klient go nie dostaje (wyjątek trasy zamienia router na `503 service_unavailable`, jak opisuje docs/DOCUMENTS.md);
+  `400 document_preview_unsupported` jest nieosiągalne dla dokumentów przesłanych przez API (ograniczenie `documents_api_row`
+  dopuszcza tylko typy podglądu) — kod jest w schemacie jako obrona; `413 request_too_large` przesłania zwraca serwer Node
+  przed trasą (`Content-Length` ponad limit), więc test kontraktu na PGlite go nie osiąga; docs/DOCUMENTS.md pisze o `404`
+  przy braku MFA dla `financial`, a zarząd i skarbnik bez czynnika dostają wcześniej `403` bramki routera.
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
