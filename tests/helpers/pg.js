@@ -123,8 +123,15 @@ export async function createRealTestDb() {
 // tests/pg-template-isolation.test.js. Plik z jedną bazą płaci tylko za zrzut.
 // RD_TEST_PGLITE_TEMPLATE=off wraca do migracji od zera przy każdej bazie
 // (pomiar „przed”, diagnostyka); nie jest używane w CI.
+//
+// Instancja PGlite utworzona z `loadDataDir` trzyma w Node odliczający timer do
+// `close()`: niezamknięta (wiele testów nie woła db.close()) blokuje wyjście procesu
+// testowego na czas, który wygląda jak zawieszenie. Dlatego helper zamyka wszystkie
+// niezamknięte bazy PGlite w after() na końcu pliku testowego (jak bazy real w
+// cleanupRealDatabases); test, który zamknął bazę sam, nie jest dotykany.
 const pgliteTemplateEnabled = process.env.RD_TEST_PGLITE_TEMPLATE !== 'off';
 let pgliteTemplate; // Promise<File> | undefined — zrzut katalogu danych po wszystkich migracjach
+const livePgliteDbs = new Set();
 
 async function migratedPglite() {
   const db = new PGlite();
@@ -132,14 +139,33 @@ async function migratedPglite() {
   return db;
 }
 
+// close() jest idempotentne: testy z własnym after(() => shared.close()) działają bez zmian
+// niezależnie od kolejności hooków, a baza zamknięta przez test nie jest zamykana drugi raz.
+function tracked(db) {
+  const close = db.close.bind(db);
+  db.close = async () => { if (!db.closed) await close(); };
+  livePgliteDbs.add(db);
+  return db;
+}
+
+async function closeLivePgliteDbs() {
+  for (const db of [...livePgliteDbs]) {
+    livePgliteDbs.delete(db);
+    if (!db.closed) await db.close().catch(() => {});
+  }
+}
+// Rejestracja na poziomie modułu (import w pliku testowym dzieje się przed testami):
+// hook należy do całego pliku, nie do pierwszego testu, który zawoła helper.
+after(closeLivePgliteDbs);
+
 // Zawsze PGlite, także przy RD_TEST_PG_BACKEND=real — dla testów porównujących
 // oba backendy (tests/pg-real-type-parity.test.js).
 export async function createPgliteTestDb() {
-  if (!pgliteTemplateEnabled) return migratedPglite();
+  if (!pgliteTemplateEnabled) return tracked(await migratedPglite());
   if (pgliteTemplate) {
     const db = new PGlite({ loadDataDir: await pgliteTemplate });
     await db.waitReady;
-    return db;
+    return tracked(db);
   }
   // Pierwsze wywołanie (także równoległe: kolejne czekają na ten sam zrzut).
   let first;
@@ -154,7 +180,7 @@ export async function createPgliteTestDb() {
     await first?.close().catch(() => {});
     throw error;
   }
-  return first;
+  return tracked(first);
 }
 
 export async function createTestDb() {
