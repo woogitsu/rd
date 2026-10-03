@@ -1,13 +1,16 @@
 // Klient testów kontraktu API (#160, etap 2): wykonuje PRAWDZIWE żądania przez router
 // (`handlePgRequest`) i sprawdza je względem wygenerowanej specyfikacji docs/openapi.json:
 //   * operacja (metoda + ścieżka) istnieje w specyfikacji,
-//   * ciało żądania zgodne ze schematem `requestBody` (chyba że test wysyła je celowo błędne),
+//   * ciało żądania zgodne ze schematem `requestBody` (chyba że test wysyła je celowo błędne); ciało binarne
+//     (Uint8Array, np. przesyłany dokument, #160 etap 8) — jego `Content-Type` musi być opisany w `requestBody`,
 //   * parametry zapytania są opisane w operacji,
 //   * status odpowiedzi jest opisany, a treść JSON zgodna ze schematem tej odpowiedzi
 //     (pliki: zgodny Content-Type; przy kilku formatach schemat wybiera Content-Type odpowiedzi),
 //     nagłówek Idempotency-Replayed zgodny ze specyfikacją (brak nagłówka dozwolony tylko, gdy specyfikacja
 //     ma `required: false` — zapis bez klucza, który wysyła `true` wyłącznie przy ponowieniu, #160 etap 6),
 //   * kod błędu należy do `x-rd-error-codes` danego statusu.
+// Opcja `template` wskazuje operację wprost, gdy kilka szablonów pasuje do jednej ścieżki (macierz tras rozdziela
+// `/api/documents/{id}` na cztery rodzaje dokumentu: `{financialDocumentId}`, `{boardDocumentId}` …).
 // Zebrane trójki `METODA /ścieżka status` (`client.validated`) pozwalają testowi sprawdzić,
 // że każda odpowiedź sukcesu opisana w schematach została choć raz zwalidowana na prawdziwej odpowiedzi;
 // odpowiedź z kilkoma formatami dodaje też `METODA /ścieżka status typ-treści` dla każdego formatu.
@@ -29,9 +32,11 @@ export function createContractClient({ spec, fetch }) {
   }));
   const validated = new Set();
 
-  function findOperation(method, pathname) {
+  function findOperation(method, pathname, template) {
     // Najpierw ścieżki bez parametrów (np. /api/ledger/categories/copy), potem szablony.
-    const matching = operations.filter((operation) => operation.regex.test(pathname) && operation.item[method.toLowerCase()]);
+    const matching = operations.filter((operation) => operation.regex.test(pathname) && operation.item[method.toLowerCase()]
+      && (template === undefined || operation.path === template));
+    assert.ok(template === undefined || matching.length > 0, `szablon ${template} nie pasuje do ${method} ${pathname}`);
     matching.sort((a, b) => (a.path.match(/\{/g)?.length ?? 0) - (b.path.match(/\{/g)?.length ?? 0));
     const found = matching[0];
     assert.ok(found, `brak operacji w docs/openapi.json: ${method} ${pathname}`);
@@ -48,12 +53,15 @@ export function createContractClient({ spec, fetch }) {
    * @param {string} method
    * @param {string} path ścieżka z zapytaniem
    * @param {{ cookie?: string, body?: unknown, key?: string, expect: number, invalidRequest?: boolean, origin?: string|false,
-   *   headers?: Record<string, string> }} options `headers` — dodatkowe nagłówki (np. sekret webhooka, Content-Type)
+   *   headers?: Record<string, string>, template?: string }} options `headers` — dodatkowe nagłówki (np. sekret webhooka,
+   *   Content-Type); `template` — szablon ścieżki operacji, gdy pasuje kilka
    */
-  async function call(method, path, { cookie, body, key, expect, invalidRequest = false, origin, headers: extraHeaders = {} } = {}) {
+  async function call(method, path, {
+    cookie, body, key, expect, invalidRequest = false, origin, headers: extraHeaders = {}, template: chosenTemplate,
+  } = {}) {
     assert.ok(Number.isInteger(expect), 'call: podaj oczekiwany status (expect)');
     const url = new URL(path, 'https://rd.test');
-    const { path: template, operation } = findOperation(method, url.pathname);
+    const { path: template, operation } = findOperation(method, url.pathname, chosenTemplate);
 
     if (!invalidRequest) {
       for (const name of url.searchParams.keys()) {
@@ -64,7 +72,12 @@ export function createContractClient({ spec, fetch }) {
         assert.ok(operation.parameters?.some((p) => p.in === 'header' && p.name === 'Idempotency-Key'),
           `${method} ${template}: wysłano Idempotency-Key, a specyfikacja go nie opisuje`);
       }
-      if (body !== undefined) {
+      if (body instanceof Uint8Array) {
+        const type = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === 'content-type')?.[1] ?? '';
+        const declared = Object.keys(operation.requestBody?.content ?? {});
+        assert.ok(declared.includes(type.split(';')[0].trim().toLowerCase()),
+          `${method} ${template}: typ treści żądania „${type}” nie jest opisany w requestBody (${declared.join(', ')})`);
+      } else if (body !== undefined) {
         const schema = operation.requestBody?.content?.['application/json']?.schema;
         assert.ok(schema, `${method} ${template}: wysłano ciało, a specyfikacja nie opisuje requestBody`);
         assert.deepEqual(validateSchema(schema, body, { components }), [], `${method} ${template}: ciało żądania niezgodne ze schematem`);

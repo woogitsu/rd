@@ -96,6 +96,7 @@
   ],
   "x-rd-schema-coverage": {
     "covered": [
+      "documents",
       "email",
       "families",
       "ledger",
@@ -114,7 +115,6 @@
       "audit-history",
       "audit-reviews",
       "board",
-      "documents",
       "events",
       "exports",
       "financial-reports",
@@ -130,7 +130,7 @@
     ],
     "operations": {
       "total": 297,
-      "withSchema": 135
+      "withSchema": 157
     }
   },
   "paths": {
@@ -4576,17 +4576,167 @@
         "operationId": "documents_list",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentCategory"
+            }
+          },
+          {
+            "name": "classId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "cursor",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi z tymi samymi filtrami (tylko `sort=createdAt`)."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            },
+            "description": "Data dokumentu od (najnowsza wersja opisu; dokument bez daty odpada)."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentKind"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "description": "Przestarzały; działa tylko bez `cursor`."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Fragment tytułu albo opisu (ILIKE, znaki wzorca uciekane)."
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "createdAt",
+                "documentDate"
+              ],
+              "default": "createdAt"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "all"
+              ],
+              "default": "active"
+            },
+            "description": "`all` pokazuje też zastąpione i unieważnione."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            },
+            "description": "Data dokumentu do; `from` > `to` → 400 `invalid_request`."
+          },
+          {
+            "name": "validation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "outdated"
+              ]
+            },
+            "description": "Tylko sprawdzone starszą wersją reguł albo bez wersji (0161)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Lista metadanych dostępnych użytkownikowi (filtry przed LIMIT, autoryzacja każdego wiersza). Komisja Rewizyjna za flagą `AUDIT_LEDGER_READ` widzi tylko dowody `financial` z kategorii bez danych płatników.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_category",
+              "invalid_class",
+              "invalid_cursor",
+              "invalid_document_date",
+              "invalid_kind",
+              "invalid_limit",
+              "invalid_request",
+              "invalid_school_year",
+              "invalid_status"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4599,7 +4749,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -4660,33 +4815,145 @@
         "operationId": "documents_uploadFinancial",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "classId",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Wymagane wyłącznie dla `class` (inaczej 400 `invalid_class`)."
           },
           {
             "name": "kind",
             "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentKind"
+            }
+          },
+          {
+            "name": "linkedEntityId",
+            "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "linkedEntityType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ledger_entry",
+                "payment_entry"
+              ]
+            },
+            "description": "Powiązanie dowodu `financial` z wpisem księgi albo wpłatą tego samego roku (razem z `linkedEntityId`)."
           },
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "description": "Surowe bajty pliku (nie JSON ani multipart). Nagłówek `Content-Type` musi zgadzać się z sygnaturą pliku (`image/jpg` = `image/jpeg`); po sygnaturze serwer sprawdza strukturę (aktywna treść PDF, uszkodzony plik → 415). Limit `DOCUMENT_MAX_BYTES` (domyślnie 10 MiB, najwyżej 25 MiB).",
+          "content": {
+            "application/pdf": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz, ten sam plik i te same parametry: zapisany wcześniej dokument (bez drugiego obiektu). Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "document": {
+                      "$ref": "#/components/schemas/Document"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "document",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Dokument zapisany: obiekt w prywatnym buckecie pod losowym kluczem, metadane w bazie, `document.uploaded` w dzienniku. Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "document": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  },
+                  "required": [
+                    "document"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "empty_document",
+              "idempotency_key_required",
+              "invalid_class",
+              "invalid_kind",
+              "invalid_link",
+              "invalid_school_year"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4699,7 +4966,71 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_content_missing",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_too_large",
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_active_content",
+              "document_malformed",
+              "unsupported_media_type"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "storage_unavailable",
+              "upload_busy"
+            ]
           }
         },
         "security": [
@@ -4826,16 +5157,52 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Metadane dokumentu zarządu (`board`): stan, „zastąpiony przez”/„zastępuje” i pełna historia opisu. ",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/DocumentMetadata"
+                    },
+                    {
+                      "properties": {
+                        "document": {
+                          "properties": {
+                            "kind": {
+                              "const": "board"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -4845,7 +5212,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -4895,16 +5265,90 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "attachment",
+                "inline"
+              ]
+            },
+            "description": "`attachment` (domyślnie) — pobranie; `inline` — podgląd PNG/JPEG w panelu (PDF → 400 `pdf_inline_not_allowed`)."
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "preview"
+              ]
+            },
+            "description": "`preview` — bajty do podglądu PDF.js (załącznik, ponowna kontrola struktury, `document.viewed`)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Treść dokumentu zarządu (`board`) wydana przez serwer po autoryzacji tego żądania (bez podpisanego adresu). Typ z bazy; nagłówki `Content-Disposition` (`dokument-<id>.<ext>`), `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, CSP `sandbox`. Rozmiar i SHA-256 obiektu są porównywane z bazą (niezgodność → 503).",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_preview_unsupported",
+              "invalid_disposition",
+              "pdf_inline_not_allowed"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -4914,7 +5358,38 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_content_missing",
+              "document_preview_blocked"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "service_unavailable",
+              "storage_unavailable"
+            ]
           }
         },
         "security": [
@@ -4960,20 +5435,113 @@
         "operationId": "documents_describeBoard",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "boardDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentDescriptionRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz i ta sama treść: zapisana wcześniej wersja. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "description",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Nowa wersja opisu dokumentu zarządu (`board`) (numer o 1 wyższy). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    }
+                  },
+                  "required": [
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_category",
+              "invalid_content_type",
+              "invalid_description",
+              "invalid_document_date",
+              "invalid_json",
+              "invalid_request",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -4983,7 +5551,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5029,20 +5641,110 @@
         "operationId": "documents_supersedeBoard",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "boardDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSupersedeRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo to samo zastąpienie innym kluczem: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zastąpienie dokumentu zarządu (`board`) innym dokumentem (zdarzenie stanu; plik i wpis zostają). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_replacement_document"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5052,7 +5754,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "document_status_replacement_not_active",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5098,20 +5846,109 @@
         "operationId": "documents_voidBoard",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "boardDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentVoidRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo kolejne unieważnienie już unieważnionego dokumentu: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Unieważnienie dokumentu zarządu (`board`) (zdarzenie stanu; możliwe także w zamkniętym roku, plik zostaje do pobrania). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5121,7 +5958,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "idempotency_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5171,16 +6052,52 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Metadane materiału klasy (`class`): stan, „zastąpiony przez”/„zastępuje” i pełna historia opisu. ",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/DocumentMetadata"
+                    },
+                    {
+                      "properties": {
+                        "document": {
+                          "properties": {
+                            "kind": {
+                              "const": "class"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5190,7 +6107,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -5253,16 +6173,90 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "attachment",
+                "inline"
+              ]
+            },
+            "description": "`attachment` (domyślnie) — pobranie; `inline` — podgląd PNG/JPEG w panelu (PDF → 400 `pdf_inline_not_allowed`)."
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "preview"
+              ]
+            },
+            "description": "`preview` — bajty do podglądu PDF.js (załącznik, ponowna kontrola struktury, `document.viewed`)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Treść materiału klasy (`class`) wydana przez serwer po autoryzacji tego żądania (bez podpisanego adresu). Typ z bazy; nagłówki `Content-Disposition` (`dokument-<id>.<ext>`), `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, CSP `sandbox`. Rozmiar i SHA-256 obiektu są porównywane z bazą (niezgodność → 503).",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_preview_unsupported",
+              "invalid_disposition",
+              "pdf_inline_not_allowed"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5272,7 +6266,38 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_content_missing",
+              "document_preview_blocked"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "service_unavailable",
+              "storage_unavailable"
+            ]
           }
         },
         "security": [
@@ -5331,20 +6356,113 @@
         "operationId": "documents_describeClass",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "classDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentDescriptionRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz i ta sama treść: zapisana wcześniej wersja. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "description",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Nowa wersja opisu materiału klasy (`class`) (numer o 1 wyższy). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    }
+                  },
+                  "required": [
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_category",
+              "invalid_content_type",
+              "invalid_description",
+              "invalid_document_date",
+              "invalid_json",
+              "invalid_request",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5354,7 +6472,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5413,20 +6575,110 @@
         "operationId": "documents_supersedeClass",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "classDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSupersedeRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo to samo zastąpienie innym kluczem: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zastąpienie materiału klasy (`class`) innym dokumentem (zdarzenie stanu; plik i wpis zostają). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_replacement_document"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5436,7 +6688,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "document_status_replacement_not_active",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5495,20 +6793,109 @@
         "operationId": "documents_voidClass",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "classDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentVoidRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo kolejne unieważnienie już unieważnionego dokumentu: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Unieważnienie materiału klasy (`class`) (zdarzenie stanu; możliwe także w zamkniętym roku, plik zostaje do pobrania). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5518,7 +6905,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "idempotency_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5581,16 +7012,52 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Metadane dokumentu Rady dla przedstawicieli (`council_shared`): stan, „zastąpiony przez”/„zastępuje” i pełna historia opisu. ",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/DocumentMetadata"
+                    },
+                    {
+                      "properties": {
+                        "document": {
+                          "properties": {
+                            "kind": {
+                              "const": "council_shared"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5600,7 +7067,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -5657,16 +7127,90 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "attachment",
+                "inline"
+              ]
+            },
+            "description": "`attachment` (domyślnie) — pobranie; `inline` — podgląd PNG/JPEG w panelu (PDF → 400 `pdf_inline_not_allowed`)."
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "preview"
+              ]
+            },
+            "description": "`preview` — bajty do podglądu PDF.js (załącznik, ponowna kontrola struktury, `document.viewed`)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Treść dokumentu Rady dla przedstawicieli (`council_shared`) wydana przez serwer po autoryzacji tego żądania (bez podpisanego adresu). Typ z bazy; nagłówki `Content-Disposition` (`dokument-<id>.<ext>`), `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, CSP `sandbox`. Rozmiar i SHA-256 obiektu są porównywane z bazą (niezgodność → 503).",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_preview_unsupported",
+              "invalid_disposition",
+              "pdf_inline_not_allowed"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5676,7 +7220,38 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_content_missing",
+              "document_preview_blocked"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "service_unavailable",
+              "storage_unavailable"
+            ]
           }
         },
         "security": [
@@ -5729,20 +7304,113 @@
         "operationId": "documents_describeCouncilShared",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "council_sharedDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentDescriptionRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz i ta sama treść: zapisana wcześniej wersja. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "description",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Nowa wersja opisu dokumentu Rady dla przedstawicieli (`council_shared`) (numer o 1 wyższy). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    }
+                  },
+                  "required": [
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_category",
+              "invalid_content_type",
+              "invalid_description",
+              "invalid_document_date",
+              "invalid_json",
+              "invalid_request",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5752,7 +7420,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5798,20 +7510,110 @@
         "operationId": "documents_supersedeCouncilShared",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "council_sharedDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSupersedeRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo to samo zastąpienie innym kluczem: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zastąpienie dokumentu Rady dla przedstawicieli (`council_shared`) innym dokumentem (zdarzenie stanu; plik i wpis zostają). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_replacement_document"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5821,7 +7623,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "document_status_replacement_not_active",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5867,20 +7715,109 @@
         "operationId": "documents_voidCouncilShared",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "council_sharedDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentVoidRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo kolejne unieważnienie już unieważnionego dokumentu: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Unieważnienie dokumentu Rady dla przedstawicieli (`council_shared`) (zdarzenie stanu; możliwe także w zamkniętym roku, plik zostaje do pobrania). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5890,7 +7827,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "idempotency_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -5940,16 +7921,52 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Metadane dowodu finansowego (`financial`, MFA): stan, „zastąpiony przez”/„zastępuje” i pełna historia opisu. Komisja Rewizyjna (flaga `AUDIT_LEDGER_READ`) dostaje `description: null` w historii (ślad `document.audit_read`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/DocumentMetadata"
+                    },
+                    {
+                      "properties": {
+                        "document": {
+                          "properties": {
+                            "kind": {
+                              "const": "financial"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -5959,7 +7976,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -6013,16 +8033,90 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "disposition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "attachment",
+                "inline"
+              ]
+            },
+            "description": "`attachment` (domyślnie) — pobranie; `inline` — podgląd PNG/JPEG w panelu (PDF → 400 `pdf_inline_not_allowed`)."
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "preview"
+              ]
+            },
+            "description": "`preview` — bajty do podglądu PDF.js (załącznik, ponowna kontrola struktury, `document.viewed`)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Treść dowodu finansowego (`financial`, MFA) wydana przez serwer po autoryzacji tego żądania (bez podpisanego adresu). Typ z bazy; nagłówki `Content-Disposition` (`dokument-<id>.<ext>`), `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, CSP `sandbox`. Rozmiar i SHA-256 obiektu są porównywane z bazą (niezgodność → 503).",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_preview_unsupported",
+              "invalid_disposition",
+              "pdf_inline_not_allowed"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -6032,7 +8126,38 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_content_missing",
+              "document_preview_blocked"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "service_unavailable",
+              "storage_unavailable"
+            ]
           }
         },
         "security": [
@@ -6082,20 +8207,113 @@
         "operationId": "documents_describeFinancial",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "financialDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentDescriptionRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz i ta sama treść: zapisana wcześniej wersja. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "description",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Nowa wersja opisu dowodu finansowego (`financial`, MFA) (numer o 1 wyższy). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "$ref": "#/components/schemas/DocumentDescription"
+                    }
+                  },
+                  "required": [
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_category",
+              "invalid_content_type",
+              "invalid_description",
+              "invalid_document_date",
+              "invalid_json",
+              "invalid_request",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -6105,7 +8323,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -6155,20 +8417,110 @@
         "operationId": "documents_supersedeFinancial",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "financialDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSupersedeRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo to samo zastąpienie innym kluczem: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zastąpienie dowodu finansowego (`financial`, MFA) innym dokumentem (zdarzenie stanu; plik i wpis zostają). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_replacement_document"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -6178,7 +8530,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "document_status_replacement_not_active",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -6228,20 +8626,109 @@
         "operationId": "documents_voidFinancial",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "financialDocumentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentVoidRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz albo kolejne unieważnienie już unieważnionego dokumentu: zapisane wcześniej zdarzenie. Pole `replayed: true` w treści, bez nagłówka.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    },
+                    "replayed": {
+                      "const": true,
+                      "description": "Ponowienie: bez nowego zapisu, zwraca zapisany wcześniej obiekt."
+                    }
+                  },
+                  "required": [
+                    "statusEvent",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Unieważnienie dowodu finansowego (`financial`, MFA) (zdarzenie stanu; możliwe także w zamkniętym roku, plik zostaje do pobrania). Bez nagłówka `Idempotency-Replayed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusEvent": {
+                      "$ref": "#/components/schemas/DocumentStatusEvent"
+                    }
+                  },
+                  "required": [
+                    "statusEvent"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_content_type",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -6251,7 +8738,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "document_status_conflict",
+              "idempotency_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -35771,6 +38302,476 @@
         "type": "integer",
         "minimum": 0,
         "description": "Liczba (zero lub więcej)."
+      },
+      "Document": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DocumentKind"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Rok dokumentu (dokument bez roku jest niedostępny przez API)."
+          },
+          "classId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Klasa dokumentu `class`; null dla pozostałych rodzajów."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mimeType": {
+            "type": "string",
+            "enum": [
+              "application/pdf",
+              "image/png",
+              "image/jpeg"
+            ],
+            "description": "Typ ustalony po sygnaturze pliku przy przesłaniu."
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Rozmiar pliku w bajtach."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 pliku (sprawdzany przy każdym odczycie treści)."
+          },
+          "linkedEntityType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ledger_entry",
+                  "payment_entry"
+                ],
+                "description": "Powiązanie dowodu `financial` z wpisem księgi albo wpłatą tego samego roku."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "linkedEntityId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          },
+          "replacementDocumentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "„Zastąpiony przez” (dla `superseded`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 200,
+                "description": "Tytuł najnowszej wersji opisu; null = „Bez tytułu”."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentCategory"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "documentDate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validationVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Wersja reguł kontroli struktury przy przesłaniu (0161); null = plik sprzed zapisu wersji."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validationCurrent": {
+            "type": "boolean",
+            "description": "true = sprawdzony bieżącą wersją reguł (`validation=outdated` pokazuje pozostałe)."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "schoolYearId",
+          "classId",
+          "mimeType",
+          "byteSize",
+          "sha256",
+          "linkedEntityType",
+          "linkedEntityId",
+          "createdBy",
+          "createdAt",
+          "status",
+          "replacementDocumentId",
+          "title",
+          "category",
+          "documentDate",
+          "validationVersion",
+          "validationCurrent"
+        ],
+        "additionalProperties": false,
+        "description": "Metadane dokumentu (wiersz niezmienny) ze stanem i najnowszą wersją opisu. Bez klucza obiektu i nazwy pliku."
+      },
+      "DocumentCategory": {
+        "type": "string",
+        "enum": [
+          "faktura",
+          "potwierdzenie_przelewu",
+          "wyciag",
+          "protokol",
+          "uchwala",
+          "umowa",
+          "regulamin",
+          "sprawozdanie_rewizyjne",
+          "inne"
+        ],
+        "description": "Kategoria z zamkniętej listy (założenie do zatwierdzenia przez zarząd i skarbnika, #76), niezależna od rodzaju."
+      },
+      "DocumentDescription": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "revisionNo": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji opisu (dopisywana, poprzednie zostają w historii)."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200
+          },
+          "category": {
+            "$ref": "#/components/schemas/DocumentCategory"
+          },
+          "documentDate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "description": "Wolny tekst opisu; null także w widoku Komisji Rewizyjnej (D-09, opis nie jest jej wydawany)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "documentId",
+          "revisionNo",
+          "title",
+          "category",
+          "documentDate",
+          "description",
+          "createdBy",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Wersja opisu dokumentu (#76)."
+      },
+      "DocumentDescriptionRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł (3-200 znaków po przycięciu); bez imion i nazwisk (bramka #152)."
+          },
+          "category": {
+            "$ref": "#/components/schemas/DocumentCategory"
+          },
+          "documentDate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate",
+                "description": "Data dokumentu; pusta wartość = brak daty."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "description": "Opis (do 1000 znaków po przycięciu)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "title",
+          "category"
+        ],
+        "description": "Nowa wersja opisu (dopisywana; poprzednia zostaje w historii)."
+      },
+      "DocumentKind": {
+        "type": "string",
+        "enum": [
+          "financial",
+          "board",
+          "class",
+          "council_shared"
+        ],
+        "description": "`financial` — dowód finansowy (MFA), `board` — dokument zarządu, `class` — materiał jednej klasy (wymaga `classId`), `council_shared` — dokument Rady dla przedstawicieli wszystkich klas roku (#167). Macierz dostępu: docs/DOCUMENTS.md (D-08/D-09)."
+      },
+      "DocumentList": {
+        "type": "object",
+        "properties": {
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            },
+            "description": "Strona dokumentów dostępnych użytkownikowi."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Zastosowana wielkość strony."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "description": "Przestarzały `offset` (0 przy kursorze)."
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Kursor następnej strony (tylko `sort=createdAt`); null na ostatniej stronie i zawsze przy `sort=documentDate`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "true, gdy są kolejne wiersze (przy `sort=documentDate` stronicuje `offset`)."
+          }
+        },
+        "required": [
+          "documents",
+          "limit",
+          "offset",
+          "nextCursor",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "DocumentMetadata": {
+        "type": "object",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/Document"
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "„Zastępuje”: dokument, którego zastępstwem jest ten."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "descriptionHistory": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocumentDescription"
+            },
+            "description": "Wszystkie wersje opisu, najnowsza pierwsza."
+          }
+        },
+        "required": [
+          "document",
+          "supersedes",
+          "descriptionHistory"
+        ],
+        "additionalProperties": false
+      },
+      "DocumentStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "superseded",
+          "voided"
+        ],
+        "description": "Stan dokumentu (#82): `active` bez zdarzenia stanu; zastąpienie i unieważnienie są ostateczne, plik zostaje w archiwum."
+      },
+      "DocumentStatusEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "documentId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "superseded",
+              "voided"
+            ]
+          },
+          "replacementDocumentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Dokument zastępujący (dla `superseded`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "documentId",
+          "action",
+          "replacementDocumentId",
+          "createdBy",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Zdarzenie stanu (#82), bez powodu (powód jest wewnętrzny)."
+      },
+      "DocumentSupersedeRequest": {
+        "type": "object",
+        "properties": {
+          "replacementDocumentId": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "Aktywny dokument tego samego rodzaju, roku i klasy (inaczej 400 `invalid_replacement_document` albo 409 `document_status_replacement_not_active`)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); wewnętrzny, nie trafia do dziennika. Bramka danych osobowych (#152); inna długość → 400 `invalid_reason`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "replacementDocumentId",
+          "reason"
+        ]
+      },
+      "DocumentVoidRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); wewnętrzny, nie trafia do dziennika. Bramka danych osobowych (#152); inna długość → 400 `invalid_reason`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ]
       },
       "EmailApproveRequest": {
         "type": "object",
