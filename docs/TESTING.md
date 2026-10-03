@@ -253,6 +253,32 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etap 2)
+
+`docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
+`tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Od etapu 2 operacje modułów z
+`COVERED_MODULES` (`src/pg/schemas/index.js`: `payments`, `payment-references`, `payment-instructions`,
+`ledger`) mają schematy ciał żądań i odpowiedzi (`src/pg/schemas/<moduł>.js`, opis mechanizmu w
+`docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
+
+- rejestr pokrycia: każda trasa macierzy pokrytego modułu ma schemat (kontrola pozytywna: detektor wskazuje
+  dopisaną trasę bez schematu), każdy schemat ma trasę, moduły macierzy = pokryte + jawnie niepokryte, a lista
+  `UNCOVERED_MODULES` nie rośnie (sufit `MAX_UNCOVERED_MODULES`, obniżany w kolejnych PR-ach);
+- kody błędów w schematach należą do katalogu `docs/API_ERRORS.md` i występują w źródle trasy;
+- **prawdziwe odpowiedzi** (PGlite, dane syntetyczne) przez `tests/helpers/contract-client.js` i walidator
+  `tests/helpers/json-schema.js` (bez nowej zależności; nieznane słowo kluczowe schematu rzuca wyjątek, więc nie
+  przepuszcza po cichu): utworzenie, ponowienie z tym samym kluczem (`Idempotency-Replayed`), korekta częściowa,
+  zwrot i ponowne przypisanie wpłaty, podział wpłaty z cofnięciem, lista z kursorem (wpłaty, księga, weryfikacje),
+  przeksięgowanie, uchwała z upoważnieniem, widok Komisji Rewizyjnej, eksporty (typ pliku), odmowy 401/403/404,
+  konflikty 409 i błędy walidacji; kod błędu musi być w `x-rd-error-codes` danego statusu;
+- każda odpowiedź sukcesu opisana w schematach została zwalidowana na prawdziwej odpowiedzi, a pominięcie każdego
+  wymaganego pola ciała daje błąd i w schemacie, i na serwerze (400).
+
+Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
+zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
+`npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
+`tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`).
+
 ## Testy na prawdziwym PostgreSQL (#208)
 
 PGlite ma jedno połączenie i wykonuje transakcje po kolei, więc **nie nadaje się do

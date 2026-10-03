@@ -565,12 +565,15 @@ i transakcje z `src/db.js`:
 - **`405` zawsze z `Allow`.** `tests/pg-tx-retry.test.js` skanuje `src/pg/**`
   i sprawdza odpowiedzi na nieobsługiwane metody.
 
-## OpenAPI (#160, etap 1)
+## OpenAPI (#160, etapy 1-2)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem
-`npm run openapi:build` z `tests/helpers/route-matrix.js` i z tabeli kodów
-powyżej; `tests/openapi.test.js` psuje się przy ręcznej edycji pliku albo trasie
-dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
+`npm run openapi:build` z `tests/helpers/route-matrix.js`, z tabeli kodów
+powyżej i ze schematów `src/pg/schemas/*` (moduły pokryte w etapie 2: wpłaty
+i księga; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
+`tests/openapi-contract.test.js` sprawdza, że należą do tego katalogu i
+występują w źródle trasy); `tests/openapi.test.js` psuje się przy ręcznej
+edycji pliku albo trasie dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
 `docs/AUTHORIZATION.md` (D-08/D-09), do zatwierdzenia przez zarząd/szkołę.
 `x-rd-deny-status` to statusy odmowy wyliczone z macierzy (403 lub 404 per
 trasa), więc polityka 403/404 jest już czytelna maszynowo, choć jeszcze nie
@@ -640,9 +643,9 @@ błędów"). Nie obejmuje:
   (tabela per moduł wyżej opisuje stan, nie decyzję; różnice między
   `families.js`/`documents.js` i `payments.js`/`ledger.js`/`email.js`/
   `reconciliation.js` opisane w issue #160);
-- schematów ciał żądań i odpowiedzi w `docs/openapi.json` (etap 1 generatora,
-  `scripts/build-openapi.js`, opisuje tylko ścieżki, metody, role, MFA,
-  statusy i kody z tego katalogu; patrz sekcja „OpenAPI” niżej);
+- schematów ciał żądań i odpowiedzi dla modułów jeszcze niepokrytych w
+  `docs/openapi.json` (etap 2 objął wpłaty i księgę; reszta wg
+  `x-rd-schema-coverage`, patrz `docs/API.md`, „Schematy żądań i odpowiedzi”);
 - objęcia sprawdzaniem typów całego `src/pg/**`. Dziś (#160): `jsconfig.json`
   z `checkJs` dla `src/pg/input.js`, `scope.js`, `pii-gate.js`, `audit.js`,
   `authorization.js`, `auth.js`, `http.js` (typy `Db`, `Tx`, `Actor`,

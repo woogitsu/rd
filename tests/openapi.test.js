@@ -1,5 +1,6 @@
-// docs/openapi.json (issue #160, etap 1) jest wygenerowany z macierzy tras i
-// katalogu błędów; ręczna edycja albo trasa dopisana bez regeneracji psuje test.
+// docs/openapi.json (issue #160) jest wygenerowany z macierzy tras, katalogu błędów
+// i schematów src/pg/schemas; ręczna edycja albo trasa dopisana bez regeneracji psuje
+// test. Schematy i prawdziwe odpowiedzi: tests/openapi-contract.test.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
