@@ -10,7 +10,7 @@
 // db.transaction(async (tx) => …). Można go podać bezpośrednio jako env.db.
 
 import { fileURLToPath } from 'node:url';
-import { after } from 'node:test';
+import { after, afterEach } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { createPgDatabase, poolConfig } from '../../src/db.js';
@@ -141,9 +141,15 @@ async function migratedPglite() {
 
 // close() jest idempotentne: testy z własnym after(() => shared.close()) działają bez zmian
 // niezależnie od kolejności hooków, a baza zamknięta przez test nie jest zamykana drugi raz.
+// Zamknięta baza wypada też ze zbioru śledzonych: inaczej zbiór trzymałby referencję do
+// instancji (z pamięcią WASM, ~250–550 MB) do końca pliku i zamykanie po teście nic by
+// nie zwalniało (#111, pg-promotions: 5,6 GB RSS).
 function tracked(db) {
   const close = db.close.bind(db);
-  db.close = async () => { if (!db.closed) await close(); };
+  db.close = async () => {
+    livePgliteDbs.delete(db);
+    if (!db.closed) await close();
+  };
   livePgliteDbs.add(db);
   return db;
 }
@@ -186,6 +192,24 @@ export async function createPgliteTestDb() {
 export async function createTestDb() {
   if (realBackend) return createRealTestDb();
   return createPgliteTestDb();
+}
+
+// #111: baza na jeden test. Plik, w którym KAŻDY test zakłada własną bazę (setup() w treści
+// testu), woła perTestDb() raz na poziomie modułu i tworzy bazy zwróconą funkcją (jak
+// createTestDb()). Bazy z bieżącego testu są zamykane w afterEach, a nie dopiero w after()
+// pliku: niezamknięta baza PGlite trzyma ok. 250–300 MB, więc 25 baz w pliku dawało kilka GB
+// RSS procesu (pg-promotions 5,6 GB). Nie używać dla bazy współdzielonej przez kilka testów
+// (np. tworzonej leniwie w pierwszym teście) — afterEach zamknąłby ją po pierwszym teście.
+export function perTestDb() {
+  const open = [];
+  afterEach(async () => {
+    for (const db of open.splice(0)) await db.close();
+  });
+  return async () => {
+    const db = await createTestDb();
+    open.push(db);
+    return db;
+  };
 }
 
 // Rok szkolny o podanym id (idempotentnie). Etykieta pochodzi z id, by nie kolidować.

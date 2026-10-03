@@ -3,14 +3,18 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { perTestDb, request, seedClass, seedRoleGrant, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 const Y2 = 'y-2027';
 const KEY = 'promocja-klucz-0001';
 
+// #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście
+// (wcześniej 25 niezamkniętych baz do końca pliku dawało 5,6 GB RSS procesu).
+const createDb = perTestDb();
+
 async function setup() {
-  const db = await createTestDb();
+  const db = await createDb();
   await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedSchoolYear(db, Y2, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
   for (const [id, name] of [['c-1a', '1A'], ['c-2b', '2B'], ['c-6f', '6F']]) await seedClass(db, { id, schoolYearId: Y1, name });

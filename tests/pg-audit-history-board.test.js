@@ -4,11 +4,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { perTestDb, request, seedClass, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
+// #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście.
+const createDb = perTestDb();
+
 async function setup() {
-  const db = await createTestDb();
+  const db = await createDb();
   await seedSchoolYear(db, 'y-1', { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedSchoolYear(db, 'y-2', { startsOn: '2027-09-01', endsOn: '2028-08-31' });
   const classId = await seedClass(db, { id: 'cls-1a', schoolYearId: 'y-1', name: '1A' });

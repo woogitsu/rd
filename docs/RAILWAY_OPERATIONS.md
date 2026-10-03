@@ -1176,16 +1176,31 @@ jednym shardzie zmierzona i opisana tutaj.
   `--test-concurrency=2`, pięć największych plików). Podsumowanie jest w zakładce Summary przebiegu; źródło:
   `scripts/summarize-test-memory.js`. Runner `ubuntu-latest` ma 7 GB RAM, więc wartość „dwa największe naraz” plus proces
   `node --test` powinna zostać wyraźnie poniżej tego (każda instancja PGlite to ok. 250–550 MB).
+- **Podział na shardy.** Pliki shardu i/6 wybiera `scripts/ci-shard-files.js` według wag z
+  `scripts/ci-shard-weights.json` (zmierzone czasy plików; metoda zachłanna z symulacją `--test-concurrency=2`), a nie
+  `--test-shard`, który dzielił według pozycji na liście. Każdy plik trafia do dokładnie jednego shardu
+  (`tests/ci-shard-coverage.test.js`); plik bez wagi dostaje wagę domyślną. Opis, aktualizacja wag i pomiar:
+  `docs/TESTING.md`, „Podział na shardy według czasu”.
 - **Czas.** Dla trzech kolejnych przebiegów PR na tej samej gałęzi (bez zmian między nimi) odczytaj czasy jobów:
   `gh run view <id> --json jobs --jq '.jobs[] | [.name, .startedAt, .completedAt] | @tsv'`. Czas przebiegu to różnica
   między najwcześniejszym `startedAt` a `completedAt` jobu `ci-ok`. Dla zapasu porównaj najdłuższy shard z limitem
   20 min (`test`) i job `test-pg-real` z limitem 45 min: wynik powyżej 80% limitu oznacza zbyt mały zapas.
-- **Stan pomiarów.** Z GitHub runnerów jeszcze nie zmierzono (po scaleniu brak 3 przebiegów PR). Lokalnie, w kontenerze
+- **Stan pomiarów (podział według czasu, #111).** GitHub po #717 (dane z #111, czasy jobów `test` 1/6–6/6):
+  185, 218, 206, 152, 165 i **467 s**; przed #717: 229, 271, 322, 210, 495, 186 s. Wąskim gardłem był shard 6/6
+  (`--test-shard` dał mu `pg-authz-matrix`, ok. 400 s w jednym procesie). Po podziale według wag, macierzy uprawnień w
+  trzech plikach i zamykaniu baz po teście w najcięższych pamięciowo plikach — lokalnie (4 rdzenie, shardy pojedynczo,
+  `--test-concurrency=2`): najdłuższy shard 443,5 s (6/6 przed) → 185,1 s (shardy po: 174–185 s), największy proces
+  testowy w shardzie 3275 MiB → najwyżej 1671 MiB, „dwa największe naraz” 4963 MiB → najwyżej 3011 MiB;
+  `pg-promotions` 5572 → 1124 MiB, `pg-anonymization-reapply` 4079 → 1239 MiB. Szczegóły: `docs/TESTING.md`, „Podział na
+  shardy według czasu”. Czas na GitHub po tej zmianie jeszcze niezmierzony (oczekiwanie: każdy shard ok. 200 s plus
+  przygotowanie joba); trzy przebiegi wpisać tutaj.
+- **Stan pomiarów (szablon PGlite, #717).** Z GitHub runnerów są czasy jobów z pojedynczych przebiegów (wyżej), nie 3
+  kolejne przebiegi PR. Lokalnie, w kontenerze
   z 4 rdzeniami: szablon bazy PGlite skrócił 17 reprezentatywnych plików `pg-*` z 1323 s do 700 s, a największy proces
   testowy zużył 1816 MB przed i 1710 MB po; shard 1/6 (`--test-concurrency=2`) skrócił się z 333 s do 161 s przy
   tych samych 723 testach, a szczyt RSS jednego procesu wyniósł 5935 MB przed i 5589 MB po (`pg-promotions`, baza
-  na każdy test, nigdy niezamykana; drugi to `pg-anonymization-reapply`, ok. 4 GB). Dwa takie pliki w jednym shardzie przekraczają 7 GB
-  runnera, więc tabela pamięci z jobu `test` ma pokazać, czy to się zdarza (tabela i opis metody w `docs/TESTING.md`,
+  na każdy test, nigdy niezamykana; drugi to `pg-anonymization-reapply`, ok. 4 GB; oba zamykają już bazę po teście, patrz
+  wyżej). Dwa takie pliki w jednym shardzie przekraczały 7 GB runnera, więc tabela pamięci z jobu `test` miała pokazać, czy to się zdarza (tabela i opis metody w `docs/TESTING.md`,
   „Szablon bazy PGlite i czas testów”). Kryteria „połowa krócej na 3 przebiegach” i „zapas 20%” zostają niepotwierdzone do pierwszych przebiegów z
   tym podsumowaniem; wynik wpisać w tym miejscu.
 

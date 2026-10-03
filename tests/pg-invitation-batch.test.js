@@ -5,14 +5,17 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { invitationBatchDigest, parseInvitationBatchText } from '../src/pg/invitation-batch.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { perTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+
+// #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście.
+const createDb = perTestDb();
 
 const Y = 'y-2026';
 const Y2 = 'y-2027';
 const FAST = { SCRYPT_COST_LOG2: '15', LOGIN_EMAIL_DELAY_MS: '0' };
 
 async function setup() {
-  const db = await createTestDb();
+  const db = await createDb();
   await seedSchoolYear(db, Y, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedSchoolYear(db, Y2, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
   await seedClass(db, { id: 'c-1a', schoolYearId: Y, name: '1A' });
