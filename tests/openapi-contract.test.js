@@ -1,10 +1,10 @@
-// Kontrakt API (#160, etapy 2-6): schematy ciał żądań i odpowiedzi w docs/openapi.json
+// Kontrakt API (#160, etapy 2-7): schematy ciał żądań i odpowiedzi w docs/openapi.json
 // (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
 // (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js;
 // preliminarz, kasa i centra kosztów (ledger-budget, ledger-cash, ledger-cost-centers)
 // w tests/openapi-contract-ledger-extra.test.js; uzgodnienia wyciągów i raport KR (reconciliation)
 // w tests/openapi-contract-reconciliation.test.js; kampanie e-mail (email) w
-// tests/openapi-contract-email.test.js.
+// tests/openapi-contract-email.test.js; zebrania (meetings) w tests/openapi-contract-meetings.test.js.
 // Testy rejestru poniżej obejmują wszystkie pokryte moduły.
 //
 //  * rejestr pokrycia: każda trasa pokrytego modułu MA schemat; moduły bez schematów
@@ -34,7 +34,7 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 18;
+const MAX_UNCOVERED_MODULES = 17;
 // Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
 const POST_WITHOUT_BODY = new Set([
   'POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout',
@@ -47,9 +47,11 @@ const POST_WITHOUT_BODY = new Set([
 
 // Pliki pomocnicze trasy (ścieżki względem src/pg/), których kody błędów trasa zwraca bez zmiany:
 // email — parser treści kampanii (ContentError), odmowa adresu wysyłki testowej (previewRecipientRefusal)
-// i kursor list (parseListLimit/decodeListCursor); reconciliation — parsery wyciągów banku.
+// i kursor list (parseListLimit/decodeListCursor); reconciliation — parsery wyciągów banku; meetings —
+// moduł domenowy (src/pg/routes/meetings.js tylko go podpina; kody reguł bazy w DATABASE_CONFLICTS) i kursor list.
 const ROUTE_HELPER_SOURCES = {
   email: ['../email/content.js', '../email/brevo.js', 'list-cursor.js'],
+  meetings: ['meetings.js', 'list-cursor.js'],
   reconciliation: ['bank/common.js', 'bank/coda.js', 'bank/camt053.js'],
 };
 
@@ -165,7 +167,8 @@ test('rejestr: kody błędów w schematach są w katalogu docs/API_ERRORS.md i w
   const problems = [];
   let codesChecked = 0;
   for (const module of SCHEMA_MODULES) {
-    // Moduły z kodami poza plikiem trasy (ROUTE_HELPER_SOURCES: reconciliation — parsery CODA/CAMT.053, email — treść i Brevo).
+    // Moduły z kodami poza plikiem trasy (ROUTE_HELPER_SOURCES: reconciliation — parsery CODA/CAMT.053, email — treść i Brevo,
+    // meetings — moduł domenowy src/pg/meetings.js).
     const helpers = await Promise.all((ROUTE_HELPER_SOURCES[module.name] ?? [])
       .map((file) => readFile(new URL(`../src/pg/${file}`, import.meta.url), 'utf8')));
     const source = [await readFile(new URL(`../src/pg/routes/${module.name}.js`, import.meta.url), 'utf8'), ...helpers, ...shared].join('\n');

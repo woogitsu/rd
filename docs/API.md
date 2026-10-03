@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-6)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-7)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -208,7 +208,7 @@ operacji `requestBody`, parametry (zapytanie, `Idempotency-Key`), odpowiedzi suk
 (200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; `replayed` może być listą `['false', 'true']`,
 gdy ten sam status zwraca obie wartości — od etapu 5 zatwierdzenie, porzucenie i cofnięcia uzgodnień; zapis bez klucza,
 który wysyła nagłówek `true` tylko przy ponowieniu, ma w specyfikacji nagłówek z `required: false` — helper
-`replayedOnRetry`, etap 6; eksporty CSV/XLSX z typem pliku;
+`replayedOnRetry`, etap 6; eksporty CSV/XLSX i plik kalendarza `.ics` z typem pliku;
 trasa z kilkoma formatami wybieranymi parametrem `format` ma mapę `content` typ treści → schemat, helper
 `formatsResponse` w `src/pg/schemas/common.js`; wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
 per status, wyłącznie z katalogu. Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
@@ -218,19 +218,20 @@ elementy (`Id`, kwoty w eurocentach, daty) są w `src/pg/schemas/common.js`. Sch
 schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
-`tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js` i
-`tests/openapi-contract-email.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
+`tests/openapi-contract-email.test.js` i `tests/openapi-contract-meetings.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
-dopasowania z cofnięciem, raport Komisji Rewizyjnej, zamknięty rok, odmowy i błędy) przechodzą
+dopasowania z cofnięciem, raport Komisji Rewizyjnej, zebranie z porządkiem obrad, zawiadomieniem, obecnością,
+uchwałami i protokołem, zamknięty rok, odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (107 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (135 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings` |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -314,6 +315,45 @@ Cechy modułu etapu 6 (`email`, kampanie e-mail — opis stanu, nie zmiana tras)
   `503 webhook_not_configured` i `429 rate_limited` są w specyfikacji jako kody tych tras.
 - `409 school_year_closed` (zamknięty rok, trigger zamrożenia) jest w schematach zapisów kampanii, ale nie w teście
   kontraktu (reakcję triggera sprawdzają testy zamknięcia roku).
+
+Cechy modułu etapu 7 (`meetings`, zebrania — opis stanu, nie zmiana tras):
+
+- `Idempotency-Key` (wymagany) mają: utworzenie zebrania, punkt porządku obrad, ustalenie quorum, wersja protokołu,
+  widoczność protokołu, uchwała, korekta uchwały i zdarzenie wykonania uchwały (`201` z `Idempotency-Replayed: false`,
+  ponowienie `200` z `true`). Szkic zawiadomienia i szkic kampanii z zawiadomienia nie mają klucza, ale odpowiadają tak
+  samo (ponowienie rozpoznane po stanie: ten sam szkic, istniejąca kampania). Zatwierdzenie protokołu, odwołanie, zmiana
+  terminu, wycofanie punktu, zmiana kolejności i zatwierdzenie zawiadomienia zwracają zawsze `200` **bez** nagłówka,
+  a ponowienie sygnalizuje pole `replayed` w treści; `PATCH` zebrania i uchwały oraz zapis obecności — `200` bez nagłówka
+  i bez `replayed`. `PATCH` zebrania i uchwały, odwołanie i zmiana terminu wymagają `revision` (`400 invalid_revision`,
+  `409 revision_conflict`).
+- Odmowy reguł bazy (blokada zebrania po zatwierdzeniu protokołu, odwołanie, quorum, uchwały, numer wersji) przechodzą
+  jako `409` z kodem reguły (`DATABASE_CONFLICTS` w `src/pg/meetings.js`, np. `meeting_locked`,
+  `minutes_open_resolutions` z `openResolutions`, `resolution_quorum_check_stale`); od etapu 7 te kody i identyfikatory
+  ścieżki (`invalid_meeting_id`, `invalid_minutes_id`, `invalid_resolution_id`, `invalid_notice_id`,
+  `invalid_agenda_item_id`) są w `docs/API_ERRORS.md` i w `shared/messages.js` (detektor kodów zna listę
+  `DATABASE_CONFLICTS` i `requireId(…, 'kod')`). `409 resolution_number_taken` niesie `suggestedNumber`, `422` bramki
+  danych osobowych — `categories`, `409 invalid_notice_content` — `field` (schemat `Error` dopuszcza pola ponad `error`).
+- Zebranie poza zakresem: odczyt (`GET` zebrania, lista kontrolna, plik kalendarza) → `404 meeting_not_found` jak brak
+  zebrania; zapis → `403 forbidden`. Komisja Rewizyjna i dyrekcja (`principal`, bez MFA) czytają zebranie z listą
+  obecności (wyłącznie identyfikatory, D-09), rejestr uchwał i listę kontrolną; każdy zapis — `403 forbidden`.
+  Wymóg MFA modułu (`403 mfa_required`, #150) widać tylko wtedy, gdy bramka routera przepuści sesję bez MFA (rola spoza
+  `MFA_REQUIRED_ROLES`); zarząd bez czynnika zatrzymuje wcześniej `403 mfa_enrollment_required`.
+- Kształty: `GET /api/meetings/{id}` zwraca jeden obiekt z porządkiem (także wycofanymi punktami), obecnością,
+  ustaleniami quorum, wszystkimi wersjami protokołu, wszystkimi rewizjami uchwał, wersjami porządku, zmianami terminu
+  i zawiadomieniami. Przedstawiciel-gospodarz zebrania klasowego (flaga `MEETINGS_CLASS_HOST`, #171) dostaje ten sam
+  kształt z `null` w polach wewnętrznych (powód i autor odwołania, powody i autorzy zmian terminu, kampania i autorzy
+  zawiadomień). Szkic kampanii z zawiadomienia zwraca `{ campaign: { id, status, audience, classId }, sent: false }`
+  (`all_households`, `class_households` z klasą, `meeting_invitees` dla zebrania zarządu); ponowienie zwraca bieżący
+  status kampanii. Plik kalendarza: `text/calendar; charset=utf-8`.
+- Listy: `GET /api/meetings` (`limit` 1-500) i `GET /api/meetings/public-notices` (`limit` 1-200) mają kursor; protokoły
+  udostępnione i publiczne obcinają do 200 z `truncated`; rejestr uchwał nie jest stronicowany.
+- Rozbieżności z dokumentacją (opis, trasy bez zmian): `effectiveStatus` w rejestrze uchwał dla uchwały nieprzyjętej
+  to kopia `status` (`draft`, `rejected`, `withdrawn`), a nie tylko `in_force`/`amended`/`repealed` z
+  `docs/MEETINGS.md`; wyszukanie po numerze (`…/resolutions/lookup`) nie zwraca `revisionNo` (widok
+  `resolution_current` nie ma tej kolumny). Macierz tras ma dla `POST /api/meetings/resolutions/{id}/execution`
+  `mfa: false`, choć trasa wymaga MFA jak każde zarządzanie zebraniem (`meetingForManage`).
+- `409 school_year_closed` (zamknięty rok) jest w schematach zapisów i w teście kontraktu — rok zamykają trasy
+  `year-close`; zamknięcie wygasza przydziały roku, więc zapis próbuje zarząd z przydziałem bez roku.
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.

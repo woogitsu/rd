@@ -28,7 +28,9 @@ Wygenerowane z listy kodów w `src/pg/**` i w parserze treści kampanii
 `src/email/content.js` (te same reguły wykrywania co
 `tests/shared-api.test.js#serverErrorCodes`; kody zwracane przez funkcje
 pomocnicze, których wzorce nie widzą — `mfa_stale`, `preview_recipient_not_allowed`
-i kody bramki MFA — są w tym detektorze wymienione wprost) i tekstów z
+i kody bramki MFA — są w tym detektorze wymienione wprost; od #160 etapu 7 detektor
+czyta też listę `DATABASE_CONFLICTS` w `src/pg/meetings.js` — kody reguł bazy, które
+moduł zebrań przekazuje jako `409` — i kod podany w `requireId(…, 'kod')`) i tekstów z
 `shared/messages.js`. Test `tests/pg-api-errors-catalog.test.js` sprawdza, że
 każdy kod z kodu źródłowego jest w tej tabeli (i odwrotnie — brak martwych
 wpisów).
@@ -47,6 +49,7 @@ przy przydziale, nie błąd.
 | `active_bank_match` | Wpis jest powiązany z uzgodnieniem w wersji roboczej. Najpierw cofnij powiązanie z powodem, dopiero potem popraw wpis. | Zależy od kontekstu (patrz moduł trasy). |
 | `admin_exists` | Administrator już istnieje. Utworzenie pierwszego konta nie jest potrzebne. | Zależy od kontekstu (patrz moduł trasy). |
 | `agenda_item_not_found` | Nie znaleziono punktu porządku obrad. | Nie — popraw dane żądania. |
+| `agenda_item_withdrawal_immutable` | Wycofania punktu porządku obrad nie można cofnąć ani zmienić. | Nie — popraw dane żądania. |
 | `agenda_position_taken` | Ta pozycja porządku obrad jest już zajęta. | Zależy od kontekstu (patrz moduł trasy). |
 | `allocation_exceeds_net` | Suma przypisań przekracza kwotę wpisu po korektach. Najpierw zmień przypisanie. | Nie — popraw dane żądania. |
 | `allocation_reason_required` | Zmiana przypisania wymaga podania powodu. | Nie — popraw dane żądania. |
@@ -91,6 +94,40 @@ przy przydziale, nie błąd.
 | `class_not_in_school_year` | Klasa nie należy do wskazanego roku szkolnego. | Zależy od kontekstu (patrz moduł trasy). |
 | `class_required` | Wskaż klasę. | Nie — popraw dane żądania. |
 | `class_scope_not_supported` | Ta rola nie ma tras ograniczonych do jednej klasy. Zostaw pole klasy puste. | Nie — popraw dane żądania. |
+| `email_campaign_meeting_audience_mismatch` | Odbiorcy kampanii nie pasują do rodzaju zebrania z zawiadomienia. Utwórz szkic kampanii z zawiadomienia jeszcze raz. | Nie — popraw dane żądania. |
+| `email_campaign_meeting_requires_approved_notice` | Kampanię powiązaną z zebraniem można utworzyć tylko jako szkic z zatwierdzonego zawiadomienia. | Nie — popraw dane żądania. |
+| `invalid_agenda_item_id` | Niepoprawny identyfikator punktu porządku obrad. | Nie — popraw dane żądania. |
+| `invalid_meeting_id` | Niepoprawny identyfikator zebrania. | Nie — popraw dane żądania. |
+| `invalid_minutes_id` | Niepoprawny identyfikator protokołu. | Nie — popraw dane żądania. |
+| `invalid_notice_id` | Niepoprawny identyfikator zawiadomienia. | Nie — popraw dane żądania. |
+| `invalid_resolution_id` | Niepoprawny identyfikator uchwały. | Nie — popraw dane żądania. |
+| `meeting_archive_requires_approved_minutes` | Archiwizacja wymaga zatwierdzonego protokołu. | Nie — popraw dane żądania. |
+| `meeting_identity_immutable` | Rodzaju, roku ani klasy zebrania nie można zmienić. | Nie — popraw dane żądania. |
+| `meeting_locked` | Zebranie jest zablokowane: protokół został zatwierdzony albo zebranie zarchiwizowano. | Nie — popraw dane żądania. |
+| `meeting_must_start_as_draft_or_scheduled` | Nowe zebranie musi być szkicem albo zaplanowane. | Nie — popraw dane żądania. |
+| `meeting_notice_immutable` | Zapisanej wersji zawiadomienia nie można zmienić. Przygotuj nową wersję. | Nie — popraw dane żądania. |
+| `meeting_notice_must_start_as_draft` | Nowe zawiadomienie musi być szkicem. | Nie — popraw dane żądania. |
+| `meeting_notice_not_latest` | Zatwierdzić można tylko najnowszą wersję zawiadomienia. | Nie — popraw dane żądania. |
+| `meetings_cannot_be_deleted` | Zebrania nie można usunąć. Odwołaj je albo zostaw w historii. | Nie — popraw dane żądania. |
+| `minutes_approved_immutable` | Zatwierdzonej wersji protokołu nie można zmienić. | Nie — popraw dane żądania. |
+| `minutes_must_start_as_draft` | Nowa wersja protokołu musi być projektem. | Nie — popraw dane żądania. |
+| `minutes_not_approved` | Widoczność można ustawić tylko dla zatwierdzonej wersji. | Nie — popraw dane żądania. |
+| `minutes_not_latest_version` | Zatwierdzić można tylko najnowszą wersję protokołu. | Nie — popraw dane żądania. |
+| `minutes_open_resolutions` | Protokołu nie można zatwierdzić, dopóki zebranie ma projekty uchwał. Rozstrzygnij albo wycofaj każdy projekt. | Nie — popraw dane żądania. |
+| `minutes_require_held_meeting` | Protokół można dodać tylko do zebrania oznaczonego jako odbyte. | Nie — popraw dane żądania. |
+| `minutes_version_immutable` | Zapisanej wersji protokołu nie można zmienić. | Nie — popraw dane żądania. |
+| `minutes_version_mismatch` | Konflikt numeracji wersji protokołu. Odśwież zebranie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `quorum_attendance_exceeds_voting_body` | Liczba obecnych uprawnionych przekracza wpisany skład uprawniony. Popraw listę obecności lub regułę. | Nie — popraw dane żądania. |
+| `quorum_requires_held_meeting` | Quorum można ustalić tylko dla zebrania oznaczonego jako odbyte. | Nie — popraw dane żądania. |
+| `quorum_rule_not_configured` | Najpierw wpisz regułę quorum dla tego zebrania. | Nie — popraw dane żądania. |
+| `resolution_amends_cross_year_requires_flag` | Wskazana uchwała pochodzi z innego roku szkolnego. Potwierdź powiązanie między latami. | Nie — popraw dane żądania. |
+| `resolution_amends_requires_adopted` | Zmieniać można tylko uchwałę przyjętą. | Nie — popraw dane żądania. |
+| `resolution_correction_mismatch` | Poprawka nie pasuje do bieżącej rewizji uchwały. Odśwież zebranie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `resolution_identity_immutable` | Numeru ani zebrania uchwały nie można zmienić poprawką. | Nie — popraw dane żądania. |
+| `resolution_quorum_check_required` | Wskaż ustalenie quorum z tego zebrania. | Nie — popraw dane żądania. |
+| `resolution_quorum_check_stale` | Lista obecności zmieniła się po wybranym ustaleniu quorum. Ustal quorum ponownie i wskaż nowe ustalenie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
+| `resolution_requires_held_meeting` | Wynik uchwały można wpisać tylko dla zebrania oznaczonego jako odbyte. | Nie — popraw dane żądania. |
+| `resolution_votes_exceed_present_voters` | Suma głosów przekracza liczbę obecnych uprawnionych w wybranym ustaleniu quorum. | Nie — popraw dane żądania. |
 | `school_year_required` | Dyrekcja dostaje przydział tylko na wskazany rok szkolny. Wybierz rok. | Nie — popraw dane żądania. |
 | `class_year_mismatch` | Klasa należy do innego roku szkolnego. | Nie — popraw dane żądania. |
 | `closing_balance_out_of_range` | Saldo zamknięcia jest poza dozwolonym zakresem. | Zależy od kontekstu (patrz moduł trasy). |
@@ -584,9 +621,10 @@ i transakcje z `src/db.js`:
 `npm run openapi:build` z `tests/helpers/route-matrix.js`, z tabeli kodów
 powyżej i ze schematów `src/pg/schemas/*` (moduły pokryte w etapie 2: wpłaty
 i księga, w etapie 3: rodziny i sesja, w etapie 4: preliminarz, kasa i centra kosztów, w etapie 6:
-kampanie e-mail; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
+kampanie e-mail, w etapie 7: zebrania; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
 `tests/openapi-contract.test.js` sprawdza, że należą do tego katalogu i
-występują w źródle trasy albo w jej plikach pomocniczych, np. `src/email/content.js`); `tests/openapi.test.js` psuje się przy ręcznej
+występują w źródle trasy albo w jej plikach pomocniczych, np. `src/email/content.js` albo moduł domenowy
+zebrań `src/pg/meetings.js`); `tests/openapi.test.js` psuje się przy ręcznej
 edycji pliku albo trasie dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
 `docs/AUTHORIZATION.md` (D-08/D-09), do zatwierdzenia przez zarząd/szkołę.
 `x-rd-deny-status` to statusy odmowy wyliczone z macierzy (403 lub 404 per
