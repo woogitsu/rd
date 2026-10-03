@@ -1,17 +1,21 @@
-// Generator docs/openapi.json (issue #160, etap 1): OpenAPI 3.1 wyprowadzone z
-// tests/helpers/route-matrix.js (ścieżki, metody, role, MFA, statusy) oraz z
-// katalogu kodów błędów docs/API_ERRORS.md. Bez zależności — czysty Node.
+// Generator docs/openapi.json (issue #160): OpenAPI 3.1 wyprowadzone z
+// tests/helpers/route-matrix.js (ścieżki, metody, role, MFA, statusy), z katalogu
+// kodów błędów docs/API_ERRORS.md oraz — od etapu 2 — ze schematów ciał żądań i
+// odpowiedzi w src/pg/schemas/<moduł>.js (rejestr: src/pg/schemas/index.js).
+// Bez zależności — czysty Node.
 //
 //   npm run openapi:build           # regeneruje docs/openapi.json
 //   npm run openapi:build -- --check  # 0 = aktualny, 1 = trzeba regenerować
 //
-// Etap 1 NIE opisuje schematów ciał żądań/odpowiedzi (to kolejny etap: schematy
-// obok parserów) ani nie zmienia tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z
-// docs/AUTHORIZATION.md (D-08/D-09) — „do zatwierdzenia” przez zarząd/szkołę.
+// Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga); pozostałe są
+// jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
+// tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
+// „do zatwierdzenia” przez zarząd/szkołę.
 // Plik jest deterministyczny: wszystkie klucze i listy są posortowane.
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { ACTORS, ROUTE_MATRIX, TARGETS, denyStatus, requiresMfa } from '../tests/helpers/route-matrix.js';
+import { COVERED_MODULES, ROUTE_SCHEMAS, UNCOVERED_MODULES, schemaComponents } from '../src/pg/schemas/index.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 export const OPENAPI_PATH = `${ROOT}docs/openapi.json`;
@@ -92,7 +96,67 @@ const RESPONSE_TEXT = {
   400: 'Błąd walidacji żądania (kod z katalogu).', 401: 'Brak ważnej sesji.',
   403: 'Brak uprawnień lub wymaganego MFA (kod z katalogu).',
   404: 'Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).',
+  409: 'Konflikt stanu albo klucza idempotencji (kod z katalogu).',
+  413: 'Żądanie albo wynik za duży (kod z katalogu).',
+  415: 'Nieobsługiwany typ treści (kod z katalogu).',
+  422: 'Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).',
+  503: 'Usługa chwilowo niedostępna (kod z katalogu).',
 };
+
+const ref = (name) => ({ $ref: `#/components/schemas/${name}` });
+
+// Odpowiedź sukcesu ze schematu trasy (src/pg/schemas): treść JSON albo plik.
+function schemaResponse(spec) {
+  const response = {
+    description: spec.description,
+    content: { [spec.contentType ?? 'application/json']: { schema: spec.schema } },
+  };
+  if (spec.replayed) {
+    response.headers = {
+      'Idempotency-Replayed': {
+        description: spec.replayed === 'true'
+          ? 'true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.'
+          : 'false: zapis wykonany teraz.',
+        schema: { type: 'string', enum: [spec.replayed] },
+      },
+    };
+  }
+  return response;
+}
+
+// Parametry operacji z uwzględnieniem schematu trasy: identyfikatory ścieżki jako `Id`,
+// zapytanie ze schematu (nadpisuje typ z macierzy), nagłówek Idempotency-Key.
+function schemaParameters(parameters, entry) {
+  const result = parameters.map((parameter) => (parameter.in === 'path' ? { ...parameter, schema: ref('Id') } : parameter));
+  for (const [name, spec] of Object.entries(entry.query ?? {})) {
+    const next = { name, in: 'query', required: Boolean(spec.required), schema: spec.schema };
+    if (spec.description) next.description = spec.description;
+    const index = result.findIndex((parameter) => parameter.in === 'query' && parameter.name === name);
+    if (index >= 0) result[index] = next;
+    else result.push(next);
+  }
+  if (entry.idempotencyKey) {
+    result.push({
+      name: 'Idempotency-Key', in: 'header', required: entry.idempotencyKey === true, schema: ref('IdempotencyKey'),
+    });
+  }
+  return result;
+}
+
+// Dołącza schematy trasy do operacji: requestBody, odpowiedzi sukcesu z kształtem i kody błędów.
+function applySchema(operation, entry) {
+  if (entry.body) {
+    operation.requestBody = { required: true, content: { 'application/json': { schema: entry.body } } };
+  }
+  for (const [status, spec] of Object.entries(entry.responses)) operation.responses[status] = schemaResponse(spec);
+  for (const [status, codes] of Object.entries(entry.errors ?? {})) {
+    const existing = operation.responses[status];
+    const response = existing ?? { description: RESPONSE_TEXT[status] ?? 'Błąd (kod z katalogu).', content: errorContent() };
+    response['x-rd-error-codes'] = uniqSorted([...(response['x-rd-error-codes'] ?? []), ...codes]);
+    operation.responses[status] = response;
+  }
+  operation.responses = sortKeys(operation.responses);
+}
 
 function operationFor(entries) {
   const described = entries.map((route) => ({ route, info: describeEntry(route) }));
@@ -169,27 +233,59 @@ export function buildOpenApi(errorCatalogMarkdown) {
     }
   }
   const paths = {};
+  const usedSchemaKeys = new Set();
   for (const group of [...groups.values()].sort((a, b) => byString(a.path, b.path) || byString(a.method, b.method))) {
     const operation = operationFor(group.entries);
-    if (group.parameters.length) {
-      operation.parameters = [...group.parameters].sort((a, b) => byString(a.in, b.in) || byString(a.name, b.name));
+    const schemaKey = `${group.method.toUpperCase()} ${group.path}`;
+    const schemaEntry = ROUTE_SCHEMAS.get(schemaKey);
+    let parameters = group.parameters;
+    if (schemaEntry) {
+      usedSchemaKeys.add(schemaKey);
+      applySchema(operation, schemaEntry);
+      parameters = schemaParameters(parameters, schemaEntry);
+    }
+    if (parameters.length) {
+      operation.parameters = [...parameters].sort((a, b) => byString(a.in, b.in) || byString(a.name, b.name));
     }
     (paths[group.path] ??= {})[group.method] = sortKeys(operation);
   }
+  const orphaned = [...ROUTE_SCHEMAS.keys()].filter((key) => !usedSchemaKeys.has(key));
+  if (orphaned.length) throw new Error(`schematy bez trasy w macierzy: ${orphaned.join(', ')}`);
   const modules = uniqSorted(ROUTE_MATRIX.map((route) => route.module));
+  const operations = Object.values(paths).flatMap((item) => Object.values(item));
+  const withSchema = operations.filter((operation) => operation.tags.some((tag) => COVERED_MODULES.includes(tag))).length;
+  const schemas = {
+    ErrorCode: { type: 'string', enum: catalog.map((row) => row.code), description: 'Kody z docs/API_ERRORS.md.' },
+    Error: {
+      type: 'object', required: ['error'], additionalProperties: true,
+      properties: { error: { $ref: '#/components/schemas/ErrorCode' } },
+    },
+  };
+  for (const [name, schema] of Object.entries(schemaComponents())) {
+    if (Object.hasOwn(schemas, name)) throw new Error(`schemat komponentu koliduje z wbudowanym: ${name}`);
+    schemas[name] = schema;
+  }
   return {
     openapi: '3.1.0',
     info: {
       title: 'API Rady Rodziców (wewnętrzne, szkic)',
-      version: '0.1.0',
-      description: 'Plik GENEROWANY przez scripts/build-openapi.js z tests/helpers/route-matrix.js i docs/API_ERRORS.md; '
-        + 'nie edytuj ręcznie (npm run openapi:build). Etap 1: ścieżki, metody, role, MFA, statusy i kody błędów; '
-        + 'brak schematów ciał żądań i odpowiedzi. Role w x-rd-roles to założenia z docs/AUTHORIZATION.md '
+      version: '0.2.0',
+      description: 'Plik GENEROWANY przez scripts/build-openapi.js z tests/helpers/route-matrix.js, docs/API_ERRORS.md '
+        + 'i src/pg/schemas/*.js; nie edytuj ręcznie (npm run openapi:build). Ścieżki, metody, role, MFA, statusy i kody '
+        + 'błędów opisują wszystkie trasy; schematy ciał żądań i odpowiedzi mają dopiero moduły wymienione w '
+        + 'x-rd-schema-coverage (pozostałe operacje nie mają requestBody ani kształtu odpowiedzi). Błędy routera '
+        + 'wspólne dla wszystkich tras (invalid_origin, read_only, service_unavailable, bramka MFA) są w katalogu kodów, '
+        + 'a nie powtarzane przy każdej operacji. Role w x-rd-roles to założenia z docs/AUTHORIZATION.md '
         + '(D-08/D-09), do zatwierdzenia przez zarząd/szkołę — nie są rozstrzygnięciem. Dokument opisuje trasy '
         + 'wewnętrzne i nie jest publikowany publicznie. Zakresy w x-rd-actor-scopes to znaczniki macierzy testowej: '
         + Object.values(TARGETS).map((t) => `${t.key} (${t.classId ?? 'bez klasy'}, ${t.schoolYearId})`).join('; ') + '.',
     },
     tags: modules.map((name) => ({ name })),
+    'x-rd-schema-coverage': {
+      covered: [...COVERED_MODULES],
+      uncovered: uniqSorted(UNCOVERED_MODULES),
+      operations: { total: operations.length, withSchema },
+    },
     paths,
     components: {
       securitySchemes: {
@@ -198,13 +294,7 @@ export function buildOpenApi(errorCatalogMarkdown) {
       responses: {
         Unauthenticated: { description: RESPONSE_TEXT[401], content: errorContent() },
       },
-      schemas: {
-        ErrorCode: { type: 'string', enum: catalog.map((row) => row.code), description: 'Kody z docs/API_ERRORS.md.' },
-        Error: {
-          type: 'object', required: ['error'], additionalProperties: true,
-          properties: { error: { $ref: '#/components/schemas/ErrorCode' } },
-        },
-      },
+      schemas: sortKeys(schemas),
       'x-rd-error-catalog': catalog.map((row) => ({ code: row.code, meaning: row.meaning, retry: row.retry })),
     },
   };

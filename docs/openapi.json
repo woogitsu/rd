@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "API Rady Rodziców (wewnętrzne, szkic)",
-    "version": "0.1.0",
-    "description": "Plik GENEROWANY przez scripts/build-openapi.js z tests/helpers/route-matrix.js i docs/API_ERRORS.md; nie edytuj ręcznie (npm run openapi:build). Etap 1: ścieżki, metody, role, MFA, statusy i kody błędów; brak schematów ciał żądań i odpowiedzi. Role w x-rd-roles to założenia z docs/AUTHORIZATION.md (D-08/D-09), do zatwierdzenia przez zarząd/szkołę — nie są rozstrzygnięciem. Dokument opisuje trasy wewnętrzne i nie jest publikowany publicznie. Zakresy w x-rd-actor-scopes to znaczniki macierzy testowej: A (kl-1a, y-1); B (kl-1b, y-1); W1 (bez klasy, y-1); Y2 (kl-2a, y-2); - (bez klasy, y-1)."
+    "version": "0.2.0",
+    "description": "Plik GENEROWANY przez scripts/build-openapi.js z tests/helpers/route-matrix.js, docs/API_ERRORS.md i src/pg/schemas/*.js; nie edytuj ręcznie (npm run openapi:build). Ścieżki, metody, role, MFA, statusy i kody błędów opisują wszystkie trasy; schematy ciał żądań i odpowiedzi mają dopiero moduły wymienione w x-rd-schema-coverage (pozostałe operacje nie mają requestBody ani kształtu odpowiedzi). Błędy routera wspólne dla wszystkich tras (invalid_origin, read_only, service_unavailable, bramka MFA) są w katalogu kodów, a nie powtarzane przy każdej operacji. Role w x-rd-roles to założenia z docs/AUTHORIZATION.md (D-08/D-09), do zatwierdzenia przez zarząd/szkołę — nie są rozstrzygnięciem. Dokument opisuje trasy wewnętrzne i nie jest publikowany publicznie. Zakresy w x-rd-actor-scopes to znaczniki macierzy testowej: A (kl-1a, y-1); B (kl-1b, y-1); W1 (bez klasy, y-1); Y2 (kl-2a, y-2); - (bez klasy, y-1)."
   },
   "tags": [
     {
@@ -94,6 +94,45 @@
       "name": "year-close"
     }
   ],
+  "x-rd-schema-coverage": {
+    "covered": [
+      "ledger",
+      "payment-instructions",
+      "payment-references",
+      "payments"
+    ],
+    "uncovered": [
+      "admin",
+      "audit-history",
+      "audit-reviews",
+      "board",
+      "documents",
+      "email",
+      "events",
+      "exports",
+      "families",
+      "financial-reports",
+      "guardian-updates",
+      "import",
+      "ledger-budget",
+      "ledger-cash",
+      "ledger-cost-centers",
+      "login",
+      "meetings",
+      "mfa",
+      "news",
+      "print",
+      "privacy-notice",
+      "reconciliation",
+      "representative",
+      "session",
+      "year-close"
+    ],
+    "operations": {
+      "total": 297,
+      "withSchema": 32
+    }
+  },
   "paths": {
     "/api/access": {
       "get": {
@@ -10055,17 +10094,116 @@
         "operationId": "ledger_list",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "cursor",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtrów (docs/API.md)."
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            }
+          },
+          {
+            "name": "dateTo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerDirection"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Strona wpisów roku (od najnowszych); `nextCursor` = null na ostatniej stronie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LedgerEntryListItem"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "entries",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_date",
+              "invalid_date_range",
+              "invalid_limit",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10078,7 +10216,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -10121,9 +10264,109 @@
       },
       "post": {
         "operationId": "ledger_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerEntryCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/LedgerEntry"
+                    }
+                  },
+                  "required": [
+                    "entry"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wpis księgi (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/LedgerEntry"
+                    }
+                  },
+                  "required": [
+                    "entry"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_category",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payment_link",
+              "invalid_reference",
+              "invalid_request",
+              "invalid_source_document",
+              "resolution_expense_only",
+              "resolution_reference_mismatch",
+              "resolution_required"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10136,7 +10379,86 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "resolution_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "payment_already_linked",
+              "resolution_amount_exceeded",
+              "resolution_expired",
+              "resolution_not_adopted",
+              "resolution_not_current",
+              "resolution_repealed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "date_outside_school_year",
+              "payment_amount_mismatch",
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -10185,15 +10507,47 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Bieżący preliminarz roku.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "budget": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LedgerBudgetLine"
+                      }
+                    }
+                  },
+                  "required": [
+                    "budget"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10206,7 +10560,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           }
         },
         "security": [
@@ -10573,17 +10930,57 @@
         "operationId": "ledger_categories",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "direction",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/LedgerDirection"
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Aktywne kategorie roku (według kierunku i nazwy).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "categories": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LedgerCategoryListItem"
+                      }
+                    }
+                  },
+                  "required": [
+                    "categories"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10596,7 +10993,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -10639,9 +11041,79 @@
       },
       "post": {
         "operationId": "ledger_categoryCreate",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerCategoryCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Kategoria już istnieje (ta sama nazwa, kierunek i rok) albo odtworzenie po tym samym kluczu — bez nowego zapisu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "$ref": "#/components/schemas/LedgerCategory"
+                    }
+                  },
+                  "required": [
+                    "category"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Utworzona kategoria.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "$ref": "#/components/schemas/LedgerCategory"
+                    }
+                  },
+                  "required": [
+                    "category"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10654,7 +11126,52 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "category_exists",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -10699,9 +11216,40 @@
     "/api/ledger/categories/copy": {
       "post": {
         "operationId": "ledger_categoryCopy",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerCategoryCopyRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Podgląd (`dryRun: true`) albo wynik kopiowania nazw i kierunków kategorii do roku docelowego.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerCategoryCopyResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10714,7 +11262,50 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -10765,13 +11356,42 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kategoria nieaktywna (idempotentnie: ponowne wywołanie zwraca ten sam wynik).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "$ref": "#/components/schemas/LedgerCategory"
+                    }
+                  },
+                  "required": [
+                    "category"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -10784,7 +11404,37 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "category_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -11043,15 +11693,35 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Eksport księgi roku (CSV UTF-8).",
+            "content": {
+              "text/csv; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11064,7 +11734,38 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "export_too_large"
+            ]
           }
         },
         "security": [
@@ -11113,15 +11814,36 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Eksport księgi roku (arkusz XLSX).",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11134,7 +11856,38 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "export_too_large"
+            ]
           }
         },
         "security": [
@@ -11355,15 +12108,47 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Przyjęte uchwały zebrań ogólnych roku i roku poprzedniego z upoważnieniami do wydatku (bez treści projektu i protokołu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "resolutions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LedgerResolutionSpending"
+                      }
+                    }
+                  },
+                  "required": [
+                    "resolutions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11376,7 +12161,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           }
         },
         "security": [
@@ -11423,17 +12211,109 @@
         "operationId": "ledger_resolutionAuthorization",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "resolutionId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerResolutionAuthorizationRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authorization": {
+                      "$ref": "#/components/schemas/LedgerResolutionAuthorization"
+                    }
+                  },
+                  "required": [
+                    "authorization"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Upoważnienie do wydatku z uchwały (nowa wersja kwoty).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authorization": {
+                      "$ref": "#/components/schemas/LedgerResolutionAuthorization"
+                    }
+                  },
+                  "required": [
+                    "authorization"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11446,7 +12326,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -11456,7 +12340,67 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "resolution_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "authorization_superseded",
+              "idempotency_conflict",
+              "resolution_not_adopted",
+              "resolution_not_current",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -11500,17 +12444,104 @@
         "operationId": "ledger_reviews",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "cursor",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtru (docs/API.md)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 500
+            }
+          },
+          {
+            "name": "reviewStatus",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unverified",
+                "verified",
+                "questioned"
+              ]
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Stan weryfikacji wydatków roku; `truncated` = true wtedy i tylko wtedy, gdy `nextCursor` nie jest null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reviews": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LedgerReviewListItem"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "reviews",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11523,7 +12554,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           }
         },
         "security": [
@@ -11572,15 +12606,44 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Podsumowanie księgi roku.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "summary": {
+                      "$ref": "#/components/schemas/LedgerSummary"
+                    }
+                  },
+                  "required": [
+                    "summary"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11593,7 +12656,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -11906,17 +12987,110 @@
         "operationId": "ledger_correction",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "ledgerEntryId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerCorrectionRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "correction": {
+                      "$ref": "#/components/schemas/LedgerCorrection"
+                    }
+                  },
+                  "required": [
+                    "correction"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Korekta wpisu księgi (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "correction": {
+                      "$ref": "#/components/schemas/LedgerCorrection"
+                    }
+                  },
+                  "required": [
+                    "correction"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_ledger_entry_id",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11929,7 +13103,81 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "ledger_entry_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "active_bank_match",
+              "allocation_exceeds_net",
+              "correction_exceeds_remaining_amount",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -11976,17 +13224,99 @@
         "operationId": "ledger_replacement",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "ledgerEntryId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerReplacementRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerReplacementResult"
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Storno pozostałej kwoty i wpis zastępczy w jednej operacji (z `warnings`, gdy dotyka potwierdzonego uzgodnienia).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerReplacementResult"
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_category",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_ledger_entry_id",
+              "invalid_payment_link",
+              "invalid_reason",
+              "invalid_reference",
+              "invalid_request",
+              "invalid_source_document",
+              "resolution_expense_only",
+              "resolution_reference_mismatch",
+              "resolution_required"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -11999,7 +13329,92 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "ledger_entry_not_found",
+              "resolution_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "active_bank_match",
+              "allocation_exceeds_net",
+              "idempotency_conflict",
+              "ledger_entry_already_corrected_to_zero",
+              "ledger_entry_already_replaced",
+              "payment_already_linked",
+              "replacement_target_mismatch",
+              "resolution_amount_exceeded",
+              "resolution_expired",
+              "resolution_not_adopted",
+              "resolution_not_current",
+              "resolution_repealed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "date_outside_school_year",
+              "payment_amount_mismatch",
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -12046,17 +13461,109 @@
         "operationId": "ledger_review",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "ledgerEntryId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LedgerReviewRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "review": {
+                      "$ref": "#/components/schemas/LedgerReview"
+                    }
+                  },
+                  "required": [
+                    "review"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Decyzja weryfikacji wydatku (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "review": {
+                      "$ref": "#/components/schemas/LedgerReview"
+                    }
+                  },
+                  "required": [
+                    "review"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_ledger_entry_id",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -12069,7 +13576,80 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "four_eyes_required",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "ledger_entry_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "review_expense_only",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -15628,15 +17208,51 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Najnowsze zatwierdzone dane do wpłaty roku albo `null`, gdy nie zatwierdzono żadnych.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentInstructions": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/PaymentInstructions"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "paymentInstructions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -15649,7 +17265,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           }
         },
         "security": [
@@ -15692,9 +17311,105 @@
       },
       "post": {
         "operationId": "payment_instructions_approve",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentInstructionsApproveRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentInstructions": {
+                      "$ref": "#/components/schemas/PaymentInstructions"
+                    }
+                  },
+                  "required": [
+                    "paymentInstructions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zatwierdzone dane do wpłaty (nowa wersja; poprzednie zostają w historii).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentInstructions": {
+                      "$ref": "#/components/schemas/PaymentInstructions"
+                    }
+                  },
+                  "required": [
+                    "paymentInstructions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_bic",
+              "invalid_iban",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payee_name",
+              "invalid_reference",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -15707,7 +17422,50 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -15752,23 +17510,55 @@
           {
             "name": "householdId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Komunikaty strukturalne gospodarstwa w roku (od najnowszego), także unieważnione.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentReferences": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PaymentReference"
+                      }
+                    }
+                  },
+                  "required": [
+                    "paymentReferences"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -15781,7 +17571,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           }
         },
         "security": [
@@ -15824,9 +17617,102 @@
       },
       "post": {
         "operationId": "payment_references_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentReferenceCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentReference": {
+                      "$ref": "#/components/schemas/PaymentReference"
+                    }
+                  },
+                  "required": [
+                    "paymentReference"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wygenerowany komunikat strukturalny (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentReference": {
+                      "$ref": "#/components/schemas/PaymentReference"
+                    }
+                  },
+                  "required": [
+                    "paymentReference"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_reference",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -15839,7 +17725,65 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "payment_reference_already_active",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "service_unavailable"
+            ]
           }
         },
         "security": [
@@ -15886,17 +17830,109 @@
         "operationId": "payment_references_revoke",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentReferenceRevokeRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentReference": {
+                      "$ref": "#/components/schemas/PaymentReference"
+                    }
+                  },
+                  "required": [
+                    "paymentReference"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Unieważniony komunikat (nowe zdarzenie unieważnienia).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "paymentReference": {
+                      "$ref": "#/components/schemas/PaymentReference"
+                    }
+                  },
+                  "required": [
+                    "paymentReference"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -15909,7 +17945,79 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_reference_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "payment_reference_already_revoked",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -15956,17 +18064,141 @@
         "operationId": "payments_list",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "cursor",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtrów (docs/API.md)."
+          },
+          {
+            "name": "dateFrom",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            },
+            "description": "Początek zakresu daty wpływu (włącznie)."
+          },
+          {
+            "name": "dateTo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            },
+            "description": "Koniec zakresu daty wpływu (włącznie)."
+          },
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaymentMethod"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "Fraza szukana wyłącznie w tytule przelewu."
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recorded",
+                "unmatched"
+              ]
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Strona wpłat roku (od najnowszych); `nextCursor` = null na ostatniej stronie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "payments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PaymentListItem"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "payments",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_date",
+              "invalid_date_range",
+              "invalid_limit",
+              "invalid_method",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -15979,7 +18211,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
           }
         },
         "security": [
@@ -16022,9 +18257,103 @@
       },
       "post": {
         "operationId": "payments_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Wpłata: odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "payment": {
+                      "$ref": "#/components/schemas/Payment"
+                    }
+                  },
+                  "required": [
+                    "payment"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wpłata (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "payment": {
+                      "$ref": "#/components/schemas/Payment"
+                    }
+                  },
+                  "required": [
+                    "payment"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_reference",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16037,7 +18366,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "date_outside_school_year",
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -16084,17 +18472,64 @@
         "operationId": "payments_exportCsv",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "from",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/IsoDate"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaymentMethod"
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Eksport wpisów i korekt (CSV UTF-8); pierwsza linia to zastrzeżenie o dobrowolności składek.",
+            "content": {
+              "text/csv; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_date",
+              "invalid_method",
+              "invalid_request",
+              "invalid_window"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16107,7 +18542,36 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "export_too_large"
+            ]
           }
         },
         "security": [
@@ -16154,17 +18618,65 @@
         "operationId": "payments_exportXlsx",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "from",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/IsoDate"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PaymentMethod"
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Eksport wpisów i korekt (arkusze „Wpisy” i „Korekty”).",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_date",
+              "invalid_method",
+              "invalid_request",
+              "invalid_window"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16177,7 +18689,36 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "export_too_large"
+            ]
           }
         },
         "security": [
@@ -16228,13 +18769,34 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Podział wpłaty na gospodarstwa wraz z cofnięciami (odczyt spójny, `Cache-Control: no-store`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentAllocationsSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_payment_id",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16247,7 +18809,23 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_not_found"
+            ]
           }
         },
         "security": [
@@ -16292,17 +18870,110 @@
         "operationId": "payments_allocations_create",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "paymentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentAllocationRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Część wpłaty przypisana do gospodarstwa: odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allocation": {
+                      "$ref": "#/components/schemas/PaymentAllocation"
+                    }
+                  },
+                  "required": [
+                    "allocation"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Część wpłaty przypisana do gospodarstwa (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allocation": {
+                      "$ref": "#/components/schemas/PaymentAllocation"
+                    }
+                  },
+                  "required": [
+                    "allocation"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payment_id",
+              "invalid_reference",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16315,7 +18986,67 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "payment_allocation_exceeds_net",
+              "payment_allocation_household_exists",
+              "payment_already_assigned",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -16362,11 +19093,19 @@
         "operationId": "payments_allocations_reversal",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "allocationId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -16374,13 +19113,97 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentAllocationReversalRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Cofnięcie części podziału wpłaty: odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reversal": {
+                      "$ref": "#/components/schemas/PaymentAllocationReversal"
+                    }
+                  },
+                  "required": [
+                    "reversal"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Cofnięcie części podziału wpłaty (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reversal": {
+                      "$ref": "#/components/schemas/PaymentAllocationReversal"
+                    }
+                  },
+                  "required": [
+                    "reversal"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payment_id",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16393,7 +19216,80 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_allocation_not_found",
+              "payment_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "payment_allocation_already_reversed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -16440,17 +19336,109 @@
         "operationId": "payments_assignment",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "paymentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentAssignmentRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Przypisanie wpłaty do gospodarstwa: odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assignment": {
+                      "$ref": "#/components/schemas/PaymentAssignment"
+                    }
+                  },
+                  "required": [
+                    "assignment"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Przypisanie wpłaty do gospodarstwa (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assignment": {
+                      "$ref": "#/components/schemas/PaymentAssignment"
+                    }
+                  },
+                  "required": [
+                    "assignment"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payment_id",
+              "invalid_reference",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16463,7 +19451,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "payment_already_assigned",
+              "payment_has_allocations",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -16510,17 +19557,110 @@
         "operationId": "payments_correction",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "paymentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCorrectionRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Korekta wpłaty: odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "correction": {
+                      "$ref": "#/components/schemas/PaymentCorrection"
+                    }
+                  },
+                  "required": [
+                    "correction"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Korekta wpłaty (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "correction": {
+                      "$ref": "#/components/schemas/PaymentCorrection"
+                    }
+                  },
+                  "required": [
+                    "correction"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payment_id",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16533,7 +19673,84 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "active_bank_match",
+              "correction_exceeds_remaining_amount",
+              "idempotency_conflict",
+              "ledger_correction_required",
+              "payment_allocation_exceeds_net",
+              "payment_cannot_be_corrected",
+              "payment_has_allocations",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -16580,17 +19797,110 @@
         "operationId": "payments_reassignment",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "paymentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentReassignmentRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ponowne przypisanie wpłaty: odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reassignment": {
+                      "$ref": "#/components/schemas/PaymentReassignment"
+                    }
+                  },
+                  "required": [
+                    "reassignment"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Ponowne przypisanie wpłaty (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reassignment": {
+                      "$ref": "#/components/schemas/PaymentReassignment"
+                    }
+                  },
+                  "required": [
+                    "reassignment"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payment_id",
+              "invalid_reason",
+              "invalid_reference",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16603,7 +19913,81 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "payment_not_assigned",
+              "payment_reassignment_household_mismatch",
+              "payment_reassignment_same_household",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -16650,17 +20034,110 @@
         "operationId": "payments_refund",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "paymentId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentRefundRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Zwrot pieniędzy rodzinie: odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "refund": {
+                      "$ref": "#/components/schemas/PaymentRefund"
+                    }
+                  },
+                  "required": [
+                    "refund"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zwrot pieniędzy rodzinie (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "refund": {
+                      "$ref": "#/components/schemas/PaymentRefund"
+                    }
+                  },
+                  "required": [
+                    "refund"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_amount",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_payment_id",
+              "invalid_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -16673,7 +20150,82 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "ledger_correction_required",
+              "payment_allocation_exceeds_net",
+              "payment_cannot_be_refunded",
+              "refund_exceeds_remaining_amount",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -19603,6 +23155,34 @@
       }
     },
     "schemas": {
+      "AmountCents": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000000,
+        "description": "Kwota dodatnia w eurocentach (EUR); do 1 000 000,00 EUR."
+      },
+      "Count": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Liczba (zero lub więcej)."
+      },
+      "EntityId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Identyfikator obiektu w odpowiedzi (UUID nadany przez serwer albo identyfikator z importu)."
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorCode"
+          }
+        }
+      },
       "ErrorCode": {
         "type": "string",
         "enum": [
@@ -20013,7 +23593,9 @@
           "request_not_found",
           "request_too_large",
           "reschedule_no_change",
+          "resolution_amount_exceeded",
           "resolution_expense_only",
+          "resolution_expired",
           "resolution_final_immutable",
           "resolution_not_adopted",
           "resolution_not_approvable",
@@ -20023,6 +23605,7 @@
           "resolution_number_required",
           "resolution_number_taken",
           "resolution_reference_mismatch",
+          "resolution_repealed",
           "resolution_required",
           "restore_drill_failed",
           "restore_report_bad_identifier",
@@ -20093,17 +23676,1872 @@
         ],
         "description": "Kody z docs/API_ERRORS.md."
       },
-      "Error": {
+      "Id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+        "description": "Identyfikator przekazywany w żądaniu (walidowany po stronie serwera: litery, cyfry, `_ . : -`, do 128 znaków)."
+      },
+      "IdempotencyKey": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$",
+        "description": "Klucz idempotencji (8-128 znaków). Ten sam klucz z tą samą treścią odtwarza zapis (200, `Idempotency-Replayed: true`); z inną treścią daje 409 `idempotency_conflict`."
+      },
+      "IsoDate": {
+        "type": "string",
+        "format": "date",
+        "description": "Data kalendarzowa RRRR-MM-DD."
+      },
+      "IsoDateTime": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Znacznik czasu ISO 8601 (UTC)."
+      },
+      "LedgerBudgetLine": {
         "type": "object",
-        "required": [
-          "error"
-        ],
-        "additionalProperties": true,
         "properties": {
-          "error": {
-            "$ref": "#/components/schemas/ErrorCode"
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "categoryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "categoryName": {
+            "type": "string"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "plannedCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedesId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
-        }
+        },
+        "required": [
+          "id",
+          "categoryId",
+          "categoryName",
+          "direction",
+          "plannedCents",
+          "note",
+          "supersedesId"
+        ],
+        "additionalProperties": false,
+        "description": "Bieżąca wersja pozycji preliminarza (poprzednie wersje zostają w historii)."
+      },
+      "LedgerCategory": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "name": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "direction",
+          "name",
+          "active"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerCategoryCopyRequest": {
+        "type": "object",
+        "properties": {
+          "fromSchoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "toSchoolYearId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Rok docelowy (wymaga dostępu finansowego do tego roku); inny niż źródłowy."
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "true = tylko podgląd, bez zapisu."
+          }
+        },
+        "required": [
+          "fromSchoolYearId",
+          "toSchoolYearId"
+        ]
+      },
+      "LedgerCategoryCopyResult": {
+        "type": "object",
+        "properties": {
+          "dryRun": {
+            "type": "boolean"
+          },
+          "copied": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "direction": {
+                  "$ref": "#/components/schemas/LedgerDirection"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "direction",
+                "name"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Skopiowane kategorie (`id` tylko przy zapisie, nie przy `dryRun`)."
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "direction": {
+                  "$ref": "#/components/schemas/LedgerDirection"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "direction",
+                "name"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Kategorie już istniejące w roku docelowym (podgląd `dryRun`)."
+          },
+          "skippedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Liczba pominiętych kategorii przy zapisie."
+          }
+        },
+        "required": [
+          "dryRun",
+          "copied"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerCategoryCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "direction",
+          "name"
+        ]
+      },
+      "LedgerCategoryListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerCorrection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "ledgerEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ledgerEntryId",
+          "amountCents",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerCorrectionRequest": {
+        "type": "object",
+        "properties": {
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents",
+            "description": "Kwota korekty (zmniejszenie wpisu); suma korekt nie może przekroczyć kwoty wpisu."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji). Niezmienny zapis; bez danych osobowych (bramka #152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "amountCents",
+          "reason"
+        ]
+      },
+      "LedgerDirection": {
+        "type": "string",
+        "enum": [
+          "income",
+          "expense"
+        ],
+        "description": "income = przychód, expense = wydatek."
+      },
+      "LedgerEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "categoryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "description": {
+            "type": "string"
+          },
+          "occurredOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "paymentEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceDocumentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "method": {
+            "$ref": "#/components/schemas/LedgerMethod"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionReference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "replacesEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Tylko w odpowiedzi 201 przeksięgowania: powód przeksięgowania (nie ma go w odtworzeniu po kluczu)."
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "direction",
+          "amountCents",
+          "categoryId",
+          "description",
+          "occurredOn",
+          "paymentEntryId",
+          "sourceDocumentId",
+          "method",
+          "source",
+          "resolutionReference"
+        ],
+        "additionalProperties": false,
+        "description": "Wpis księgi po zapisie albo odtworzeniu po kluczu idempotencji (bez pól wyliczanych listy)."
+      },
+      "LedgerEntryAttachment": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "superseded",
+              "voided"
+            ]
+          },
+          "currentDocumentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "documentId",
+          "status",
+          "currentDocumentId"
+        ],
+        "additionalProperties": false,
+        "description": "Stan dowodu wpisu i jego aktualna wersja (łańcuch zastąpień dokumentów)."
+      },
+      "LedgerEntryCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "categoryId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Aktywna kategoria tego roku i kierunku."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Opis (3-500 znaków po przycięciu spacji); bramka danych osobowych (#152)."
+          },
+          "occurredOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "method": {
+            "$ref": "#/components/schemas/LedgerMethod"
+          },
+          "paymentEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Wpłata ujęta w księdze (tylko przychód; kwota = netto wpłaty)."
+          },
+          "sourceDocumentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Dokument finansowy tego roku jako dowód."
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionReference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Numer uchwały; wymagany (albo `resolutionId`) dla wydatku powyżej 3000,00 EUR."
+          },
+          "resolutionId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Jawne wskazanie uchwały (#93), tylko dla wydatku."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "direction",
+          "amountCents",
+          "categoryId",
+          "description",
+          "occurredOn",
+          "method"
+        ]
+      },
+      "LedgerEntryListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "categoryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "description": {
+            "type": "string"
+          },
+          "occurredOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "paymentEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceDocumentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "method": {
+            "$ref": "#/components/schemas/LedgerMethod"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionReference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "replacesEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "categoryName": {
+            "type": "string"
+          },
+          "correctedCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "netAmountCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "attachmentIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityId"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LedgerEntryAttachment"
+            }
+          },
+          "replacedByEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentLinked": {
+            "type": "boolean",
+            "const": true,
+            "description": "Widok Komisji Rewizyjnej (D-09): wpis powiązany z wpłatą bez opisu, źródła i identyfikatora wpłaty."
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "direction",
+          "amountCents",
+          "categoryId",
+          "description",
+          "occurredOn",
+          "paymentEntryId",
+          "sourceDocumentId",
+          "method",
+          "source",
+          "resolutionReference",
+          "categoryName",
+          "correctedCents",
+          "netAmountCents",
+          "attachmentIds",
+          "attachments"
+        ],
+        "additionalProperties": false,
+        "description": "Wpis księgi na liście: z kategorią, sumą korekt, kwotą netto i dowodami."
+      },
+      "LedgerMethod": {
+        "type": "string",
+        "enum": [
+          "bank",
+          "cash",
+          "card",
+          "other"
+        ],
+        "description": "bank = przelew, cash = gotówka, card = karta, other = inna."
+      },
+      "LedgerReplacementRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/LedgerDirection"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "categoryId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          },
+          "occurredOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "method": {
+            "$ref": "#/components/schemas/LedgerMethod"
+          },
+          "paymentEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tylko potwierdzenie powiązania wpisu zastępowanego (nowe powiązanie nie powstaje)."
+          },
+          "sourceDocumentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionReference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 480,
+            "description": "Powód przeksięgowania (3-480 znaków); trafia do storna jako „Przeksięgowanie: …”."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "direction",
+          "amountCents",
+          "categoryId",
+          "description",
+          "occurredOn",
+          "method",
+          "reason"
+        ]
+      },
+      "LedgerReplacementResult": {
+        "type": "object",
+        "properties": {
+          "entry": {
+            "$ref": "#/components/schemas/LedgerEntry"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "confirmed_reconciliation_affected"
+                },
+                "reconciliationIds": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "minItems": 1
+                }
+              },
+              "required": [
+                "type",
+                "reconciliationIds"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Tylko, gdy przeksięgowanie dotyka potwierdzonego uzgodnienia bankowego."
+          }
+        },
+        "required": [
+          "entry"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerResolutionAuthorization": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "resolutionId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "authorizedAmountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "supersedesId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "resolutionId",
+          "authorizedAmountCents",
+          "validUntil",
+          "note",
+          "supersedesId"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerResolutionAuthorizationRequest": {
+        "type": "object",
+        "properties": {
+          "authorizedAmountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Termin ważności upoważnienia (opcjonalny)."
+          },
+          "note": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          },
+          "supersedesId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bieżące upoważnienie uchwały, które ta kwota zastępuje (null dla pierwszego)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "authorizedAmountCents",
+          "note"
+        ]
+      },
+      "LedgerResolutionSpending": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "number": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "const": "adopted"
+          },
+          "decidedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "authorizationId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "authorizedAmountCents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NonNegativeCents"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validUntil": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spentNetCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "remainingCents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entryCount": {
+            "$ref": "#/components/schemas/Count"
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "number",
+          "title",
+          "status",
+          "decidedAt",
+          "authorizationId",
+          "authorizedAmountCents",
+          "validUntil",
+          "spentNetCents",
+          "remainingCents",
+          "entryCount"
+        ],
+        "additionalProperties": false,
+        "description": "Przyjęta, bieżąca uchwała zebrania ogólnego z upoważnieniem do wydatku i dotychczasowymi wydatkami (netto)."
+      },
+      "LedgerReview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "ledgerEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "questioned"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reviewedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "ledgerEntryId",
+          "decision",
+          "note",
+          "reviewedBy",
+          "reviewedAt"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerReviewListItem": {
+        "type": "object",
+        "properties": {
+          "ledgerEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reviewStatus": {
+            "type": "string",
+            "enum": [
+              "unverified",
+              "verified",
+              "questioned"
+            ]
+          },
+          "reviewCount": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "lastReviewedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastReviewedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "description": {
+            "type": "string"
+          },
+          "categoryName": {
+            "type": "string"
+          },
+          "netAmountCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          }
+        },
+        "required": [
+          "ledgerEntryId",
+          "reviewStatus",
+          "reviewCount",
+          "lastReviewedBy",
+          "lastReviewedAt",
+          "occurredOn",
+          "description",
+          "categoryName",
+          "netAmountCents",
+          "createdBy"
+        ],
+        "additionalProperties": false
+      },
+      "LedgerReviewRequest": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "questioned"
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Wymagana przy `questioned`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "LedgerSummary": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "openingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "incomeCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "expenseCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "closingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "openingBalanceCents",
+          "incomeCents",
+          "expenseCents",
+          "closingBalanceCents"
+        ],
+        "additionalProperties": false,
+        "description": "Bilans otwarcia, przychody, wydatki i bilans zamknięcia roku (EUR, eurocenty)."
+      },
+      "NonNegativeCents": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Kwota nieujemna w eurocentach (EUR)."
+      },
+      "Payment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "householdId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "receivedOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentStatus"
+          }
+        },
+        "required": [
+          "id",
+          "householdId",
+          "schoolYearId",
+          "amountCents",
+          "receivedOn",
+          "method",
+          "reference",
+          "status"
+        ],
+        "additionalProperties": false,
+        "description": "Wpis wpłaty (niezmienny); korekty i zwroty są osobnymi zapisami."
+      },
+      "PaymentAllocation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "householdId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          }
+        },
+        "required": [
+          "id",
+          "paymentEntryId",
+          "householdId",
+          "amountCents"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentAllocationDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "householdId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "reversal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  }
+                },
+                "required": [
+                  "id",
+                  "reason",
+                  "createdAt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "paymentEntryId",
+          "householdId",
+          "amountCents",
+          "createdAt",
+          "reversal"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentAllocationRequest": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          }
+        },
+        "required": [
+          "householdId",
+          "amountCents"
+        ]
+      },
+      "PaymentAllocationReversal": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "allocationId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "allocationId",
+          "paymentEntryId",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentAllocationReversalRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji). Niezmienny zapis; bez danych osobowych (bramka #152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "PaymentAllocationsSummary": {
+        "type": "object",
+        "properties": {
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "recorded",
+              "unmatched",
+              "reversed"
+            ]
+          },
+          "householdId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "netAmountCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "allocatedCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "unallocatedCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "allocations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentAllocationDetail"
+            }
+          }
+        },
+        "required": [
+          "paymentEntryId",
+          "status",
+          "householdId",
+          "netAmountCents",
+          "allocatedCents",
+          "unallocatedCents",
+          "allocations"
+        ],
+        "additionalProperties": false,
+        "description": "Podział wpłaty nieprzypisanej na gospodarstwa (#127). `unallocatedCents` > 0 tylko dla wpłaty `unmatched`."
+      },
+      "PaymentAssignment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "householdId": {
+            "$ref": "#/components/schemas/EntityId"
+          }
+        },
+        "required": [
+          "id",
+          "paymentEntryId",
+          "householdId"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentAssignmentRequest": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "householdId"
+        ]
+      },
+      "PaymentCorrection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "paymentEntryId",
+          "amountCents",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentCorrectionRequest": {
+        "type": "object",
+        "properties": {
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents",
+            "description": "Kwota korekty (zmniejszenie wpłaty); suma korekt nie może przekroczyć kwoty wpłaty."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji). Niezmienny zapis; bez danych osobowych (bramka #152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "amountCents",
+          "reason"
+        ]
+      },
+      "PaymentCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "householdId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Gospodarstwo w zakresie roku; brak = wpłata nieprzypisana (`unmatched`)."
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "receivedOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tytuł przelewu (do 200 znaków); bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "amountCents",
+          "receivedOn",
+          "method"
+        ]
+      },
+      "PaymentInstructions": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "iban": {
+            "type": "string",
+            "description": "IBAN bez spacji, wielkimi literami."
+          },
+          "bic": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Z0-9]{8}([A-Z0-9]{3})?$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payeeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 70
+          },
+          "approvedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "iban",
+          "bic",
+          "payeeName",
+          "approvedAt"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentInstructionsApproveRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "iban": {
+            "type": "string",
+            "description": "IBAN (spacje i wielkość liter są normalizowane); walidowany sumą kontrolną."
+          },
+          "bic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "BIC (8 albo 11 znaków), opcjonalny."
+          },
+          "payeeName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 70,
+            "description": "Nazwa odbiorcy (do 70 znaków po przycięciu spacji)."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "iban",
+          "payeeName"
+        ]
+      },
+      "PaymentListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "householdId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "receivedOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentStatus"
+          },
+          "correctedCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          },
+          "netAmountCents": {
+            "$ref": "#/components/schemas/NonNegativeCents"
+          }
+        },
+        "required": [
+          "id",
+          "householdId",
+          "schoolYearId",
+          "amountCents",
+          "receivedOn",
+          "method",
+          "reference",
+          "status",
+          "correctedCents",
+          "netAmountCents"
+        ],
+        "additionalProperties": false,
+        "description": "Wpłata z sumą korekt i kwotą netto (po korektach i zwrotach)."
+      },
+      "PaymentMethod": {
+        "type": "string",
+        "enum": [
+          "bank",
+          "cash",
+          "other"
+        ],
+        "description": "bank = przelew, cash = gotówka, other = inna."
+      },
+      "PaymentReassignment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "oldHouseholdId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "newHouseholdId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "paymentEntryId",
+          "oldHouseholdId",
+          "newHouseholdId",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentReassignmentRequest": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Nowe gospodarstwo (inne niż obecne)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji). Niezmienny zapis; bez danych osobowych (bramka #152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "householdId",
+          "reason"
+        ]
+      },
+      "PaymentReference": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "householdId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "structuredReference": {
+            "type": "string",
+            "pattern": "^[0-9]{12}$",
+            "description": "Dwanaście cyfr komunikatu strukturalnego (10 cyfr bazy + 2 cyfry kontrolne mod 97), bez znaków +++ i /."
+          },
+          "active": {
+            "type": "boolean",
+            "description": "false po unieważnieniu (zapis niezmienny, powstaje osobne zdarzenie)."
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokeReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "householdId",
+          "structuredReference",
+          "active",
+          "revokedAt",
+          "revokeReason"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentReferenceCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "householdId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "householdId"
+        ]
+      },
+      "PaymentReferenceRevokeRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód unieważnienia (3-500 znaków po przycięciu spacji); bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "PaymentRefund": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "paymentEntryId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "refundedOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "paymentEntryId",
+          "amountCents",
+          "refundedOn",
+          "method",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "PaymentRefundRequest": {
+        "type": "object",
+        "properties": {
+          "amountCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "refundedOn": {
+            "$ref": "#/components/schemas/IsoDate",
+            "description": "Data zwrotu pieniędzy rodzinie."
+          },
+          "method": {
+            "$ref": "#/components/schemas/PaymentMethod"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji). Niezmienny zapis; bez danych osobowych (bramka #152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "amountCents",
+          "refundedOn",
+          "method",
+          "reason"
+        ]
+      },
+      "PaymentStatus": {
+        "type": "string",
+        "enum": [
+          "recorded",
+          "unmatched"
+        ],
+        "description": "recorded = przypisana do gospodarstwa, unmatched = nieprzypisana do wyjaśnienia (nie „dłużnik”)."
+      },
+      "SignedCents": {
+        "type": "integer",
+        "description": "Kwota ze znakiem w eurocentach (EUR); saldo może być ujemne."
       }
     },
     "x-rd-error-catalog": [
@@ -22143,9 +27581,19 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "resolution_amount_exceeded",
+        "meaning": "Ten wydatek przekracza kwotę upoważnioną uchwałą. Sprawdź pozostałą kwotę albo potrzebną nową uchwałę.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "resolution_expense_only",
         "meaning": "Uchwałę jako upoważnienie można wskazać tylko przy wydatku.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "resolution_expired",
+        "meaning": "Termin upoważnienia z uchwały minął przed datą wydatku.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "resolution_final_immutable",
@@ -22190,6 +27638,11 @@
       {
         "code": "resolution_reference_mismatch",
         "meaning": "Referencja uchwały nie zgadza się z numerem wskazanej uchwały.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "resolution_repealed",
+        "meaning": "Wskazana uchwała została uchylona.",
         "retry": "Nie — popraw dane żądania."
       },
       {
