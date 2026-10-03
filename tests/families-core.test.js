@@ -66,6 +66,9 @@ test('filterStudentsByName: dopasowanie bez rozróżniania wielkości liter i po
   assert.deepEqual(filterStudentsByName(students, 'zieba').map((s) => s.lastName), ['Zięba']);
   assert.deepEqual(filterStudentsByName(students, 'KOWAL').map((s) => s.lastName), ['Kowalska']);
   assert.deepEqual(filterStudentsByName(students, 'nowic').map((s) => s.lastName), ['Nowicki']);
+  // „ł” nie rozkłada się w NFD: wpisanie bez kreski i z kreską znajduje to samo imię.
+  assert.deepEqual(filterStudentsByName(students, 'lukasz').map((s) => s.firstName), ['Łukasz']);
+  assert.deepEqual(filterStudentsByName(students, 'ŁUKASZ').map((s) => s.firstName), ['Łukasz']);
 });
 
 test('filterStudentsByName: znaki % i _ nie mają specjalnego znaczenia (brak wstrzyknięcia w filtrze klienta)', () => {

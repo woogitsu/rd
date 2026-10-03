@@ -4,17 +4,19 @@ Deterministyczny, lokalny moduł `src/pg/pii-check.js` wykrywa w tekście prawdo
 
 To środek wspierający, nie zastępuje odpowiedzialności osoby zapisującej (fałszywe alarmy są możliwe, np. nazwisko identyczne z nazwą ulicy).
 
-## Co ten PR obejmuje
+## Zakres pierwszego PR (#339)
 
-- **Korekta wpłaty** (`POST /api/payments/:id/corrections`, pole `reason`, tabela `payment_corrections` — niezmienna po zapisie): przy wykryciu trafienia serwer zwraca `422 possible_personal_data` z listą kategorii. Ponowne wysłanie z `confirmPersonalData: true` i tym samym `Idempotency-Key` zapisuje korektę; `audit_events` dostaje metadane `piiConfirmed: true` + `piiCategories` (bez treści). Podwójne kliknięcie z potwierdzeniem i tym samym kluczem = jeden wpis (istniejąca idempotencja trasy).
+- **Korekta wpłaty** (`POST /api/payments/:id/corrections`, pole `reason`, tabela `payment_corrections` — niezmienna po zapisie): przy wykryciu trafienia serwer zwraca `422 possible_personal_data` z listą kategorii (po rozszerzeniu bramki e-mail, IBAN i numer rejestru krajowego są odrzucane bez możliwości potwierdzenia, patrz niżej). Ponowne wysłanie z `confirmPersonalData: true` i tym samym `Idempotency-Key` zapisuje korektę; `audit_events` dostaje metadane `piiConfirmed: true` + `piiCategories` (bez treści). Podwójne kliknięcie z potwierdzeniem i tym samym kluczem = jeden wpis (istniejąca idempotencja trasy).
 - **Publikacja protokołu jako publiczny** (`setMinutesVisibility`, widoczność `public`, `src/pg/meetings.js`): przy wykryciu trafienia w treści zatwierdzonego protokołu serwer **twardo blokuje** publikację (`409 minutes_contain_personal_data`) — zgodnie z AGENTS.md „widok publiczny wyłącznie zatwierdzone dane”. Widoczność `internal`/`parents` nie jest blokowana.
 
-## Czego ten PR świadomie NIE obejmuje
+## Stan dziś: zakres bramki
 
-- Pozostałych pól z tabeli w issue #152: `payment_entries.reference` (sama wpłata — patrz #83 dla nowych wpłat i D-04 dla `reference_hash`/retencji historycznych), `ledger_entries.description`, `ledger_corrections.reason`, `ledger_opening_balance_adjustments.reason`, `bank_reconciliations.notes`, `bank_reconciliation_matches.revoke_reason`, `meeting_agenda_items.description`, `resolutions.correction_reason`, `guardian_contact_changes.reason`, `news_photos.rights_note`/`revocation_reason`. Każde z nich wymaga osobnej integracji z `pii-check.js` w swojej trasie zapisu — zrobione tu tylko dwa reprezentatywne przypadki z kryteriów akceptacji (korekta wpłaty, publikacja protokołu), żeby nie łączyć zbyt wielu tras w jednym PR.
+Od pierwszego PR bramka została rozszerzona na wspólny moduł `src/pg/pii-gate.js`. Wszystkie pola wolnego tekstu z tabeli w issue #152 mają dziś bramkę po stronie serwera (lista `GATED_FIELDS`, ok. 60 pól, m.in. `payment_entries.reference`, `payment_corrections.reason`, `ledger_entries.description`, `ledger_corrections.reason`, `ledger_opening_balance_adjustments.reason`, `bank_reconciliations.notes`, `bank_reconciliation_matches.revoke_reason`, `meeting_agenda_items.description`, `meeting_minutes.body`, `resolutions.correction_reason`, `guardian_contact_changes.reason`, `news_photos.rights_note` i `revocation_reason`). Pole wolnego tekstu bez bramki musi mieć jawny wpis w `EXEMPT_FIELDS` z uzasadnieniem, a pokrycie każdego pola `free_text` tabeli niezmiennej z `privacy/data-inventory.json` pilnuje `tests/pii-gate-coverage.test.js`. Reguły odrzucenia i potwierdzenia: e-mail, IBAN i numer rejestru krajowego to zawsze `422 personal_data_forbidden`; telefon i znane imię i nazwisko to `422 possible_personal_data` i ponowienie z `confirmPersonalData: true` (szczegóły w sekcji „Aktualności i wydarzenia” niżej).
+
+## Czego bramka nie obejmuje
+
 - Wyjątku „druga osoba zatwierdza publikację mimo trafienia” (np. nazwisko członka Rady pełniącego funkcję) — patrz założenie techniczne przy D-08 i D-21 w `docs/DECISIONS.md`. Dziś: zawsze twarda blokada `public`.
 - Listy dozwolonej `users.display_name` członków Rady.
-- Podpowiedzi UI przy polach („Nie wpisuj imion dzieci…”) — brak zmian w panelach w tym PR.
 - Kolumny `reference_hash` na `payment_entries` — czeka na D-04 (okres retencji jawnej referencji).
 
 ## Aktualności i wydarzenia (rewizje niezmienne)
