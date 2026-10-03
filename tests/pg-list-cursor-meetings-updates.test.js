@@ -128,3 +128,54 @@ test('kolejka próśb: kursor innego statusu jest odrzucany, przedstawiciel dost
   assert.equal(other.data.error, 'invalid_cursor');
   assert.equal((await call('/api/admin/guardian-update-requests', rep)).status, 403);
 });
+
+test('wersje szablonu kodu weryfikacyjnego: kursor po version, truncated, obowiązująca wersja spoza strony', async () => {
+  const TEMPLATES = 130;
+  const path = '/api/admin/guardian-verify-templates';
+  const newest = `tpl-${String(TEMPLATES).padStart(4, '0')}`;
+  await db.query("INSERT INTO users (id, email, display_name) VALUES ('u-approver', 'approver@example.invalid', 'Zatwierdzający')");
+  // Najstarsza wersja jest zatwierdzona, a nowsze to szkice: obowiązująca leży poza pierwszą stroną.
+  const body = 'Kod potwierdzający to {kod}. Jeśli to nie Ty, zignoruj wiadomość.';
+  await db.query(
+    `INSERT INTO guardian_verify_templates (id, subject, body_text, content_hash, status, created_by, approved_by, approved_at)
+     VALUES ('tpl-0001', 'Potwierdzenie adresu', $1, $2, 'approved', 'u-board', 'u-approver', now())`,
+    [body, 'a'.repeat(64)],
+  );
+  await db.query(
+    `INSERT INTO guardian_verify_templates (id, subject, body_text, content_hash, created_by)
+     SELECT 'tpl-' || lpad(i::text, 4, '0'), 'Potwierdzenie adresu', $1, $2, 'u-board'
+       FROM generate_series(2, ${TEMPLATES}) i`,
+    [body, 'b'.repeat(64)],
+  );
+
+  const first = await call(path);
+  assert.equal(first.status, 200, JSON.stringify(first.data));
+  assert.equal(first.data.templates.length, 100);
+  assert.equal(first.data.truncated, true);
+  assert.equal(typeof first.data.nextCursor, 'string');
+  assert.equal(first.data.limit, 100);
+  assert.equal(first.data.templates[0].id, newest, 'najnowsza wersja pierwsza');
+  assert.equal(first.data.templates.some((template) => template.id === 'tpl-0001'), false, 'zatwierdzona wersja jest poza stroną');
+  assert.equal(first.data.currentTemplateId, 'tpl-0001', 'obowiązująca wersja nie zależy od strony');
+
+  const tail = await call(`${path}?cursor=${first.data.nextCursor}`);
+  assert.equal(tail.status, 200, JSON.stringify(tail.data));
+  assert.equal(tail.data.templates.length, TEMPLATES - 100);
+  assert.deepEqual([tail.data.truncated, tail.data.nextCursor], [false, null]);
+  assert.equal(tail.data.templates.at(-1).id, 'tpl-0001');
+  assert.equal(tail.data.currentTemplateId, 'tpl-0001');
+
+  const all = await walk(path, 'templates', { limit: 33, cookie: board });
+  assert.equal(all.pages, 4);
+  assert.equal(all.ids.length, TEMPLATES);
+  assert.equal(new Set(all.ids).size, TEMPLATES);
+  assert.deepEqual(all.ids, [...all.ids].sort().reverse(), 'wersje malejąco, bez powtórzeń');
+
+  assert.deepEqual((await call(`${path}?cursor=zly`)).data, { error: 'invalid_cursor' });
+  const forgedKey = Buffer.from(JSON.stringify(['abc', 'tpl-0001', JSON.stringify(['guardian-verify-templates'])])).toString('base64url');
+  assert.deepEqual((await call(`${path}?cursor=${forgedKey}`)).data, { error: 'invalid_cursor' });
+  const foreign = Buffer.from(JSON.stringify(['5', 'tpl-0005', JSON.stringify(['guardian-update-requests', 'pending'])])).toString('base64url');
+  assert.deepEqual((await call(`${path}?cursor=${foreign}`)).data, { error: 'invalid_cursor' });
+  for (const limit of ['0', '101', 'abc']) assert.deepEqual((await call(`${path}?limit=${limit}`)).data, { error: 'invalid_limit' }, limit);
+  assert.equal((await call(path, rep)).status, 403, 'przedstawiciel klasy nie czyta szablonu');
+});

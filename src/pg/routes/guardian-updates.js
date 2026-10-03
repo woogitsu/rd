@@ -590,15 +590,35 @@ function templateView(row) {
   };
 }
 
-async function listTemplates(request, env, json) {
+async function listTemplates(request, env, url, json) {
   await requireBoardContext(request, env);
-  const { rows } = await env.db.query('SELECT * FROM guardian_verify_templates ORDER BY version DESC LIMIT 100');
-  // Obowiązuje najnowsza zatwierdzona wersja (tę zapisuje wniosek przy złożeniu).
-  const current = rows.find((row) => row.status === 'approved') ?? null;
+  // #159: wersje od najnowszej, kursor keyset po `version` (unikalny, rośnie) zamiast
+  // LIMIT 100 bez sygnału obcięcia. `limit` domyślnie i maksymalnie 100 (jak dotąd).
+  const fail = (code) => { throw new RequestError(code); };
+  const limit = parseListLimit(url.searchParams.get('limit'), { defaultLimit: 100, maxLimit: 100 }, fail);
+  const scope = JSON.stringify(['guardian-verify-templates']);
+  const cursor = decodeListCursor(url.searchParams.get('cursor'), { kind: 'text', scope }, fail);
+  // Klucz kursora trafia do `::int`: kursor sfałszowany poza liczbą dałby błąd bazy zamiast 400.
+  if (cursor && !/^\d{1,9}$/.test(cursor.key)) fail('invalid_cursor');
+  const values = [];
+  const after = cursor ? (values.push(cursor.key), `WHERE version < $${values.length}::int`) : '';
+  const { rows: fetched } = await env.db.query(
+    `SELECT * FROM guardian_verify_templates ${after} ORDER BY version DESC LIMIT ${limit + 1}`,
+    values,
+  );
+  const page = pageOf(fetched, limit, (row) => ({ key: String(row.version), id: row.id }), scope);
+  // Obowiązuje najnowsza zatwierdzona wersja (tę zapisuje wniosek przy złożeniu); wyszukana
+  // osobno, bo może leżeć poza bieżącą stroną (np. po wielu szkicach od ostatniego zatwierdzenia).
+  const { rows: approved } = await env.db.query(
+    "SELECT id FROM guardian_verify_templates WHERE status = 'approved' ORDER BY version DESC LIMIT 1",
+  );
   return json({
-    templates: rows.map(templateView),
-    currentTemplateId: current?.id ?? null,
+    templates: page.items.map(templateView),
+    currentTemplateId: approved[0]?.id ?? null,
     enabled: guardianVerifyEnabled(env),
+    nextCursor: page.nextCursor,
+    truncated: page.truncated,
+    limit: page.limit,
   });
 }
 
@@ -675,7 +695,7 @@ export async function handle(request, env, url, json) {
     if (isSubmit) return await submitUpdate(request, env, json);
     if (isList) return await listRequests(request, env, url, json);
     if (isVerify) return await confirmCode(request, env, json);
-    if (isTemplates) return request.method === 'GET' ? await listTemplates(request, env, json) : await createTemplate(request, env, json);
+    if (isTemplates) return request.method === 'GET' ? await listTemplates(request, env, url, json) : await createTemplate(request, env, json);
     if (templateApproveMatch) {
       let id;
       try { id = decodeURIComponent(templateApproveMatch[1]); } catch { throw new RequestError('invalid_request'); }
