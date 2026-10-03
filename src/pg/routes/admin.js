@@ -554,7 +554,15 @@ async function findActiveGrant(tx, { userId, role, classId, schoolYearId }) {
 // Zapis przydziału i zdarzenia `role_grant.created` w transakcji wywołującego
 // (po lockGrantChanges i lockGrantTarget). `auditExtra` — np. requestId,
 // requestedBy przy zatwierdzeniu wniosku (#146).
-async function insertGrantInTx(tx, actorId, { userId, role, classId = null, schoolYearId = null, expiresAt = null, auditExtra = {} }) {
+// Ochrona w głębi (#745): przydział własnemu kontu jest odrzucany tutaj, przed
+// sprawdzeniem duplikatu, więc żadna ścieżka (także przyszła zbiorcza) nie omija
+// zasady drugiej osoby. Wywołujący sprawdzają to wcześniej: POST /grants przed
+// transakcją, zatwierdzenie wniosku (approveGrantRequest: aktor ≠ adresat),
+// przedłużenie przedstawicieli (status `cannot_grant_self` w planie).
+// Eksport wyłącznie dla testu tej ochrony (tests/pg-promotions.test.js).
+export async function insertGrantInTx(tx, actorId, { userId, role, classId = null, schoolYearId = null, expiresAt = null, auditExtra = {} }) {
+  if (!actorId) throw new Error('actor_required');
+  if (userId === actorId) throw new Abort('cannot_grant_self', 409);
   // Podwójne kliknięcie: identyczny aktywny przydział nie powstaje drugi raz.
   const duplicate = await findActiveGrant(tx, { userId, role, classId, schoolYearId });
   if (duplicate) return { grant: duplicate, created: false };

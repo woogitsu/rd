@@ -82,6 +82,16 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
   `role_grants`, odebranie jawną trasą), `tests/pg-auth.test.js` i `tests/pg-login.test.js` (przyjęcie
   zaproszenia `principal` bez roku: `school_year_required`, bez konta, przydziału i zużycia zaproszenia)
   oraz `tests/admin-core.test.js` (etykiety powodów w panelu).
+- Samonadanie przy przedłużaniu przedstawicieli (#745, zasada z #146): `tests/pg-promotions.test.js`,
+  blok „własne konto admina (#745)” — admin, który był przedstawicielem w roku źródłowym (obok innego
+  przedstawiciela i konta wyłączonego): podgląd i zapis oznaczają jego wiersz `cannot_grant_self`, zapis
+  nie tworzy mu przydziału, przedłuża pozostałych, `skipped`/`skippedSelf` i metadane
+  `promotion.representatives_extended` liczą pominięcie, skrót planu stały (także po ponowieniu, które daje
+  `created: 0`), skrót z podglądu innego admina → `409 plan_stale`, pominięty wiersz nie jest obsadą klasy;
+  ochrona w głębi: wspólny zapis przydziału (`insertGrantInTx`) odrzuca własne konto `409 cannot_grant_self`.
+  Kontrola pozytywna: na kodzie sprzed poprawki zapis daje `created: 4` (admin dostaje dwa przydziały od
+  siebie), a sama ochrona w głębi bez poprawki planu odrzuca cały zapis `409 cannot_grant_self`. Ekran:
+  `tests/admin-representatives.test.js` (podsumowanie, okno potwierdzenia i wynik).
 
 ## Rejestr dowodów
 
@@ -94,6 +104,7 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | sesja | Błędny e-mail | tests/pg-auth.test.js | invitation is one-time, expires, can be revoked and must match the account email |
 | admin | Ponowienie | tests/pg-admin.test.js | invitations return the token once, block duplicates |
 | admin | Korekty | tests/pg-admin.test.js | revoking grants keeps history |
+| admin | Ponowienie | tests/pg-promotions.test.js | zapis: admin bez przydziału, pozostali przedłużeni, skipped i audyt liczą pominięcie; ponowienie idempotentne |
 | admin | Korekty | tests/pg-access-review.test.js | przegląd niczego nie odbiera; odebranie to jawna trasa POST /api/admin/grants/{id}/revoke i znika z propozycji |
 | sesja | Błędny e-mail | tests/pg-auth.test.js | acceptInvitation: zaproszenie principal bez roku jest blokowane kodem school_year_required |
 | rodziny | 2 opiekunów | tests/pg-primary-household.test.js | opieka naprzemienna: dwa obowiązujące gospodarstwa |

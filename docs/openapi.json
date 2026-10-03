@@ -7695,7 +7695,11 @@
                     },
                     "skipped": {
                       "$ref": "#/components/schemas/Count",
-                      "description": "Konta wyłączone (bez przydziału)."
+                      "description": "Pominięte wiersze bez przydziału: konta wyłączone i własne konto admina (#745)."
+                    },
+                    "skippedSelf": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Wiersze własnego konta admina — zasada drugiej osoby (#146, #745); rolę nada inny administrator."
                     },
                     "replayed": {
                       "type": "boolean",
@@ -7709,6 +7713,7 @@
                     "created",
                     "alreadyGranted",
                     "skipped",
+                    "skippedSelf",
                     "replayed"
                   ],
                   "additionalProperties": false
@@ -7740,7 +7745,11 @@
                     },
                     "skipped": {
                       "$ref": "#/components/schemas/Count",
-                      "description": "Konta wyłączone (bez przydziału)."
+                      "description": "Pominięte wiersze bez przydziału: konta wyłączone i własne konto admina (#745)."
+                    },
+                    "skippedSelf": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Wiersze własnego konta admina — zasada drugiej osoby (#146, #745); rolę nada inny administrator."
                     },
                     "replayed": {
                       "type": "boolean",
@@ -7754,6 +7763,7 @@
                     "created",
                     "alreadyGranted",
                     "skipped",
+                    "skippedSelf",
                     "replayed"
                   ],
                   "additionalProperties": false
@@ -7940,12 +7950,16 @@
                         },
                         "user_disabled": {
                           "$ref": "#/components/schemas/Count"
+                        },
+                        "cannot_grant_self": {
+                          "$ref": "#/components/schemas/Count"
                         }
                       },
                       "required": [
                         "propose",
                         "already_granted",
-                        "user_disabled"
+                        "user_disabled",
+                        "cannot_grant_self"
                       ],
                       "additionalProperties": false
                     },
@@ -7968,7 +7982,8 @@
                             "enum": [
                               "propose",
                               "already_granted",
-                              "user_disabled"
+                              "user_disabled",
+                              "cannot_grant_self"
                             ]
                           }
                         },

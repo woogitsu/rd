@@ -85,6 +85,17 @@ test('komunikaty wyniku: nowe, powtórzenie i pominięte konta', () => {
   assert.match(representativesResultMessage({ created: 0, alreadyGranted: 3, skipped: 0, replayed: true }), /już zapisane/);
 });
 
+test('własne konto admina (#745): podsumowanie, okno potwierdzenia i wynik mówią, że jest pominięte', () => {
+  const plan = { ...PLAN, counts: { propose: 1, already_granted: 0, user_disabled: 1, cannot_grant_self: 1 } };
+  assert.match(representativesSummary(plan), /konta wyłączone \(pominięte\): 1; Twoje konto \(pominięte — przydział nadaje inny administrator\): 1\.$/);
+  assert.match(representativesSummary({ counts: { propose: 0, already_granted: 0, user_disabled: 0, cannot_grant_self: 1 } }), /Nic nie zostanie zapisane/);
+  assert.match(representativesConfirmation(plan, { from: 'a', to: 'b' }).effects.join('\n'), /Twoje konto jest pomijane: rolę przedstawiciela nadaje Ci inny administrator/);
+  assert.doesNotMatch(representativesConfirmation(PLAN, { from: 'a', to: 'b' }).effects.join('\n'), /Twoje konto/);
+  const message = representativesResultMessage({ created: 1, alreadyGranted: 0, skipped: 2, skippedSelf: 1, replayed: false });
+  assert.match(message, /pominięto konta wyłączone: 1; pominięto Twoje konto \(przydział nadaje inny administrator\): 1\.$/);
+  assert.doesNotMatch(representativesResultMessage({ created: 1, alreadyGranted: 0, skipped: 1, skippedSelf: 1 }), /konta wyłączone/);
+});
+
 test('obsługa błędów zatwierdzenia: 409 plan_stale odświeża, 422 nothing_to_extend czyści, sieć pozwala ponowić', () => {
   assert.equal(applyFailureAction({ status: 409, code: 'plan_stale' }), 'refresh');
   assert.equal(applyFailureAction({ status: 422, code: 'nothing_to_extend' }), 'reset');
