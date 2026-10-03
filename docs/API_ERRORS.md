@@ -24,8 +24,11 @@ niedostępności (`*_unavailable`, `timeout`, `retry_later`) — tak, po chwili;
 od ponowienia. Reszta oznaczona jako "zależy od kontekstu" — wymaga przeglądu
 modułu trasy, który ją zwraca.
 
-Wygenerowane z listy kodów w `src/pg/**` (te same reguły wykrywania co
-`tests/shared-api.test.js#serverErrorCodes`) i tekstów z
+Wygenerowane z listy kodów w `src/pg/**` i w parserze treści kampanii
+`src/email/content.js` (te same reguły wykrywania co
+`tests/shared-api.test.js#serverErrorCodes`; kody zwracane przez funkcje
+pomocnicze, których wzorce nie widzą — `mfa_stale`, `preview_recipient_not_allowed`
+i kody bramki MFA — są w tym detektorze wymienione wprost) i tekstów z
 `shared/messages.js`. Test `tests/pg-api-errors-catalog.test.js` sprawdza, że
 każdy kod z kodu źródłowego jest w tej tabeli (i odwrotnie — brak martwych
 wpisów).
@@ -261,6 +264,7 @@ przy przydziale, nie błąd.
 | `invalid_person_name` | Podaj imię lub nazwisko (1–100 znaków, bez znaku @ i znaków sterujących). | Nie — popraw dane żądania. |
 | `invalid_photo_id` | Niepoprawny identyfikator zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_photos` | Niepoprawna lista zdjęć. | Nie — popraw dane żądania. |
+| `invalid_placeholder` | Treść zawiera nieznany znacznik w nawiasach klamrowych (dozwolone: {rok}, {rodzina}, {komunikat}, {rachunek}, {odbiorca}; w temacie tylko {rok}). | Nie — popraw dane żądania. |
 | `invalid_plan_digest` | Brak poprawnego skrótu planu (planDigest) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_plan_sha256` | Podaj skrót planu (planSha256) z podglądu. | Nie — popraw dane żądania. |
 | `invalid_post_id` | Niepoprawny identyfikator wpisu. | Nie — popraw dane żądania. |
@@ -298,6 +302,7 @@ przy przydziale, nie błąd.
 | `invalid_statement_file` | Nie udało się odczytać pliku wyciągu. Sprawdź format pliku. | Nie — popraw dane żądania. |
 | `invalid_statement_line` | Niepoprawna pozycja wyciągu. | Nie — popraw dane żądania. |
 | `invalid_status` | Niepoprawny status. | Nie — popraw dane żądania. |
+| `invalid_subject` | Temat wiadomości musi mieć od 3 do 200 znaków w jednej linii. | Nie — popraw dane żądania. |
 | `invalid_taken_on` | Niepoprawna data wykonania zdjęcia. | Nie — popraw dane żądania. |
 | `invalid_title` | Tytuł musi mieć od 3 do 200 znaków. | Nie — popraw dane żądania. |
 | `invalid_to` | Podaj poprawną datę końcową (RRRR-MM-DD). | Nie — popraw dane. |
@@ -343,6 +348,7 @@ przy przydziale, nie błąd.
 | `mfa_key_missing` | Weryfikacja dwuetapowa jest chwilowo niedostępna (brak klucza do odszyfrowania). Skontaktuj się z administratorem. | Nie — zależy od sesji i uprawnień. |
 | `mfa_locked` | Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `mfa_required` | Potwierdź logowanie kodem z aplikacji uwierzytelniającej. | Nie — popraw dane żądania. |
+| `mfa_stale` | Ta operacja wymaga świeżego potwierdzenia kodem — podaj kod jeszcze raz. | Nie — zależy od sesji/uprawnień, nie od ponowienia. |
 | `mfa_unavailable` | Weryfikacja dwuetapowa jest chwilowo niedostępna. Skontaktuj się z administratorem. | Tak, po chwili (usługa/zasób chwilowo niedostępne). |
 | `minutes_contain_personal_data` | Protokół zawiera możliwe dane osobowe (imię i nazwisko, e-mail albo IBAN) — publikacja publiczna jest zablokowana. | Nie — popraw dane żądania. |
 | `minutes_four_eyes_required` | Protokół zatwierdza inna osoba niż jego autor. | Zależy od kontekstu (patrz moduł trasy). |
@@ -393,6 +399,7 @@ przy przydziale, nie błąd.
 | `payment_reassignment_same_household` | Wpłata jest już przypisana do tej rodziny. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_reference_already_active` | To gospodarstwo ma już aktywną referencję płatności w tym roku. Najpierw ją unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_reference_already_revoked` | Ta referencja płatności jest już unieważniona. | Zależy od kontekstu (patrz moduł trasy). |
+| `payment_reference_missing` | Rodzina nie ma aktywnej komunikacji strukturalnej w roku kampanii — wiadomość z {komunikat} nie zostanie wysłana. | Zależy od kontekstu (patrz moduł trasy). |
 | `payment_reference_not_found` | Nie znaleziono referencji płatności. | Nie — popraw dane żądania. |
 | `pdf_inline_not_allowed` | Podgląd PDF działa tylko w panelu (PDF.js), bez wbudowanego czytnika przeglądarki. Otwórz dokument w panelu albo pobierz plik. | Nie — popraw dane żądania. |
 | `pending_admin_invitation` | Istnieje już oczekujące zaproszenie administratora. Poczekaj albo je unieważnij. | Zależy od kontekstu (patrz moduł trasy). |
@@ -411,6 +418,7 @@ przy przydziale, nie błąd.
 | `post_withdrawn` | Wpis został wycofany. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_account_limit` | Wyczerpano dzienny limit wiadomości testowych dla tego konta. Spróbuj jutro. | Zależy od kontekstu (patrz moduł trasy). |
 | `preview_campaign_limit` | Wyczerpano limit wiadomości testowych dla tej kampanii. | Zależy od kontekstu (patrz moduł trasy). |
+| `preview_recipient_not_allowed` | Adres nie jest na liście skrzynek testowych Rady albo należy do opiekuna — wiadomość testowa nie zostanie wysłana. | Nie — popraw dane żądania. |
 | `preview_required` | Najpierw wyślij podgląd importu. | Nie — popraw dane żądania. |
 | `preview_stale` | Dane w bazie zmieniły się od podglądu. Wyślij podgląd ponownie. | Tak, po odświeżeniu widoku (dane zmieniły się w międzyczasie). |
 | `privacy_notice_missing` | Brak opublikowanej informacji o przetwarzaniu danych. Opublikuj ją, zanim zatwierdzisz import lub kampanię e-mail albo wydrukujesz kartki. Kampanię zatwierdzoną przed jej publikacją trzeba zatwierdzić ponownie. | Zależy od kontekstu (patrz moduł trasy). |
@@ -575,9 +583,10 @@ i transakcje z `src/db.js`:
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem
 `npm run openapi:build` z `tests/helpers/route-matrix.js`, z tabeli kodów
 powyżej i ze schematów `src/pg/schemas/*` (moduły pokryte w etapie 2: wpłaty
-i księga, w etapie 3: rodziny i sesja; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
+i księga, w etapie 3: rodziny i sesja, w etapie 4: preliminarz, kasa i centra kosztów, w etapie 6:
+kampanie e-mail; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
 `tests/openapi-contract.test.js` sprawdza, że należą do tego katalogu i
-występują w źródle trasy); `tests/openapi.test.js` psuje się przy ręcznej
+występują w źródle trasy albo w jej plikach pomocniczych, np. `src/email/content.js`); `tests/openapi.test.js` psuje się przy ręcznej
 edycji pliku albo trasie dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
 `docs/AUTHORIZATION.md` (D-08/D-09), do zatwierdzenia przez zarząd/szkołę.
 `x-rd-deny-status` to statusy odmowy wyliczone z macierzy (403 lub 404 per

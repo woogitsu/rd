@@ -96,6 +96,7 @@
   ],
   "x-rd-schema-coverage": {
     "covered": [
+      "email",
       "families",
       "ledger",
       "ledger-budget",
@@ -113,7 +114,6 @@
       "audit-reviews",
       "board",
       "documents",
-      "email",
       "events",
       "exports",
       "financial-reports",
@@ -130,7 +130,7 @@
     ],
     "operations": {
       "total": 297,
-      "withSchema": 77
+      "withSchema": 107
     }
   },
   "paths": {
@@ -6301,17 +6301,94 @@
         "operationId": "email_list",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "cursor",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtrów (docs/API.md)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kampanie roku od najnowszych (kursor keyset, #159).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaigns": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailCampaign"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Nieprzezroczysty kursor następnej strony; null na ostatniej stronie."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null (lista niepełna)."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Zastosowana wielkość strony."
+                    }
+                  },
+                  "required": [
+                    "campaigns",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6324,7 +6401,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -6363,9 +6445,109 @@
       },
       "post": {
         "operationId": "email_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailCampaignCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    }
+                  },
+                  "required": [
+                    "campaign"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Szkic kampanii (nic nie jest wysyłane).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    }
+                  },
+                  "required": [
+                    "campaign"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "forbidden_wording",
+              "invalid_audience",
+              "invalid_body",
+              "invalid_category",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_placeholder",
+              "invalid_reference",
+              "invalid_request",
+              "invalid_subject",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6378,7 +6560,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -6425,13 +6653,61 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Stan kampanii z licznikami kolejki i wykluczeń; `providerPause` tylko dla kampanii w toku.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    },
+                    "outbox": {
+                      "$ref": "#/components/schemas/EmailOutboxCounts"
+                    },
+                    "exclusions": {
+                      "$ref": "#/components/schemas/EmailExclusionCounts"
+                    },
+                    "providerPause": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/EmailProviderPause"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "campaign",
+                    "outbox",
+                    "exclusions",
+                    "providerPause"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6444,7 +6720,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
           }
         },
         "security": [
@@ -6489,13 +6783,67 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailCampaignUpdateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Treść po zmianie (zmiana cofa do szkicu); ta sama treść jeszcze raz = odtworzenie bez błędu, `approvalInvalidated: false`. Bez `Idempotency-Key`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    },
+                    "approvalInvalidated": {
+                      "type": "boolean",
+                      "description": "true, gdy zmiana unieważniła zatwierdzenie."
+                    }
+                  },
+                  "required": [
+                    "campaign",
+                    "approvalInvalidated"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "forbidden_wording",
+              "invalid_audience",
+              "invalid_body",
+              "invalid_campaign_id",
+              "invalid_category",
+              "invalid_json",
+              "invalid_placeholder",
+              "invalid_revision",
+              "invalid_send_not_before",
+              "invalid_subject",
+              "invalid_title"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6508,7 +6856,68 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_audience_locked",
+              "campaign_locked",
+              "revision_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -6555,13 +6964,66 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailApproveRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kampania zatwierdzona przez zarząd (inna osoba niż autor, świeże MFA). Ponowienie (podwójne kliknięcie) rozpoznane po stanie kampanii: 200 z `Idempotency-Replayed: true`, bez nowego zapisu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    }
+                  },
+                  "required": [
+                    "campaign"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6574,7 +7036,78 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "mfa_stale",
+              "self_approval_forbidden"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "approval_stale",
+              "campaign_not_draft",
+              "campaign_test_send_required",
+              "content_hash_mismatch",
+              "no_recipients",
+              "notice_outdated",
+              "payment_instructions_changed",
+              "payment_instructions_missing",
+              "privacy_notice_missing",
+              "recipients_hash_mismatch",
+              "school_year_closed",
+              "snapshot_required"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -6617,13 +7150,90 @@
             "in": "path",
             "required": true,
             "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtrów (docs/API.md)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 200
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Lista „do sprawdzenia”: wiersze `failed` i adresy z ≥ 3 `soft_bounce` (adres maskowany; odczyt w dzienniku).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailAttentionRow"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Nieprzezroczysty kursor następnej strony; null na ostatniej stronie."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null (lista niepełna)."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Zastosowana wielkość strony."
+                    }
+                  },
+                  "required": [
+                    "rows",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_cursor",
+              "invalid_limit"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6636,7 +7246,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
           }
         },
         "security": [
@@ -6683,13 +7311,63 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kampania anulowana; wiersze w kolejce → cancelled. Ponowienie (podwójne kliknięcie) rozpoznane po stanie kampanii: 200 z `Idempotency-Replayed: true`, bez nowego zapisu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    },
+                    "cancelledMessages": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "inFlight": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Wiadomości, których przekazanie do dostawcy już trwa (mogą wyjść)."
+                    }
+                  },
+                  "required": [
+                    "campaign",
+                    "cancelledMessages",
+                    "inFlight"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6702,7 +7380,40 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_locked",
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -6745,17 +7456,106 @@
         "operationId": "email_followup",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "campaignId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu: samo `campaign` (bez liczników z utworzenia).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    }
+                  },
+                  "required": [
+                    "campaign"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Szkic kampanii uzupełniającej (tylko rodziny z zatwierdzonym „nie wyszła”).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    },
+                    "eligibleHouseholds": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "pendingApprovals": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "„Nie wyszła” czekające jeszcze na zatwierdzenie (poza uzupełnieniem)."
+                    }
+                  },
+                  "required": [
+                    "campaign",
+                    "eligibleHouseholds",
+                    "pendingApprovals"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_idempotency_key"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6768,7 +7568,42 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "followup_no_households",
+              "followup_source_not_eligible",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -6815,13 +7650,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wysyłka wstrzymana (#130). Ponowienie (podwójne kliknięcie) rozpoznane po stanie kampanii: 200 z `Idempotency-Replayed: true`, bez nowego zapisu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    }
+                  },
+                  "required": [
+                    "campaign"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6834,7 +7710,40 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_locked",
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -6881,13 +7790,33 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Podgląd kampanii (niczego nie wysyła).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6900,7 +7829,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
           }
         },
         "security": [
@@ -6947,13 +7894,59 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kolejka: jeden wiersz na rodzinę (klucz `campaign:<id>:household:<id>`) albo konto. Ponowienie: `queued: 0`, nagłówek `true`, bez duplikatów.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    },
+                    "queued": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Nowe wiersze kolejki w tym wywołaniu."
+                    }
+                  },
+                  "required": [
+                    "campaign",
+                    "queued"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6966,7 +7959,48 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "approval_required",
+              "campaign_locked",
+              "content_hash_mismatch",
+              "notice_outdated",
+              "payment_instructions_changed",
+              "payment_instructions_missing",
+              "privacy_notice_missing",
+              "recipients_hash_mismatch",
+              "school_year_closed",
+              "snapshot_required"
+            ]
           }
         },
         "security": [
@@ -7013,13 +8047,90 @@
             "in": "path",
             "required": true,
             "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtrów (docs/API.md)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 200
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Odbiorcy z migawki (kursor keyset; każdy odczyt trafia do dziennika).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recipients": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailRecipient"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Nieprzezroczysty kursor następnej strony; null na ostatniej stronie."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null (lista niepełna)."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Zastosowana wielkość strony."
+                    }
+                  },
+                  "required": [
+                    "recipients",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_cursor",
+              "invalid_limit"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7032,7 +8143,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
           }
         },
         "security": [
@@ -7079,13 +8208,52 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "default": "json"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Raport doręczeń: JSON (domyślnie) albo CSV UTF-8 z BOM (sekcja;kod;liczba; pobranie trafia do dziennika).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailReport"
+                }
+              },
+              "text/csv; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_format"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7098,7 +8266,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
           }
         },
         "security": [
@@ -7145,13 +8331,84 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailResolutionRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Wiersz ma już rozstrzygnięcie: zwraca istniejące, bez drugiego zapisu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "resolution": {
+                      "$ref": "#/components/schemas/EmailResolution"
+                    }
+                  },
+                  "required": [
+                    "resolution"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Rozstrzygnięcie zapisane (tylko dopisywanie).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "resolution": {
+                      "$ref": "#/components/schemas/EmailResolution"
+                    }
+                  },
+                  "required": [
+                    "resolution"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7164,7 +8421,67 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found",
+              "outbox_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "not_resolvable",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -7211,7 +8528,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -7219,13 +8536,73 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
+          "200": {
+            "description": "Rozstrzygnięcie ma już zatwierdzenie: zwraca istniejące.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approval": {
+                      "$ref": "#/components/schemas/EmailResolutionApproval"
+                    }
+                  },
+                  "required": [
+                    "approval"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zatwierdzenie „nie wyszła” przez inną osobę z zarządu (świeże MFA).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approval": {
+                      "$ref": "#/components/schemas/EmailResolutionApproval"
+                    }
+                  },
+                  "required": [
+                    "approval"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7238,7 +8615,43 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "mfa_stale",
+              "self_approval_forbidden"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found",
+              "outbox_resolution_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "resolution_not_approvable",
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -7281,13 +8694,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wysyłka wznowiona (bez ponownego zatwierdzenia). Ponowienie (podwójne kliknięcie) rozpoznane po stanie kampanii: 200 z `Idempotency-Replayed: true`, bez nowego zapisu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaign": {
+                      "$ref": "#/components/schemas/EmailCampaign"
+                    }
+                  },
+                  "required": [
+                    "campaign"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7300,7 +8754,44 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_locked",
+              "notice_outdated",
+              "payment_instructions_changed",
+              "payment_instructions_missing",
+              "privacy_notice_missing",
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -7347,13 +8838,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Nowa migawka odbiorców (jedna wiadomość na rodzinę albo konto); kampania wraca do szkicu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recipientsHash": {
+                      "$ref": "#/components/schemas/Sha256Hex"
+                    },
+                    "recipientsCount": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "exclusions": {
+                      "$ref": "#/components/schemas/EmailExclusionCounts"
+                    },
+                    "approvalInvalidated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "recipientsHash",
+                    "recipientsCount",
+                    "exclusions",
+                    "approvalInvalidated"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7366,7 +8898,40 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_locked",
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -7409,17 +8974,130 @@
         "operationId": "email_testSend",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "campaignId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailTestSendRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu (bez drugiej wiadomości).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sent": {
+                      "const": true
+                    },
+                    "providerMessageId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "sent",
+                    "providerMessageId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Jedna wiadomość testowa na adres techniczny Rady (temat z `[TEST] `).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sent": {
+                      "const": true
+                    },
+                    "providerMessageId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "sent",
+                    "providerMessageId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_campaign_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7432,7 +9110,83 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "preview_recipient_not_allowed"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "campaign_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "payment_instructions_changed",
+              "payment_instructions_missing",
+              "privacy_notice_missing",
+              "sending_disabled"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Błąd (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "preview_account_limit",
+              "preview_campaign_limit"
+            ]
           }
         },
         "security": [
@@ -7477,15 +9231,70 @@
           {
             "name": "t",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "description": "Podpisany token z linku wypisania (#110)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kategoria z tokenu; GET nie ma skutku (skanery linków).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "contribution_reminder",
+                        "organizational"
+                      ],
+                      "default": "contribution_reminder",
+                      "description": "Kategoria komunikatu (#110); wchodzi do zatwierdzanego skrótu treści."
+                    },
+                    "action": {
+                      "const": "opt_out"
+                    }
+                  },
+                  "required": [
+                    "category",
+                    "action"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_token"
+            ]
+          },
+          "429": {
+            "description": "Błąd (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "rate_limited"
+            ]
           }
         },
         "security": [],
@@ -7512,15 +9321,70 @@
           {
             "name": "t",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "description": "Podpisany token z linku wypisania (#110)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wypisanie z kategorii (idempotentne: drugie kliknięcie bez drugiego zdarzenia).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "contribution_reminder",
+                        "organizational"
+                      ],
+                      "default": "contribution_reminder",
+                      "description": "Kategoria komunikatu (#110); wchodzi do zatwierdzanego skrótu treści."
+                    },
+                    "optedOut": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "category",
+                    "optedOut"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_token"
+            ]
+          },
+          "429": {
+            "description": "Błąd (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "rate_limited"
+            ]
           }
         },
         "security": [],
@@ -7549,15 +9413,51 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Aktywna pauza konta dostawcy albo null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pause": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/EmailProviderPause"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "pause"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7570,7 +9470,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -7611,9 +9516,62 @@
     "/api/email/provider-pause/lift": {
       "post": {
         "operationId": "email_providerPause_lift",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailProviderPauseLiftRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Pauza zdjęta przez zarząd (świeże MFA); ponowienie dla zdjętej pauzy: 200 z nagłówkiem `true`, bez nowego zdarzenia.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pause": {
+                      "$ref": "#/components/schemas/EmailProviderPause"
+                    }
+                  },
+                  "required": [
+                    "pause"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_provider_pause_id",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7626,7 +9584,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "mfa_stale"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "provider_pause_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -7667,15 +9671,44 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Stan dziennego limitu Brevo: dziś i jutro w dobie UTC i w strefie konta.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "quota": {
+                      "$ref": "#/components/schemas/EmailQuota"
+                    }
+                  },
+                  "required": [
+                    "quota"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7688,7 +9721,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -7731,17 +9769,104 @@
         "operationId": "email_quota_otherSends_list",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "cursor",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtrów (docs/API.md)."
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            },
+            "description": "Filtr doby (RRRR-MM-DD)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wpisy ręczne i korekty (od najnowszych, kursor keyset).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailQuotaListEntry"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Nieprzezroczysty kursor następnej strony; null na ostatniej stronie."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null (lista niepełna)."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Zastosowana wielkość strony."
+                    }
+                  },
+                  "required": [
+                    "entries",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit",
+              "invalid_quota_day",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7754,7 +9879,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -7793,9 +9923,104 @@
       },
       "post": {
         "operationId": "email_quota_otherSends",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailQuotaOtherSendRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/EmailQuotaEntry"
+                    }
+                  },
+                  "required": [
+                    "entry"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wpis ewidencji (nowy zapis; pomyłkę poprawia korekta ujemna).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/EmailQuotaEntry"
+                    }
+                  },
+                  "required": [
+                    "entry"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_quota_count",
+              "invalid_quota_day",
+              "invalid_quota_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7808,7 +10033,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "quota_correction_target_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "quota_correction_exceeds"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -7851,17 +10135,94 @@
         "operationId": "email_suppressions_list",
         "parameters": [
           {
-            "name": "schoolYearId",
+            "name": "cursor",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej odpowiedzi tej samej trasy i filtrów (docs/API.md)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 500
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Aktywne blokady adresów (skrót, powód, adres maskowany; odczyt w dzienniku).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "suppressions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailSuppression"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Nieprzezroczysty kursor następnej strony; null na ostatniej stronie."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null (lista niepełna)."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Zastosowana wielkość strony."
+                    }
+                  },
+                  "required": [
+                    "suppressions",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7874,7 +10235,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -7921,13 +10287,53 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailSuppressionReleaseBody"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "Utworzono."
+            "description": "Blokada zdjęta: nowy, niezmienny zapis zwolnienia (dwie różne osoby).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "releaseId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    }
+                  },
+                  "required": [
+                    "releaseId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -7940,7 +10346,68 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "self_approval_forbidden"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "release_reason_not_allowed",
+              "request_already_consumed",
+              "suppression_not_active"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -7987,13 +10454,74 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailSuppressionReleaseRequestBody"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam autor ma już otwarty wniosek o ten powód: zwraca go (bez nagłówka ponowienia).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wniosek o zdjęcie blokady (zatwierdza inna osoba).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_confirmation_note",
+              "invalid_json",
+              "invalid_release_reason",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -8006,7 +10534,79 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "suppression_not_active"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "release_reason_not_allowed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -8047,9 +10647,128 @@
     "/api/email/webhooks/brevo": {
       "post": {
         "operationId": "email_webhook",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/EmailWebhookEvent"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/EmailWebhookEvent"
+                    },
+                    "minItems": 1,
+                    "maxItems": 100
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zdarzenia przyjęte (duplikaty i nieznane typy bez skutku; bounce/skarga blokuje adres).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "received": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "recorded": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Nowe zdarzenia (powtórzone zdarzenie nie jest zapisywane drugi raz)."
+                    },
+                    "suppressed": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Zdarzenia, które zablokowały adres albo zapisały wypisanie."
+                    },
+                    "ignored": {
+                      "$ref": "#/components/schemas/Count",
+                      "description": "Nieznane typy zdarzeń."
+                    }
+                  },
+                  "required": [
+                    "received",
+                    "recorded",
+                    "suppressed",
+                    "ignored"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_request"
+            ]
+          },
+          "401": {
+            "description": "Brak ważnej sesji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_signature"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "webhook_not_configured"
+            ]
           }
         },
         "security": [],
@@ -8078,15 +10797,44 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Ostatni przebieg zadania i alarmy (`Cache-Control: no-store`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workerStatus": {
+                      "$ref": "#/components/schemas/EmailWorkerStatus"
+                    }
+                  },
+                  "required": [
+                    "workerStatus"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -8099,7 +10847,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -29752,6 +32505,2024 @@
         "minimum": 0,
         "description": "Liczba (zero lub więcej)."
       },
+      "EmailApproveRequest": {
+        "type": "object",
+        "properties": {
+          "contentHash": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "`contentHash` widziany w podglądzie."
+          },
+          "recipientsHash": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "`recipientsHash` widziany w podglądzie."
+          },
+          "paymentInstructionsId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "description": "`paymentInstructions.id` z podglądu (treść z `{rachunek}`/`{odbiorca}`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "contentHash",
+          "recipientsHash"
+        ],
+        "description": "Jawne zatwierdzenie dokładnej treści i listy odbiorców z podglądu."
+      },
+      "EmailAttentionRow": {
+        "type": "object",
+        "properties": {
+          "outboxId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "= `X-Mailin-custom` do wyszukania w logach Brevo."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "sending",
+              "sent",
+              "failed",
+              "bounced",
+              "suppressed",
+              "skipped",
+              "cancelled"
+            ]
+          },
+          "lastError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerMessageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "type": "string",
+            "description": "Adres maskowany (nigdy pełny)."
+          },
+          "softBounceCount": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "confirmed_delivered",
+                  "confirmed_not_sent"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolutionApproval": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "approved"
+                ],
+                "description": "Tylko dla `confirmed_not_sent` (cztery oczy)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolvedByMe": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "outboxId",
+          "state",
+          "lastError",
+          "providerMessageId",
+          "email",
+          "softBounceCount",
+          "resolution",
+          "resolutionId",
+          "resolutionApproval",
+          "resolvedByMe"
+        ],
+        "additionalProperties": false
+      },
+      "EmailAudience": {
+        "type": "string",
+        "enum": [
+          "all_households",
+          "no_payment_record",
+          "class_households",
+          "meeting_invitees"
+        ],
+        "description": "`class_households` i `meeting_invitees` powstają wyłącznie ze szkicu zawiadomienia o zebraniu (#113)."
+      },
+      "EmailCampaign": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "audience": {
+            "$ref": "#/components/schemas/EmailAudience"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "contribution_reminder",
+              "organizational"
+            ],
+            "default": "contribution_reminder",
+            "description": "Kategoria komunikatu (#110); wchodzi do zatwierdzanego skrótu treści."
+          },
+          "subject": {
+            "type": "string"
+          },
+          "bodyText": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EmailCampaignStatus"
+          },
+          "revisionNo": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Wersja wiersza (#215); `PUT` wymaga zgodnego `revision`."
+          },
+          "contentHash": {
+            "$ref": "#/components/schemas/Sha256Hex"
+          },
+          "recipientsHash": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sha256Hex",
+                "description": "Skrót migawki odbiorców; null bez migawki."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recipientsCount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Count"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "approvedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dailyCap": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Dzienny przydział kampanii ustalony przy kolejce."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queuedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sendNotBefore": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Start wysyłki nie wcześniej niż (#130)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pausedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pausedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resumedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resumedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meetingId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Zebranie, z którego zawiadomienia powstał szkic (#113)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meetingNoticeId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "classId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Klasa zebrania dla `class_households`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "followup"
+            ],
+            "description": "`followup` = kampania uzupełniająca (#139)."
+          },
+          "sourceCampaignId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Kampania źródłowa uzupełnienia."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedPaymentInstructionsId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Wersja danych do wpłaty zatwierdzona z kampanią (#92, bez IBAN)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "privacyNoticeId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Wersja informacji o przetwarzaniu danych zapamiętana przy zatwierdzeniu (#145)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "title",
+          "audience",
+          "category",
+          "subject",
+          "bodyText",
+          "status",
+          "revisionNo",
+          "contentHash",
+          "recipientsHash",
+          "recipientsCount",
+          "createdBy",
+          "approvedBy",
+          "approvedAt",
+          "dailyCap",
+          "queuedAt",
+          "completedAt",
+          "cancelledAt",
+          "sendNotBefore",
+          "pausedBy",
+          "pausedAt",
+          "resumedBy",
+          "resumedAt",
+          "meetingId",
+          "meetingNoticeId",
+          "classId",
+          "kind",
+          "sourceCampaignId",
+          "approvedPaymentInstructionsId",
+          "privacyNoticeId"
+        ],
+        "additionalProperties": false,
+        "description": "Kampania e-mail (bez adresów odbiorców)."
+      },
+      "EmailCampaignCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł wewnętrzny (3-200 znaków po przycięciu, jedna linia); nie trafia do rodziców."
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "all_households",
+              "no_payment_record"
+            ],
+            "description": "`no_payment_record` = „brak wpisu wpłaty” (lista może być nieaktualna; bez statusu „dłużnik”)."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "contribution_reminder",
+              "organizational"
+            ],
+            "default": "contribution_reminder",
+            "description": "Kategoria komunikatu (#110); wchodzi do zatwierdzanego skrótu treści."
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Temat (3-200 znaków, jedna linia); jedyny znacznik: `{rok}`. Słownictwo sugerujące zadłużenie → 400 `forbidden_wording`."
+          },
+          "bodyText": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 10000,
+            "description": "Treść (20-10000 znaków); znaczniki `{rok}`, `{rodzina}`, `{komunikat}`, `{rachunek}`, `{odbiorca}` (kampania do kont: tylko `{rok}`); nieznany znacznik → 400 `invalid_placeholder`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "title",
+          "audience",
+          "subject",
+          "bodyText"
+        ],
+        "description": "Szkic kampanii (powstaje wyłącznie jako szkic)."
+      },
+      "EmailCampaignStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "approved",
+          "sending",
+          "paused",
+          "done",
+          "cancelled"
+        ],
+        "description": "draft → approved → sending ⇄ paused → done; anulowanie z każdego stanu poza done."
+      },
+      "EmailCampaignUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł wewnętrzny (3-200 znaków po przycięciu, jedna linia); nie trafia do rodziców."
+          },
+          "audience": {
+            "$ref": "#/components/schemas/EmailAudience",
+            "description": "Odbiorców kampanii z zawiadomienia i uzupełnienia nie da się zmienić (409 `campaign_audience_locked`)."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "contribution_reminder",
+              "organizational"
+            ],
+            "default": "contribution_reminder",
+            "description": "Kategoria komunikatu (#110); wchodzi do zatwierdzanego skrótu treści."
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Temat (3-200 znaków, jedna linia); jedyny znacznik: `{rok}`. Słownictwo sugerujące zadłużenie → 400 `forbidden_wording`."
+          },
+          "bodyText": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 10000,
+            "description": "Treść (20-10000 znaków); znaczniki `{rok}`, `{rodzina}`, `{komunikat}`, `{rachunek}`, `{odbiorca}` (kampania do kont: tylko `{rok}`); nieznany znacznik → 400 `invalid_placeholder`."
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Bieżące `revisionNo` (#215); niezgodne → 409 `revision_conflict`."
+          },
+          "sendNotBefore": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Pominięte = bez zmian, null = usunięcie terminu; zmiana cofa do szkicu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "audience",
+          "subject",
+          "bodyText",
+          "revision"
+        ],
+        "description": "Pełna treść kampanii; każda zmiana cofa kampanię do szkicu i unieważnia zatwierdzenie."
+      },
+      "EmailExclusionCounts": {
+        "type": "object",
+        "properties": {
+          "no_consent": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "no_valid_email": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "duplicate_address": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "suppressed": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "payment_recorded": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "opted_out": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "followup_already_covered": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "no_payment_reference": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "processing_restricted": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "account_disabled": {
+            "$ref": "#/components/schemas/Count"
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "description": "Wykluczenia migawki: powód → liczba rodzin (kont)."
+      },
+      "EmailOutboxCounts": {
+        "type": "object",
+        "properties": {
+          "queued": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "sending": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "sent": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "failed": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "bounced": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "suppressed": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "skipped": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "cancelled": {
+            "$ref": "#/components/schemas/Count"
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "description": "Wiersze kolejki: stan → liczba."
+      },
+      "EmailPreview": {
+        "type": "object",
+        "properties": {
+          "campaign": {
+            "$ref": "#/components/schemas/EmailCampaign"
+          },
+          "contentHash": {
+            "$ref": "#/components/schemas/Sha256Hex"
+          },
+          "recipientsHash": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sha256Hex"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshotCurrent": {
+            "anyOf": [
+              {
+                "type": "boolean",
+                "description": "null bez migawki; false, gdy zapisani odbiorcy nie zgadzają się ze skrótem."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recipientsCount": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "exclusions": {
+            "$ref": "#/components/schemas/EmailExclusionCounts"
+          },
+          "sample": {
+            "type": "object",
+            "properties": {
+              "householdId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "Rodzina próbki (bez migawki: `PRZYKLAD`); null dla kampanii do kont."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "userId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "Konto próbki; pole tylko dla kampanii do kont."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "recipient": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "Adres maskowany pierwszego odbiorcy; null bez migawki."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "subject": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string",
+                "description": "Spersonalizowana treść ze stopką (czysty tekst)."
+              }
+            },
+            "required": [
+              "householdId",
+              "recipient",
+              "subject",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "plan": {
+            "type": "object",
+            "properties": {
+              "dailyCap": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "days": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Liczba dni wysyłki; null, gdy pula dzienna wynosi 0."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "accountDailyLimit": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "reservedForOtherMail": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "dailyCap",
+              "days",
+              "accountDailyLimit",
+              "reservedForOtherMail"
+            ],
+            "additionalProperties": false
+          },
+          "schedule": {
+            "type": "object",
+            "properties": {
+              "sendNotBefore": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "window": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "timezone": {
+                    "type": "string"
+                  },
+                  "days": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 7
+                    },
+                    "description": "Dni tygodnia ISO (1 = poniedziałek)."
+                  },
+                  "startMinutes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1440
+                  },
+                  "endMinutes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1440
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "timezone",
+                  "days",
+                  "startMinutes",
+                  "endMinutes"
+                ],
+                "additionalProperties": false
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "estimated": {
+                "const": true
+              },
+              "windowEnabled": {
+                "type": "boolean"
+              },
+              "startsAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "endsAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "startsAtLocal": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "endsAtLocal": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sendNotBefore",
+              "window",
+              "timezone",
+              "estimated",
+              "windowEnabled",
+              "startsAt",
+              "endsAt",
+              "startsAtLocal",
+              "endsAtLocal"
+            ],
+            "additionalProperties": false,
+            "description": "Szacowany start i koniec wysyłki w strefie okna (#130); szacunek, nie harmonogram."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "missing_skip_if_paid_sentence",
+                "missing_payment_reference",
+                "household_id_as_payment_reference",
+                "template_requires_board_decision_d16",
+                "payment_instructions_changed",
+                "payment_instructions_missing",
+                "privacy_notice_missing",
+                "notice_outdated"
+              ]
+            }
+          },
+          "privacyNotice": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "version"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paymentInstructions": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "approvedAt": {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  }
+                },
+                "required": [
+                  "id",
+                  "approvedAt"
+                ],
+                "additionalProperties": false,
+                "description": "Wersja danych do wpłaty użyta w podglądzie (bez IBAN); `POST …/approve` musi przesłać to `id`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleRecipients": {
+            "$ref": "#/components/schemas/EmailStaleRecipientCounts"
+          },
+          "sends": {
+            "const": false,
+            "description": "Podgląd niczego nie wysyła."
+          }
+        },
+        "required": [
+          "campaign",
+          "contentHash",
+          "recipientsHash",
+          "snapshotCurrent",
+          "recipientsCount",
+          "exclusions",
+          "sample",
+          "plan",
+          "schedule",
+          "warnings",
+          "privacyNotice",
+          "paymentInstructions",
+          "staleRecipients",
+          "sends"
+        ],
+        "additionalProperties": false,
+        "description": "Podgląd kampanii: skróty do zatwierdzenia, liczby, próbka i plan dni (bez wysyłki)."
+      },
+      "EmailProviderPause": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "account_rejected"
+            ]
+          },
+          "errorCode": {
+            "type": "string",
+            "description": "Kod odmowy dostawcy (np. `provider_rejected_401`)."
+          },
+          "campaignId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "liftedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "liftedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "errorCode",
+          "campaignId",
+          "createdAt",
+          "liftedBy",
+          "liftedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Pauza konta dostawcy po odmowie 401/402/403 (#209); dotyczy wszystkich kampanii."
+      },
+      "EmailProviderPauseLiftRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "pauseId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "pauseId"
+        ]
+      },
+      "EmailQuota": {
+        "type": "object",
+        "properties": {
+          "dailyLimit": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "dailyReserved": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "inFlight": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "remaining": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Pula najbliższego przebiegu (limit − rezerwa − zużycie − w locie, nie mniej niż 0)."
+          },
+          "windows": {
+            "type": "object",
+            "properties": {
+              "utc": {
+                "type": "object",
+                "properties": {
+                  "today": {
+                    "$ref": "#/components/schemas/EmailQuotaDayUsage"
+                  },
+                  "tomorrow": {
+                    "$ref": "#/components/schemas/EmailQuotaDayUsage"
+                  }
+                },
+                "required": [
+                  "today",
+                  "tomorrow"
+                ],
+                "additionalProperties": false
+              },
+              "account": {
+                "type": "object",
+                "properties": {
+                  "timezone": {
+                    "type": "string"
+                  },
+                  "today": {
+                    "$ref": "#/components/schemas/EmailQuotaDayUsage"
+                  },
+                  "tomorrow": {
+                    "$ref": "#/components/schemas/EmailQuotaDayUsage"
+                  }
+                },
+                "required": [
+                  "timezone",
+                  "today",
+                  "tomorrow"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "utc",
+              "account"
+            ],
+            "additionalProperties": false
+          },
+          "generatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "queuedCampaigns": {
+            "type": "object",
+            "properties": {
+              "campaigns": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "queuedMessages": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "campaigns",
+              "queuedMessages"
+            ],
+            "additionalProperties": false,
+            "description": "Kampanie roku w `sending`/`paused` i ich wiadomości w kolejce."
+          }
+        },
+        "required": [
+          "dailyLimit",
+          "dailyReserved",
+          "inFlight",
+          "remaining",
+          "windows",
+          "generatedAt",
+          "queuedCampaigns"
+        ],
+        "additionalProperties": false,
+        "description": "Stan dziennego limitu Brevo (#84): same liczby."
+      },
+      "EmailQuotaDayUsage": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "campaign": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "other": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Count"
+          }
+        },
+        "required": [
+          "day",
+          "campaign",
+          "other",
+          "total"
+        ],
+        "additionalProperties": false,
+        "description": "Zużycie jednej doby: kampanie, inne (ręczne, testy, kody weryfikacyjne) i razem."
+      },
+      "EmailQuotaEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "day": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": -10000,
+            "maximum": 10000,
+            "description": "Liczba wiadomości; korekta ujemna."
+          },
+          "reasonCode": {
+            "type": "string",
+            "enum": [
+              "manual_brevo_panel",
+              "invitation",
+              "audit_committee",
+              "other",
+              "correction"
+            ]
+          },
+          "correctsId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Wpis korygowany (dla `correction`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recordedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "recordedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "day",
+          "count",
+          "reasonCode",
+          "correctsId",
+          "recordedBy",
+          "recordedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Wpis ewidencji wiadomości spoza kolejki (#84; tylko dopisywanie)."
+      },
+      "EmailQuotaListEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "day": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": -10000,
+            "maximum": 10000,
+            "description": "Liczba wiadomości; korekta ujemna."
+          },
+          "reasonCode": {
+            "type": "string",
+            "enum": [
+              "manual_brevo_panel",
+              "invitation",
+              "audit_committee",
+              "other",
+              "correction"
+            ]
+          },
+          "correctsId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Wpis korygowany (dla `correction`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recordedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "recordedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "corrected": {
+            "type": "boolean",
+            "description": "Wpis dodatni ma już co najmniej jedną korektę."
+          },
+          "correctedCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Suma korekt tego wpisu."
+          },
+          "correctableCount": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Ile można jeszcze skorygować (0 dla korekt)."
+          }
+        },
+        "required": [
+          "id",
+          "day",
+          "count",
+          "reasonCode",
+          "correctsId",
+          "recordedBy",
+          "recordedAt",
+          "corrected",
+          "correctedCount",
+          "correctableCount"
+        ],
+        "additionalProperties": false,
+        "description": "Wpis ewidencji z licznikami korekt (lista do wyboru wpisu korygowanego)."
+      },
+      "EmailQuotaOtherSendRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "day": {
+            "$ref": "#/components/schemas/IsoDate",
+            "description": "Bieżąca doba UTC albo strefy konta; wstecz tylko korekta (doba wpisu korygowanego)."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": -10000,
+            "maximum": 10000,
+            "description": "Różna od zera; ujemna wtedy i tylko wtedy, gdy `reasonCode` = `correction`."
+          },
+          "reasonCode": {
+            "type": "string",
+            "enum": [
+              "manual_brevo_panel",
+              "invitation",
+              "audit_committee",
+              "other",
+              "correction"
+            ]
+          },
+          "correctsId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Wymagane dla `correction`, zabronione dla pozostałych."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "day",
+          "count",
+          "reasonCode"
+        ]
+      },
+      "EmailRecipient": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Rodzina; null dla kampanii do kont."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "guardianId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Opiekun-adresat; null dla kampanii do kont."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "userId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Konto-adresat (kampania `meeting_invitees`, 0183); pole tylko wtedy."
+          },
+          "email": {
+            "type": "string",
+            "description": "Pełny adres z migawki (weryfikacja przed zatwierdzeniem; odczyt trafia do dziennika)."
+          }
+        },
+        "required": [
+          "householdId",
+          "guardianId",
+          "email"
+        ],
+        "additionalProperties": false
+      },
+      "EmailReport": {
+        "type": "object",
+        "properties": {
+          "campaign": {
+            "$ref": "#/components/schemas/EmailCampaign"
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "queued": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "sending": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "sent": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "delivered": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "bounced": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "delivery_unknown": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "failed": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "suppressed": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "skipped": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "cancelled": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "queued",
+              "sending",
+              "sent",
+              "delivered",
+              "bounced",
+              "delivery_unknown",
+              "failed",
+              "suppressed",
+              "skipped",
+              "cancelled"
+            ],
+            "additionalProperties": false,
+            "description": "Rozłączny podział wierszy kolejki (każdy wiersz w jednej kategorii)."
+          },
+          "deliveryUnknownUnresolved": {
+            "type": "integer",
+            "description": "`delivery_unknown` bez rozstrzygnięcia."
+          },
+          "outbox": {
+            "$ref": "#/components/schemas/EmailOutboxCounts"
+          },
+          "lastProviderEvent": {
+            "type": "object",
+            "properties": {
+              "request": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "delivered": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "hard_bounce": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "soft_bounce": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "blocked": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "spam": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "complaint": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "invalid_email": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "deferred": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "error": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "unsubscribed": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "click": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "opened": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "unique_opened": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "proxy_open": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "loaded_by_proxy": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "none": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [],
+            "additionalProperties": false,
+            "description": "Ostatnie zdarzenie dostawcy per wiersz (`none` = brak zdarzenia) → liczba."
+          },
+          "resolutions": {
+            "type": "object",
+            "properties": {
+              "confirmed_delivered": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "confirmed_not_sent": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [],
+            "additionalProperties": false,
+            "description": "Rozstrzygnięcia → liczba."
+          },
+          "exclusions": {
+            "$ref": "#/components/schemas/EmailExclusionCounts"
+          }
+        },
+        "required": [
+          "campaign",
+          "summary",
+          "deliveryUnknownUnresolved",
+          "outbox",
+          "lastProviderEvent",
+          "resolutions",
+          "exclusions"
+        ],
+        "additionalProperties": false,
+        "description": "Raport doręczeń (#139): same liczby i kody, bez adresów i identyfikatorów rodzin."
+      },
+      "EmailResolution": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "outboxId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "confirmed_delivered",
+              "confirmed_not_sent"
+            ]
+          },
+          "evidenceCode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "outboxId",
+          "resolution",
+          "evidenceCode"
+        ],
+        "additionalProperties": false,
+        "description": "Rozstrzygnięcie wiersza `failed` (tylko dopisywanie; historia wiersza bez zmian)."
+      },
+      "EmailResolutionApproval": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "resolutionId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "outboxId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "confirmed_not_sent"
+            ]
+          },
+          "approvedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "approvedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "resolutionId",
+          "outboxId",
+          "resolution",
+          "approvedBy",
+          "approvedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Zatwierdzenie „nie wyszła” przez inną osobę z zarządu (#139, 0156)."
+      },
+      "EmailResolutionRequest": {
+        "type": "object",
+        "properties": {
+          "outboxId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "confirmed_delivered",
+              "confirmed_not_sent"
+            ],
+            "description": "`confirmed_not_sent` wymaga roli zarządu."
+          },
+          "evidenceCode": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,60}$",
+            "description": "Kod dowodu (np. `brevo_log_delivered`), bez wolnego tekstu."
+          }
+        },
+        "required": [
+          "outboxId",
+          "resolution",
+          "evidenceCode"
+        ]
+      },
+      "EmailStaleRecipientCounts": {
+        "type": "object",
+        "properties": {
+          "processing_restricted": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "guardian_relation_ended": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "student_withdrawn": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "student_left_class": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "consent_or_address_changed": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "account_disabled": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "role_grant_inactive": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "account_address_changed": {
+            "$ref": "#/components/schemas/Count"
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "description": "Adresaci, którzy po migawce przestali się kwalifikować (#86, 0183): powód → liczba."
+      },
+      "EmailSuppression": {
+        "type": "object",
+        "properties": {
+          "emailHash": {
+            "$ref": "#/components/schemas/Sha256Hex"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "hard_bounce",
+              "invalid_email",
+              "complaint",
+              "unsubscribed",
+              "blocked"
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "events": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Liczba zdarzeń blokady tego adresu w historii."
+          },
+          "guardianId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Opiekun z bieżącym adresem o tym skrócie (dopasowanie po stronie serwera)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "householdId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Adres maskowany; null bez dopasowanego opiekuna."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pendingRequest": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "releaseReason": {
+                    "type": "string",
+                    "enum": [
+                      "address_corrected",
+                      "provider_unblocked",
+                      "bounce_reviewed",
+                      "parent_request"
+                    ]
+                  },
+                  "confirmationNote": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  "requestedByMe": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "requestId",
+                  "releaseReason",
+                  "confirmationNote",
+                  "createdAt",
+                  "requestedByMe"
+                ],
+                "additionalProperties": false,
+                "description": "Otwarty wniosek o zdjęcie blokady (zatwierdza inna osoba)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "emailHash",
+          "reason",
+          "createdAt",
+          "events",
+          "guardianId",
+          "householdId",
+          "email",
+          "pendingRequest"
+        ],
+        "additionalProperties": false
+      },
+      "EmailSuppressionReleaseBody": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "requestId"
+        ],
+        "description": "Zatwierdzenie wniosku przez inną osobę niż zgłaszająca."
+      },
+      "EmailSuppressionReleaseRequestBody": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "releaseReason": {
+            "type": "string",
+            "enum": [
+              "address_corrected",
+              "provider_unblocked",
+              "bounce_reviewed",
+              "parent_request"
+            ],
+            "description": "Blokadę po skardze lub wypisaniu zdejmuje wyłącznie `parent_request`."
+          },
+          "confirmationNote": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,40}$",
+                "description": "Krótki kod potwierdzenia, bez treści rozmowy; bramka danych osobowych (#152)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (422 `possible_personal_data`)."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "releaseReason"
+        ]
+      },
+      "EmailTestSendRequest": {
+        "type": "object",
+        "properties": {
+          "recipientEmail": {
+            "type": "string",
+            "description": "Adres z EMAIL_PREVIEW_RECIPIENTS (nie adres opiekuna)."
+          }
+        },
+        "required": [
+          "recipientEmail"
+        ]
+      },
+      "EmailWebhookEvent": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "Typ zdarzenia Brevo; nieznany typ jest liczony w `ignored`."
+          },
+          "email": {
+            "type": "string"
+          },
+          "message-id": {
+            "type": "string"
+          },
+          "X-Mailin-custom": {
+            "type": "string",
+            "description": "Identyfikator wiersza kolejki z nagłówka wiadomości."
+          },
+          "id": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
+          "ts_event": {
+            "type": "number",
+            "description": "Czas zdarzenia (sekundy epoki)."
+          },
+          "date": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "description": "Zdarzenie transakcyjne Brevo (nieznane pola są ignorowane)."
+      },
+      "EmailWorkerStatus": {
+        "type": "object",
+        "properties": {
+          "lastRun": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "dry_run",
+                      "live"
+                    ]
+                  },
+                  "finishedAt": {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  "stoppedReason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "mode",
+                  "finishedAt",
+                  "stoppedReason"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastLiveRun": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "finishedAt": {
+                    "$ref": "#/components/schemas/IsoDateTime"
+                  },
+                  "stoppedReason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "finishedAt",
+                  "stoppedReason"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "campaigns": {
+            "type": "object",
+            "properties": {
+              "due": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "scheduled": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "paused": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "due",
+              "scheduled",
+              "paused"
+            ],
+            "additionalProperties": false
+          },
+          "guardianVerifications": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "queued": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "sending": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "oldestQueuedAt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/IsoDateTime"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "queued",
+                  "sending",
+                  "oldestQueuedAt"
+                ],
+                "additionalProperties": false,
+                "description": "Kolejka kodów weryfikacyjnych (#140 pkt 5); null bez tabeli (baza sprzed 0184)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alarmAfterHours": {
+            "type": "number",
+            "description": "Próg alarmu w godzinach (EMAIL_WORKER_ALARM_HOURS)."
+          },
+          "alarms": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "worker_never_ran",
+                "worker_stale",
+                "worker_dry_run_only",
+                "guardian_verify_queue_stale"
+              ]
+            }
+          },
+          "generatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "sendWindowEnabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lastRun",
+          "lastLiveRun",
+          "campaigns",
+          "guardianVerifications",
+          "alarmAfterHours",
+          "alarms",
+          "generatedAt",
+          "sendWindowEnabled"
+        ],
+        "additionalProperties": false,
+        "description": "Stan zadania wysyłki (#130): liczby, znaczniki czasu i kody."
+      },
       "Enrollment": {
         "type": "object",
         "properties": {
@@ -30070,6 +34841,7 @@
           "invalid_person_name",
           "invalid_photo_id",
           "invalid_photos",
+          "invalid_placeholder",
           "invalid_plan_digest",
           "invalid_plan_sha256",
           "invalid_post_id",
@@ -30107,6 +34879,7 @@
           "invalid_statement_file",
           "invalid_statement_line",
           "invalid_status",
+          "invalid_subject",
           "invalid_taken_on",
           "invalid_title",
           "invalid_to",
@@ -30152,6 +34925,7 @@
           "mfa_key_missing",
           "mfa_locked",
           "mfa_required",
+          "mfa_stale",
           "mfa_unavailable",
           "minutes_contain_personal_data",
           "minutes_four_eyes_required",
@@ -30202,6 +34976,7 @@
           "payment_reassignment_same_household",
           "payment_reference_already_active",
           "payment_reference_already_revoked",
+          "payment_reference_missing",
           "payment_reference_not_found",
           "pdf_inline_not_allowed",
           "pending_admin_invitation",
@@ -30220,6 +34995,7 @@
           "post_withdrawn",
           "preview_account_limit",
           "preview_campaign_limit",
+          "preview_recipient_not_allowed",
           "preview_required",
           "preview_stale",
           "privacy_notice_missing",
@@ -35580,6 +40356,11 @@
         ],
         "additionalProperties": false
       },
+      "Sha256Hex": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "description": "Skrót SHA-256 (64 znaki szesnastkowe, małe litery)."
+      },
       "SignedCents": {
         "type": "integer",
         "description": "Kwota ze znakiem w eurocentach (EUR); saldo może być ujemne."
@@ -36740,6 +41521,11 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "invalid_placeholder",
+        "meaning": "Treść zawiera nieznany znacznik w nawiasach klamrowych (dozwolone: {rok}, {rodzina}, {komunikat}, {rachunek}, {odbiorca}; w temacie tylko {rok}).",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "invalid_plan_digest",
         "meaning": "Brak poprawnego skrótu planu (planDigest) z podglądu.",
         "retry": "Nie — popraw dane żądania."
@@ -36922,6 +41708,11 @@
       {
         "code": "invalid_status",
         "meaning": "Niepoprawny status.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "invalid_subject",
+        "meaning": "Temat wiadomości musi mieć od 3 do 200 znaków w jednej linii.",
         "retry": "Nie — popraw dane żądania."
       },
       {
@@ -37148,6 +41939,11 @@
         "code": "mfa_required",
         "meaning": "Potwierdź logowanie kodem z aplikacji uwierzytelniającej.",
         "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "mfa_stale",
+        "meaning": "Ta operacja wymaga świeżego potwierdzenia kodem — podaj kod jeszcze raz.",
+        "retry": "Nie — zależy od sesji/uprawnień, nie od ponowienia."
       },
       {
         "code": "mfa_unavailable",
@@ -37400,6 +42196,11 @@
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
+        "code": "payment_reference_missing",
+        "meaning": "Rodzina nie ma aktywnej komunikacji strukturalnej w roku kampanii — wiadomość z {komunikat} nie zostanie wysłana.",
+        "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
         "code": "payment_reference_not_found",
         "meaning": "Nie znaleziono referencji płatności.",
         "retry": "Nie — popraw dane żądania."
@@ -37488,6 +42289,11 @@
         "code": "preview_campaign_limit",
         "meaning": "Wyczerpano limit wiadomości testowych dla tej kampanii.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "preview_recipient_not_allowed",
+        "meaning": "Adres nie jest na liście skrzynek testowych Rady albo należy do opiekuna — wiadomość testowa nie zostanie wysłana.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "preview_required",

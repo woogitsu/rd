@@ -1,4 +1,4 @@
-// Rejestr schematów OpenAPI (#160, etapy 2-5) i jawny rejestr pokrycia.
+// Rejestr schematów OpenAPI (#160, etapy 2-6) i jawny rejestr pokrycia.
 //
 // Każdy plik `src/pg/schemas/<moduł>.js` eksportuje:
 //   name        nazwa modułu tras (jak `name` w src/pg/routes/*.js i `module` w macierzy tras),
@@ -12,7 +12,8 @@
 //   responses       { status: { description, schema?, contentType?, content?, replayed? } } — odpowiedzi
 //                   sukcesu z kształtem; `replayed: 'true'|'false'` dodaje nagłówek Idempotency-Replayed
 //                   (lista `['false', 'true']`, gdy ten sam status zwraca obie wartości, np. zatwierdzenie
-//                   uzgodnienia bez klucza idempotencji);
+//                   uzgodnienia bez klucza idempotencji; `replayedOptional: true`, helper `replayedOnRetry`:
+//                   nagłówek tylko przy ponowieniu, z wartością `true`);
 //                   `content` = { typ treści: schemat } dla trasy z kilkoma formatami (parametr `format`,
 //                   helper `formatsResponse`); bez `schema` i `content` = odpowiedź bez treści (np. 204),
 //   errors          { status: [kody] } — kody błędów tej trasy; muszą istnieć w docs/API_ERRORS.md.
@@ -32,20 +33,21 @@ import * as ledger from './ledger.js';
 import * as ledgerBudget from './ledger-budget.js';
 import * as ledgerCash from './ledger-cash.js';
 import * as ledgerCostCenters from './ledger-cost-centers.js';
+import * as email from './email.js';
 import * as families from './families.js';
 import * as reconciliation from './reconciliation.js';
 import * as session from './session.js';
 import { COMMON_COMPONENTS } from './common.js';
 
 export const SCHEMA_MODULES = Object.freeze([
-  families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, paymentInstructions, paymentReferences, payments,
+  email, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, paymentInstructions, paymentReferences, payments,
   reconciliation, session,
 ]);
 
-// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 5: wpłaty, księga
-// z preliminarzem, kasą i centrami kosztów, rodziny, sesja i uzgodnienia wyciągów bankowych).
+// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 6: wpłaty, księga
+// z preliminarzem, kasą i centrami kosztów, rodziny, sesja, uzgodnienia wyciągów bankowych i kampanie e-mail).
 export const UNCOVERED_MODULES = Object.freeze([
-  'admin', 'audit-history', 'audit-reviews', 'board', 'documents', 'email', 'events', 'exports',
+  'admin', 'audit-history', 'audit-reviews', 'board', 'documents', 'events', 'exports',
   'financial-reports', 'guardian-updates', 'import', 'login', 'meetings', 'mfa', 'news', 'print',
   'privacy-notice', 'representative', 'year-close',
 ]);

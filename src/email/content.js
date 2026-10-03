@@ -81,11 +81,13 @@ function placeholdersIn(text) {
   return [...String(text).matchAll(PLACEHOLDER)].map((match) => match[1]);
 }
 
-function checkText(value, { min, max, field, allowNewlines, placeholders }) {
-  if (typeof value !== 'string') throw new ContentError(`invalid_${field}`);
+// `code` jest kodem błędu wprost (nie składanym z nazwy pola), żeby katalog docs/API_ERRORS.md
+// i kontrakt OpenAPI (#160) widziały go w źródle.
+function checkText(value, { min, max, code, allowNewlines, placeholders }) {
+  if (typeof value !== 'string') throw new ContentError(code);
   const text = value.replace(/\r\n/g, '\n').trim();
-  if (text.length < min || text.length > max) throw new ContentError(`invalid_${field}`);
-  if (CONTROL.test(text) || (!allowNewlines && /\n/.test(text))) throw new ContentError(`invalid_${field}`);
+  if (text.length < min || text.length > max) throw new ContentError(code);
+  if (CONTROL.test(text) || (!allowNewlines && /\n/.test(text))) throw new ContentError(code);
   if (findForbiddenWording(text)) throw new ContentError('forbidden_wording');
   // Nawiasy klamrowe poza znanymi placeholderami są błędem (literówka = pusta treść u rodzica).
   const opened = (text.match(/[{}]/g) ?? []).length;
@@ -99,10 +101,10 @@ function checkText(value, { min, max, field, allowNewlines, placeholders }) {
 // Walidacja danych kampanii z żądania. Zwraca znormalizowane pola.
 export function parseCampaignContent(data, { audiences = AUDIENCES } = {}) {
   if (!data || typeof data !== 'object') throw new ContentError('invalid_request');
-  const title = checkText(data.title, { min: 3, max: 200, field: 'title', allowNewlines: false, placeholders: [] });
-  const subject = checkText(data.subject, { min: 3, max: 200, field: 'subject', allowNewlines: false, placeholders: SUBJECT_PLACEHOLDERS });
+  const title = checkText(data.title, { min: 3, max: 200, code: 'invalid_title', allowNewlines: false, placeholders: [] });
+  const subject = checkText(data.subject, { min: 3, max: 200, code: 'invalid_subject', allowNewlines: false, placeholders: SUBJECT_PLACEHOLDERS });
   const bodyPlaceholders = isAccountAudience(data.audience) ? ACCOUNT_BODY_PLACEHOLDERS : BODY_PLACEHOLDERS;
-  const bodyText = checkText(data.bodyText, { min: 20, max: 10000, field: 'body', allowNewlines: true, placeholders: bodyPlaceholders });
+  const bodyText = checkText(data.bodyText, { min: 20, max: 10000, code: 'invalid_body', allowNewlines: true, placeholders: bodyPlaceholders });
   if (!audiences.includes(data.audience)) throw new ContentError('invalid_audience');
   const category = data.category === undefined ? DEFAULT_CATEGORY : data.category;
   if (!CATEGORIES.includes(category)) throw new ContentError('invalid_category');

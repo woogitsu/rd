@@ -254,13 +254,13 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-5)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-6)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
 etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
-razem 77 operacji)
+etap 6 — `email`; razem 107 operacji)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
@@ -366,12 +366,48 @@ tytuły „syntetyczne”, adresy `@example.invalid`):
 API blokuje, dopóki powiązanie w szkicu jest aktywne (#165); `tests/pg-reconciliation.test.js` osiąga ją obejściem
 triggerów (`TRIGGER_BYPASS_ALLOWED`).
 
+Prawdziwe odpowiedzi etapu 6 (moduł `email`, 30 operacji) sprawdza `tests/openapi-contract-email.test.js` (ten sam
+`createContractClient`, PGlite, dane syntetyczne `@example.invalid`). **Żadnej sieci i żadnej wysyłki:** wysyłka testowa
+(`env.emailTransport`) i zadanie kolejki (`runEmailBatch`) dostają wyłącznie atrapę transportu, a test kończy się
+sprawdzeniem, że pułapka sieci (`networkGuardCalls()`) nie odnotowała żadnej próby. Scenariusz:
+
+- przebieg kampanii: szkic z ponowieniem i `idempotency_conflict`, edycja z wersją (`revision_conflict`, podwójne
+  kliknięcie, termin startu ustawiony i usunięty), migawka odbiorców, podgląd przed i po migawce, **jawne zatwierdzenie**
+  skrótów treści i listy przez inną osobę z zarządu (świeże MFA; `forbidden` dla skarbnika, `mfa_stale`, `approval_stale`,
+  `self_approval_forbidden` autora), kolejka przed zatwierdzeniem `409 approval_required`, kolejka i jej ponowienie;
+- **klucz kampania + rodzina:** rodzina z rodzeństwem w dwóch klasach i dwojgiem opiekunów dostaje jedną wiadomość (kontakt
+  główny), druga rodzina — osobną; wiersze kolejki mają klucze `campaign:<id>:household:<id>`, transport dostaje te same
+  klucze, a ponowienie kolejki (`queued: 0`) i ponowny przebieg zadania nie wysyłają niczego drugi raz;
+- błędne dane: opiekun z błędnym adresem (`no_valid_email`), adres zablokowany webhookiem (`suppressed`), adres użyty już
+  dla innej rodziny (`duplicate_address`); błędy treści (`invalid_subject`, `invalid_placeholder`, `forbidden_wording`, …);
+- zadanie: odmowa konta dostawcy (401) zapisuje pauzę, jej odczyt i zdjęcie przez zarząd (z ponowieniem, `mfa_stale`,
+  `provider_pause_not_found`), wysyłka z wynikiem niepewnym (`delivery_unknown`) i odmową 400; webhook doręczenia, raport
+  (JSON i CSV), lista „do sprawdzenia”, rozstrzygnięcia i ich zatwierdzenie (cztery oczy, `resolution_not_approvable`),
+  kampania uzupełniająca (`followup_source_not_eligible`, `followup_no_households`), pauza, wznowienie, anulowanie;
+- lista wyłączeń i zdjęcie blokady przez dwie osoby (`release_reason_not_allowed` po skardze, `422 possible_personal_data`,
+  `request_already_consumed`), limit Brevo i ewidencja wiadomości spoza kolejki z korektą (`quota_correction_exceeds`),
+  stan zadania przed pierwszym przebiegiem (`worker_never_ran`) i po nim, wysyłka testowa (tylko adres z
+  `EMAIL_PREVIEW_RECIPIENTS`, `preview_recipient_not_allowed`, `sending_disabled`, `429 preview_campaign_limit`),
+  wypisanie jednym kliknięciem (idempotentne, `invalid_token`, `429 rate_limited`), webhook (`401`, `415`, `413`, `503`);
+- listy z kursorem: kampanie, odbiorcy, „do sprawdzenia”, wyłączenia i ewidencja limitu (`invalid_limit`, `invalid_cursor`);
+- granice ról na odczytach i zapisach: brak sesji `401`, przedstawiciel klasy, zarząd z przydziałem klasy i Komisja
+  Rewizyjna `403 forbidden`, zarząd bez MFA `403 mfa_enrollment_required`, obcy `Origin` `403 invalid_origin`;
+- pominięcie każdego wymaganego pola ciała → `400` i każda odpowiedź sukcesu ze schematu zwalidowana na prawdziwej odpowiedzi.
+
+Klient kontraktu przyjmuje dodatkowe nagłówki (`headers`, np. sekret webhooka, `Content-Type`) i dopuszcza brak
+nagłówka `Idempotency-Replayed` wyłącznie wtedy, gdy specyfikacja ma go z `required: false` (zapis bez klucza, który
+wysyła `true` tylko przy ponowieniu) — kontrola pozytywna w tym samym pliku. Kody błędów z parsera treści kampanii
+(`src/email/content.js`) i odmowy adresu wysyłki testowej (`src/email/brevo.js`) test rejestru szuka także w tych
+plikach (`ROUTE_HELPER_SOURCES`), a detektor kodów `tests/pg-api-errors-catalog.test.js` i `tests/shared-api.test.js`
+(identyczny w obu plikach) skanuje `src/email/content.js` i zna kody `mfa_stale` i `preview_recipient_not_allowed`
+zwracane przez funkcje pomocnicze.
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
 `tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`, jak
-`tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js` i
-`tests/openapi-contract-reconciliation.test.js`).
+`tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js`,
+`tests/openapi-contract-reconciliation.test.js` i `tests/openapi-contract-email.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 
