@@ -872,7 +872,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     id: 'meetings.resolutionExecution', module: 'meetings', method: 'POST',
     path: '/api/meetings/resolutions/:resolutionId/execution', targets: CLASS_TARGETS,
-    allow: MEETING_MANAGE, mfa: false, ok: 201, deny: 403, fixture: 'fresh',
+    allow: MEETING_MANAGE, mfa: true, ok: 201, deny: 403, fixture: 'fresh',
     object: { kind: 'meeting', stage: 'finalResolution' },
     build: ({ obj, key }) => ({
       path: `/api/meetings/resolutions/${obj.resolutionId}/execution`,
