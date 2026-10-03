@@ -253,3 +253,99 @@ test('a writable PGlite database reports transaction_read_only off', async () =>
   assert.equal(rows.length, 1);
   assert.ok(rows.length > 0 && rows.every((row) => row.read_only === 'off'));
 });
+
+// SR-05 (#101): ostrzeżenie, gdy produkcyjna aplikacja działa jako właściciel
+// tabel albo superużytkownik (PGlite łączy się jako `postgres`, czyli oboma).
+// Rola `rd_app` na prawdziwym PostgreSQL: tests/pg-real-app-role.test.js.
+const ROLE_EVENT = 'readiness_database_role_privileged';
+const roleEvents = (lines) => lines.map((line) => JSON.parse(line)).filter((entry) => entry.event === ROLE_EVENT);
+
+function roleProbeDb(db, answer) {
+  return {
+    async query(text, params = []) {
+      if (text.includes('rolsuper')) return typeof answer === 'function' ? answer() : { rows: [answer] };
+      return db.query(text, params);
+    },
+  };
+}
+
+test('production + owner/superuser: ostrzeżenie w logu bez danych, gotowość i odpowiedź bez zmian, najwyżej raz na godzinę', async () => {
+  const db = await migratedDb();
+  for (const appEnv of ['production', 'Production', 'prod']) {
+    const probeDb = roleProbeDb(db, { superuser: true, owner: true });
+    const { logger, lines } = quietLogger();
+    let at = 1_000_000;
+    const options = { logger, now: () => at };
+    const first = await checkReadiness({ db: probeDb, APP_ENV: appEnv }, options);
+    assert.equal(first.ready, true, appEnv);
+    assert.deepEqual(first.body, {
+      status: 'ready',
+      checks: { database: 'ok', migrations: 'ok' },
+      migrations: { expected: names.length, applied: names.length },
+      write_mode: 'normal',
+    }, 'odpowiedź publiczna nie ujawnia roli');
+    const warnings = roleEvents(lines);
+    assert.equal(warnings.length, 1, appEnv);
+    assert.equal(warnings[0].level, 'warn');
+    assert.deepEqual([warnings[0].superuser, warnings[0].owner], [true, true]);
+    assert.deepEqual(Object.keys(warnings[0]).filter((key) => !['time', 'level', 'event', 'message', 'superuser', 'owner'].includes(key)), []);
+    at += 60_000;
+    await checkReadiness({ db: probeDb, APP_ENV: appEnv }, options);
+    assert.equal(roleEvents(lines).length, 1, 'drugie sprawdzenie w tej samej godzinie nie powtarza ostrzeżenia');
+    at += 61 * 60_000;
+    await checkReadiness({ db: probeDb, APP_ENV: appEnv }, options);
+    assert.equal(roleEvents(lines).length, 2, 'po godzinie ostrzeżenie wraca');
+  }
+});
+
+test('prawdziwe zapytanie o rolę (PGlite działa jako postgres): ostrzeżenie w produkcji, bez ostrzeżenia poza nią', async () => {
+  const db = await migratedDb();
+  const production = quietLogger();
+  assert.equal((await checkReadiness({ db, APP_ENV: 'production' }, { logger: production.logger })).ready, true);
+  const warnings = roleEvents(production.lines);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].superuser, true);
+  assert.equal(warnings[0].owner, true);
+  const staging = quietLogger();
+  await checkReadiness({ db, APP_ENV: 'staging' }, { logger: staging.logger });
+  assert.equal(roleEvents(staging.lines).length, 0);
+});
+
+test('ostrzeżenie o roli: tylko owner albo tylko superuser wystarcza; rola bez własności i bez uprawnień nie ostrzega', async () => {
+  const db = await migratedDb();
+  const cases = [
+    [{ superuser: false, owner: true }, 1],
+    [{ superuser: true, owner: false }, 1],
+    [{ superuser: false, owner: false }, 0],
+    [{ superuser: null, owner: null }, 0],
+  ];
+  for (const [answer, expected] of cases) {
+    const { logger, lines } = quietLogger();
+    const result = await checkReadiness({ db: roleProbeDb(db, answer), APP_ENV: 'production' }, { logger });
+    assert.equal(result.ready, true, JSON.stringify(answer));
+    assert.equal(roleEvents(lines).length, expected, JSON.stringify(answer));
+  }
+});
+
+test('ostrzeżenie o roli jest wyłączone poza produkcją i nie pyta o rolę', async () => {
+  const db = await migratedDb();
+  let asked = 0;
+  const probeDb = roleProbeDb(db, () => { asked += 1; return { rows: [{ superuser: true, owner: true }] }; });
+  for (const appEnv of ['staging', 'development', 'test', undefined]) {
+    const { logger, lines } = quietLogger();
+    const result = await checkReadiness({ db: probeDb, APP_ENV: appEnv }, { logger });
+    assert.equal(result.ready, true, String(appEnv));
+    assert.equal(roleEvents(lines).length, 0, String(appEnv));
+  }
+  assert.equal(asked, 0);
+});
+
+test('błąd zapytania o rolę nie psuje gotowości ani nie loguje ostrzeżenia', async () => {
+  const db = await migratedDb();
+  const { logger, lines } = quietLogger();
+  const failing = roleProbeDb(db, () => { throw new Error('permission denied for table pg_authid rodzic@example.invalid'); });
+  const result = await checkReadiness({ db: failing, APP_ENV: 'production' }, { logger });
+  assert.equal(result.ready, true);
+  assert.equal(roleEvents(lines).length, 0);
+  assert.doesNotMatch(lines.join('\n'), /rodzic@example|permission denied/);
+});

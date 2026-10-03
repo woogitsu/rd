@@ -332,6 +332,10 @@ nadal przechodzi, bo pozostałe warstwy trzymają blokadę.
 
 `tests/pg-real-app-role.test.js` (SR-05, #101, pomijany bez `RD_TEST_PG_URL`): rola `rd_app` z migracji 0170 — `TRUNCATE`, DDL, `DISABLE TRIGGER`, `session_replication_role` i `DELETE` na tabelach z historią kończą się `42501`; meta-test każdej tabeli i nowej tabeli (domyślne uprawnienia); wpłata i korekta przez `handlePgRequest` działają, nadpisanie wpłaty odrzuca trigger.
 
+Do tego samego pliku `pg-real-app-role` należą (#101): worker e-mail na `rd_app` (kampania od szkicu do kolejki przez API, potem `runEmailBatch`; ponowienie niczego nie wysyła) i `/health/ready` w produkcji (ostrzeżenie `readiness_database_role_privileged` przy właścicielu, brak przy `rd_app`; wariant na atrapach i PGlite: `tests/health-ready.test.js`).
+
+`tests/pg-real-operator-identity.test.js` (#166, #191, pomijany bez `RD_TEST_PG_URL`): skrypty operatora jako procesy na jednorazowej, pustej bazie z `APP_ENV=staging` w powłoce — `migrate-postgres` i `restore-postgres-snapshot --apply` bez `--expect-database` albo z inną nazwą nic nie zapisują, z właściwą działają; drugie odtworzenie i wiersz w tabeli spoza migawki (`login_rate_limits`) kończą się `Target table is not empty`. Jednostki, `verify-export`, `bootstrap-admin`, `mfa:rotate-key` i adresy bez bazy: `tests/database-identity.test.js` (PGlite, nieosiągalna baza); `ensureEmpty` na PGlite: `tests/d1-postgres-migration.test.js`.
+
 `tests/pg-real-tx-conflict.test.js` (#156, pomijany bez `RD_TEST_PG_URL`): dwie transakcje
 `REPEATABLE READ` czytają ten sam wiersz z migawki i obie go zwiększają; serwer zgłasza
 prawdziwe `40001`. `db.transaction` ponawia funkcję (oba przyrosty zapisane, trzy próby

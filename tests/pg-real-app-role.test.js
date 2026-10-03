@@ -11,7 +11,11 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { handlePgRequest } from '../src/pg/app.js';
 import { createPgDatabase } from '../src/db.js';
-import { createRealTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { runEmailBatch } from '../src/email/worker.js';
+import { checkReadiness } from '../src/health.js';
+import { createLogger } from '../src/log.js';
+import { loadMigrations } from '../src/postgres-migrations.js';
+import { createRealTestDb, request, seedClass, seedEnrolledHousehold, seedPublishedPrivacyNotice, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 
 const skip = process.env.RD_TEST_PG_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego PostgreSQL)';
 const YEAR = 'y-2026';
@@ -160,5 +164,91 @@ test('SR-05: typowy zapis aplikacji na rd_app działa — wpłata i korekta prze
     assert.equal(Number(stored.amount_cents), 5000);
     // Odczyt stanu migracji (health) działa na rd_app.
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n, 0);
+  });
+});
+
+// #101 pkt 2: zadanie e-mail (worker) na roli bez własności tabel. Cała ścieżka — szkic,
+// migawka odbiorców, zatwierdzenie, kolejka (API) i przebieg workera — idzie przez rd_app;
+// właściciel tylko zakłada dane testowe. Transport to atrapa, żadna wiadomość nie wychodzi.
+test('SR-05 (#101): email-worker na rd_app przetwarza kolejkę bez uprawnień właściciela, a ponowienie nic nie wysyła', { skip }, async () => {
+  await withApp(async ({ db, appDb }) => {
+    await seedPublishedPrivacyNotice(db);
+    await seedClass(db, { id: 'c1', schoolYearId: YEAR });
+    await seedEnrolledHousehold(db, 'h-mail', [YEAR], { classIds: { [YEAR]: 'c1' } });
+    await db.query(
+      "INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES ('g-mail', 'h-mail', 'Opiekun', 'Testowy', 'g-mail@example.invalid', true)");
+    await db.query("INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES ('st-h-mail', 'g-mail', true, true)");
+    const treasurer = await seedUserSession(db, { userId: 'u-tr', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] });
+    const board = await seedUserSession(db, { userId: 'u-bd', mfa: true, roles: [{ role: 'board', schoolYearId: YEAR }] });
+    const env = {
+      db: appDb, APP_ENV: 'development', EMAIL_SENDING_ENABLED: 'true', EMAIL_TEST_ALLOWLIST: '*@example.invalid', BREVO_FROM_EMAIL: 'rada@example.invalid',
+    };
+    const call = async (cookie, path, options = {}) => {
+      const response = await handlePgRequest(request(path, { cookie, ...options }), env);
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : null };
+    };
+    const created = await call(treasurer, '/api/email/campaigns', {
+      method: 'POST', headers: { 'Idempotency-Key': key('camp') },
+      body: {
+        schoolYearId: YEAR, title: 'Przypomnienie syntetyczne', audience: 'all_households', subject: 'Dobrowolna składka {rok}',
+        bodyText: 'Przypominamy o możliwości wniesienia dobrowolnej składki na rok {rok}. Tytuł przelewu: {rodzina}. Jeśli wpłata została już wykonana, prosimy pominąć wiadomość.',
+      },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const id = created.body.campaign.id;
+    assert.equal((await call(treasurer, `/api/email/campaigns/${id}/snapshot`, { method: 'POST' })).status, 200);
+    const preview = await call(board, `/api/email/campaigns/${id}/preview`);
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    const approved = await call(board, `/api/email/campaigns/${id}/approve`, {
+      method: 'POST', body: { contentHash: preview.body.contentHash, recipientsHash: preview.body.recipientsHash },
+    });
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    const queued = await call(treasurer, `/api/email/campaigns/${id}/queue`, { method: 'POST' });
+    assert.equal(queued.status, 200, JSON.stringify(queued.body));
+
+    const calls = [];
+    const transport = {
+      name: 'fake',
+      async send(message) { calls.push(message); return { messageId: `fake-${calls.length}` }; },
+    };
+    const now = new Date('2026-10-05T08:00:00Z');
+    const first = await runEmailBatch(env, { transport, dryRun: false, now });
+    assert.equal(first.sent, 1, JSON.stringify(first));
+    assert.equal(calls.length, 1);
+    const statuses = (await db.query('SELECT state, count(*)::int AS n FROM email_outbox GROUP BY state')).rows;
+    assert.deepEqual(statuses, [{ state: 'sent', n: 1 }]);
+    const again = await runEmailBatch(env, { transport, dryRun: false, now: new Date(now.getTime() + 60_000) });
+    assert.equal(again.sent, 0, 'ponowienie zadania nie wysyła drugiej wiadomości');
+    assert.equal(calls.length, 1);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM email_outbox')).rows[0].n, 1);
+  });
+});
+
+// #101 pkt 1: /health/ready ostrzega przy pracy produkcyjnej aplikacji jako właściciel tabel
+// (albo superużytkownik) i milczy na rd_app. Prawdziwy katalog ról, nie atrapa.
+test('SR-05 (#101): /health/ready w produkcji ostrzega przy właścicielu tabel, a na rd_app nie', { skip }, async () => {
+  await withApp(async ({ db, appDb }) => {
+    for (const migration of await loadMigrations(fileURLToPath(new URL('../postgres/migrations/', import.meta.url)))) {
+      await db.query('INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2) ON CONFLICT DO NOTHING', [migration.name, migration.checksum]);
+    }
+    const events = (lines) => lines.map((line) => JSON.parse(line)).filter((entry) => entry.event === 'readiness_database_role_privileged');
+    const logged = () => { const lines = []; return { lines, logger: createLogger({ level: 'debug', sink: (line) => lines.push(line) }) }; };
+
+    const asApp = logged();
+    const appResult = await checkReadiness({ db: appDb, APP_ENV: 'production' }, { logger: asApp.logger });
+    assert.equal(appResult.ready, true, JSON.stringify(appResult.body));
+    assert.deepEqual(events(asApp.lines), [], 'rd_app nie jest właścicielem ani superużytkownikiem');
+
+    const asOwner = logged();
+    const ownerResult = await checkReadiness({ db, APP_ENV: 'production' }, { logger: asOwner.logger });
+    assert.equal(ownerResult.ready, true, 'ostrzeżenie nie zmienia gotowości');
+    const warnings = events(asOwner.lines);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].owner, true, 'wynik katalogu pg_class/pg_roles: rola połączenia jest właścicielem schema_migrations');
+
+    const ownerStaging = logged();
+    await checkReadiness({ db, APP_ENV: 'staging' }, { logger: ownerStaging.logger });
+    assert.deepEqual(events(ownerStaging.lines), [], 'poza produkcją bez ostrzeżenia');
   });
 });
