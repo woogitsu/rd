@@ -14,7 +14,7 @@ Zakres: issue #7 (uzgodnienie księgi z wyciągiem bankowym) i przygotowanie rap
 
 ## Model danych (0015_reconciliation.sql)
 
-- `bank_reconciliations` — rok, data wyciągu (w granicach roku szkolnego), saldo z wyciągu podane przez skarbnika (centy EUR, może być ujemne), saldo księgi i netto wpisów niebankowych **wyliczane przez bazę** (`ledger_balance_at`, `ledger_non_bank_net_at`), różnica jako kolumna generowana, status `draft`/`confirmed`, notatka, autor, zatwierdzający, wyjaśnienie różnicy, klucz idempotencji. Klient nie może podać salda księgi — trigger je nadpisuje.
+- `bank_reconciliations` — rok, data wyciągu (w granicach roku szkolnego), saldo z wyciągu podane przez skarbnika (centy EUR, może być ujemne), saldo księgi i netto wpisów niebankowych **wyliczane przez bazę** (`ledger_balance_at`, `ledger_non_bank_net_at`), różnica jako kolumna generowana, status `draft`/`confirmed`/`abandoned` (`abandoned` od 0107), notatka, autor, zatwierdzający, wyjaśnienie różnicy, klucz idempotencji. Klient nie może podać salda księgi — trigger je nadpisuje.
 - Saldo księgi na dzień D = bilans otwarcia z wszystkimi korektami bilansu + przychody netto − wydatki netto wpisów z datą ≤ D. Korekta wpisu liczy się z datą korygowanego wpisu (w księdze nie ma osobnej daty skutku korekty).
 - Szkic pokazuje saldo księgi **na bieżąco**. Zatwierdzenie przelicza je ostatni raz i zamraża. Późniejszy wpis z wcześniejszą datą nie zmienia zatwierdzonego uzgodnienia; trzeba utworzyć nowe uzgodnienie.
 - Różnica ≠ 0 wymaga wyjaśnienia (`confirmationNote`) przy zatwierdzeniu (ograniczenie w bazie).
@@ -34,7 +34,7 @@ To pseudonimizacja, nie anonimizacja: sól leży obok skrótu, więc przy znanej
 
 ## API
 
-Wszystkie zapisy wymagają sesji, MFA, zgodnego `Origin` i — poza zatwierdzeniem, cofnięciem i porzuceniem — nagłówka `Idempotency-Key`. Ponowienie z tym samym kluczem i treścią zwraca `200` z `Idempotency-Replayed: true`; inna treść lub inna osoba — `409 idempotency_conflict`.
+Wszystkie zapisy wymagają sesji, MFA, zgodnego `Origin` i — poza zatwierdzeniem, cofnięciem i porzuceniem — nagłówka `Idempotency-Key`. Ponowienie z tym samym kluczem i treścią zwraca `200` z `Idempotency-Replayed: true`; inna treść lub inna osoba — `409 idempotency_conflict`. Zatwierdzenie, porzucenie i cofnięcia nie przyjmują klucza, ale też zwracają nagłówek `Idempotency-Replayed` (`false` przy pierwszym wykonaniu, `true` przy ponowieniu tej samej osoby). Ponowienie importu zwraca węższą odpowiedź niż pierwszy zapis: `{ import }` (lista i CSV, bez `possibleDuplicateCount`) albo `{ import, skippedDuplicateCount }` (plik, bez `skippedDuplicates`, `warnings` i `fileBalances`). Plik CODA/CAMT, którego wszystkie ruchy są już zaimportowane, nie tworzy paczki: `200` z `Idempotency-Replayed: false`, `import: null`, `lineCount: 0` i listą pominiętych ruchów.
 
 | Trasa | Opis |
 | --- | --- |
@@ -51,7 +51,7 @@ Wszystkie zapisy wymagają sesji, MFA, zgodnego `Origin` i — poza zatwierdzeni
 | `POST /api/reconciliations/{id}/group-matches/{groupMatchId}/revocation` | cofnięcie dopasowania zbiorczego z powodem (nowy zapis) |
 | `POST /api/reconciliations/{id}/confirm` | zatwierdzenie przez drugą osobę; `confirmationNote` wymagane przy różnicy |
 | `POST /api/reconciliations/{id}/abandon` | porzucenie szkicu: `reason` (3–500 znaków); tylko szkic bez aktywnych dopasowań (0107) |
-| `GET /api/reports/audit?schoolYearId=&format=json\|html` | raport roczny |
+| `GET /api/reports/audit?schoolYearId=&format=json\|html\|xlsx` | raport roczny |
 
 Propozycje obejmują wpisy księgi oraz wpłaty, które nie są jeszcze ujęte w księdze (wpłata ujęta w księdze jest proponowana jako wpis księgi).
 
@@ -71,7 +71,7 @@ Pomiar #566 (`--heavy-full`) wskazał `…/suggestions` jako najwolniejszą tras
 
 - `lines` jest teraz stronicowane: `limit` (domyślnie i maksymalnie 500) i kursor `(booked_on, id)` w `nextCursor`. Panel dociąga kolejne strony i scala je po stronie klienta, więc zachowanie widoku się nie zmienia; integracja czytająca odpowiedź bezpośrednio musi podążać za `nextCursor`, aż będzie `null`.
 - Pole `unmatchedLines` zostało usunięte — było dokładnym duplikatem podzbioru `lines` bez pola `match` (panel go nie używał). Niedopasowaną pozycję rozpoznaje `line.match === null`.
-- `summary.lineCount`, `matchedLineCount`, `unmatchedLineCount` i `unmatchedLineTotalCents` liczą wszystkie pozycje uzgodnienia niezależnie od rozmiaru strony `lines` (osobne zapytanie agregujące). Od #165 pkt 4 `matchedLineCount` liczy wyłącznie powiązania zgodne kwotowo (bez podwójnego ujęcia) — pozycja z powiązaniem niezgodnym jest w `inconsistentMatchCount`, nie w `matchedLineCount`; `matchedLineCount + inconsistentMatchCount + unmatchedLineCount = lineCount`.
+- `summary.lineCount`, `matchedLineCount`, `unmatchedLineCount` i `unmatchedLineTotalCents` liczą wszystkie pozycje uzgodnienia niezależnie od rozmiaru strony `lines` (osobne zapytanie agregujące). Od #165 pkt 4 `matchedLineCount` liczy wyłącznie powiązania zgodne kwotowo (bez podwójnego ujęcia) — pozycja z powiązaniem niezgodnym jest w `inconsistentMatchCount`, nie w `matchedLineCount`; `matchedLineCount + inconsistentMatchCount + unmatchedLineCount = lineCount` (z dopasowaniami zbiorczymi dochodzi `inconsistentGroupMatchCount`, zob. „Liczniki” niżej).
 - `unmatchedLedgerEntries` ma teraz maksymalnie 1000 wpisów jak dotąd, ale odpowiedź jawnie podaje `unmatchedLedgerEntriesTruncated: true`, gdy lista jest niepełna — wcześniej obcięcie było ciche.
 - Trzy zapytania szczegółów (pozycje, powiązania, niedopasowane wpisy księgi) wykonują się teraz kolejno w jednej transakcji `REPEATABLE READ` na jednym połączeniu zamiast równolegle na trzech, żeby wynik pochodził z jednej migawki (spójne z propozycją dla `…/suggestions`, #158).
 
