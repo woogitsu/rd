@@ -237,6 +237,4 @@ Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zm
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
-Znane ograniczenie: kody `resolution_amount_exceeded`, `resolution_expired` i `resolution_repealed`
-(409, wydatek z uchwałą) nie mają jeszcze wpisu w `docs/API_ERRORS.md`, bo test katalogu nie wykrywa kodów
-zapisanych w tabeli `marker: [kod, status]` w `src/pg/routes/ledger.js`; schemat trasy ich nie wymienia.
+

@@ -11146,8 +11146,11 @@
             "x-rd-error-codes": [
               "idempotency_conflict",
               "payment_already_linked",
+              "resolution_amount_exceeded",
+              "resolution_expired",
               "resolution_not_adopted",
               "resolution_not_current",
+              "resolution_repealed",
               "school_year_closed"
             ]
           },
@@ -14099,8 +14102,11 @@
               "ledger_entry_already_replaced",
               "payment_already_linked",
               "replacement_target_mismatch",
+              "resolution_amount_exceeded",
+              "resolution_expired",
               "resolution_not_adopted",
               "resolution_not_current",
+              "resolution_repealed",
               "school_year_closed"
             ]
           },
@@ -25093,7 +25099,9 @@
           "request_not_found",
           "request_too_large",
           "reschedule_no_change",
+          "resolution_amount_exceeded",
           "resolution_expense_only",
+          "resolution_expired",
           "resolution_final_immutable",
           "resolution_not_adopted",
           "resolution_not_approvable",
@@ -25103,6 +25111,7 @@
           "resolution_number_required",
           "resolution_number_taken",
           "resolution_reference_mismatch",
+          "resolution_repealed",
           "resolution_required",
           "restore_drill_failed",
           "restore_report_bad_identifier",
@@ -29707,9 +29716,19 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "resolution_amount_exceeded",
+        "meaning": "Ten wydatek przekracza kwotę upoważnioną uchwałą. Sprawdź pozostałą kwotę albo potrzebną nową uchwałę.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "resolution_expense_only",
         "meaning": "Uchwałę jako upoważnienie można wskazać tylko przy wydatku.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "resolution_expired",
+        "meaning": "Termin upoważnienia z uchwały minął przed datą wydatku.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "resolution_final_immutable",
@@ -29754,6 +29773,11 @@
       {
         "code": "resolution_reference_mismatch",
         "meaning": "Referencja uchwały nie zgadza się z numerem wskazanej uchwały.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "resolution_repealed",
+        "meaning": "Wskazana uchwała została uchylona.",
         "retry": "Nie — popraw dane żądania."
       },
       {

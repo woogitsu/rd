@@ -449,7 +449,9 @@ przy przydziale, nie błąd.
 | `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
 | `reschedule_no_change` | Podany termin jest taki sam jak obecny. | Nie — popraw dane żądania. |
+| `resolution_amount_exceeded` | Ten wydatek przekracza kwotę upoważnioną uchwałą. Sprawdź pozostałą kwotę albo potrzebną nową uchwałę. | Nie — popraw dane żądania. |
 | `resolution_expense_only` | Uchwałę jako upoważnienie można wskazać tylko przy wydatku. | Zależy od kontekstu (patrz moduł trasy). |
+| `resolution_expired` | Termin upoważnienia z uchwały minął przed datą wydatku. | Nie — popraw dane żądania. |
 | `resolution_final_immutable` | Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_adopted` | Wskazana uchwała nie jest przyjęta. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_approvable` | Zatwierdzenia drugiej osoby wymaga tylko potwierdzenie, że wiadomość nie wyszła. | Nie — popraw dane żądania. |
@@ -458,6 +460,7 @@ przy przydziale, nie błąd.
 | `resolution_not_found` | Nie znaleziono uchwały. | Nie — popraw dane żądania. |
 | `resolution_number_required` | Uchwała przyjęta wymaga numeru. | Nie — popraw dane żądania. |
 | `resolution_number_taken` | Ten numer uchwały jest już zajęty w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
+| `resolution_repealed` | Wskazana uchwała została uchylona. | Nie — popraw dane żądania. |
 | `resolution_reference_mismatch` | Referencja uchwały nie zgadza się z numerem wskazanej uchwały. | Nie — popraw dane żądania. |
 | `resolution_required` | Ten wydatek wymaga wskazania uchwały. | Nie — popraw dane żądania. |
 | `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
