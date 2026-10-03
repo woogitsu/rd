@@ -464,6 +464,21 @@ export function classListCheck(actor, json) {
   return same ? [] : [`lista klas ${JSON.stringify(ids)} zamiast ${JSON.stringify(expected)}`];
 }
 
+// #751: karta gospodarstwa ma pole `email` opiekuna wyłącznie dla sesji z potwierdzonym MFA
+// (w każdym zakresie); bez MFA klucza nie ma, a adres nie pojawia się nigdzie w odpowiedzi.
+export function householdEmailCheck(mfa, json, text) {
+  const guardians = json?.guardians ?? [];
+  const problems = [];
+  if (!guardians.length) problems.push('karta gospodarstwa bez opiekunów — sprawdzenie e-maila nic nie mówi');
+  for (const guardian of guardians) {
+    if (Object.hasOwn(guardian, 'email') !== mfa) {
+      problems.push(`opiekun ${guardian.id}: pole email ${mfa ? 'brak przy MFA' : 'obecne bez MFA'}`);
+    }
+  }
+  if (!mfa && /@example\.invalid/.test(String(text ?? ''))) problems.push('adres e-mail w odpowiedzi bez MFA');
+  return problems;
+}
+
 // Kwoty wpłat na kartkach wyłącznie dla roli finansowej z MFA obejmującej zakres.
 export function printPaymentCheck(actor, mfa, json) {
   const expected = mfa && (FINANCIAL_ROLE_KEYS.includes(actor.key) || Boolean(actor.classBoard));
@@ -1791,7 +1806,9 @@ export const ROUTE_MATRIX = Object.freeze([
 
   // ---------- families (#5) ----------
   // Odczyt: admin/zarząd/skarbnik (klasy roku przydziału), przedstawiciel i przydział klasowy — tylko własna klasa.
-  // Obiekt spoza zakresu = 404 (jak nieistniejący). Zmiany: admin i zarząd.
+  // Obiekt spoza zakresu = 404 (jak nieistniejący). Zmiany: admin i zarząd, z MFA na samej trasie
+  // (#751, requireEditContext — niezależnie od bramki routera), stąd mfa: true przy każdym zapisie.
+  // Odczyt bez MFA: 200, ale karta gospodarstwa bez pola `email` opiekuna (#751, check niżej).
   {
     id: 'families.classes', module: 'families', method: 'GET', path: '/api/classes', targets: ['-'],
     allow: { admin: ['-'], board: ['-'], treasurer: ['-'], repA: ['-'], repB: ['-'], boardA: ['-'] },
@@ -1810,17 +1827,18 @@ export const ROUTE_MATRIX = Object.freeze([
     targets: ['A', 'B', 'Y2'], allow: FAMILY_READ, mfa: false, ok: 200, deny: familyReadDeny, fixture: 'static', object: { kind: 'household' },
     build: ({ obj }) => ({ path: `/api/households/${obj.householdId}` }),
     contains: (_actor, target) => [target.key],
+    check: ({ mfa, json, text }) => householdEmailCheck(mfa, json, text),
   },
   {
     id: 'families.guardianContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/contact',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({ path: `/api/guardians/${obj.guardianId}/contact`, body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' } }),
   },
   {
     // #200: przypadek „opiekun rodzeństwa z innej klasy we wspólnym gospodarstwie”. Zapis wyłącznie
     // pełny zarząd/admin; boardA dostaje 403 i nic nie zapisuje (liczniki tabel i audytu bez zmian).
     id: 'families.guardianContactShared', variant: 'opiekun z dziećmi z dwóch klas', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/contact',
-    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: false, ok: 200,
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: true, ok: 200,
     deny: familySharedGuardianDeny, fixture: 'fresh', object: { kind: 'sharedGuardianHousehold' },
     build: ({ obj }) => ({
       path: `/api/guardians/${obj.guardianId}/contact`,
@@ -1831,7 +1849,7 @@ export const ROUTE_MATRIX = Object.freeze([
     // #100: sprostowanie imienia i nazwiska ucznia (art. 16 RODO). Zakres jak przy kontakcie; macierz zmienia
     // imię, więc sukces zostawia wpis historii (identity_changes) i zdarzenie student.identity.updated.
     id: 'families.studentIdentity', module: 'families', method: 'PATCH', path: '/api/students/:studentId/identity',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({
       path: `/api/students/${obj.studentId}/identity`,
       body: { firstName: 'Sprostowane', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
@@ -1839,7 +1857,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'families.guardianIdentity', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/identity',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({
       path: `/api/guardians/${obj.guardianId}/identity`,
       body: { lastName: 'Sprostowany', reason: 'Błąd pisowni w ewidencji (syntetyczne)' },
@@ -1849,7 +1867,7 @@ export const ROUTE_MATRIX = Object.freeze([
     // #100: jak families.guardianContactShared — opiekun z dziećmi z dwóch klas: zarząd z przydziałem
     // klasy dostaje 403 guardian_shared_outside_scope i nic nie zapisuje.
     id: 'families.guardianIdentityShared', variant: 'opiekun z dziećmi z dwóch klas', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/identity',
-    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: false, ok: 200,
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'], boardA: [] }, mfa: true, ok: 200,
     deny: familySharedGuardianDeny, fixture: 'fresh', object: { kind: 'sharedGuardianHousehold' },
     build: ({ obj }) => ({
       path: `/api/guardians/${obj.guardianId}/identity`,
@@ -1858,7 +1876,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'families.relationContact', module: 'families', method: 'PATCH', path: '/api/guardians/:guardianId/students/:studentId',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({
       path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}`,
       body: { contactAllowed: false, reason: 'Prośba opiekuna (syntetyczne)' },
@@ -1866,7 +1884,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'families.enrollment', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     // Przypisanie do tej samej klasy (200, bez zmiany) — macierz sprawdza granicę zakresu, nie logikę przeniesień.
     build: ({ obj, target }) => ({
       path: `/api/students/${obj.studentId}/enrollments`,
@@ -1875,7 +1893,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'families.enrollmentEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/enrollments/:enrollmentId/end',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     // Odejście ze szkoły (#86) — data w przeszłości, żeby uczeń zniknął z bieżących list od razu.
     build: ({ obj }) => ({
       path: `/api/students/${obj.studentId}/enrollments/${obj.enrollmentId}/end`,
@@ -1884,7 +1902,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'families.relationEnd', module: 'families', method: 'POST', path: '/api/guardians/:guardianId/students/:studentId/end',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     // Zmiana opieki (#86) — data w przeszłości poza zamkniętym rokiem; zarząd klasowy tylko dla dziecka własnej klasy.
     build: ({ obj }) => ({
       path: `/api/guardians/${obj.guardianId}/students/${obj.studentId}/end`,
@@ -1893,7 +1911,7 @@ export const ROUTE_MATRIX = Object.freeze([
   },
   {
     id: 'families.studentHouseholdEnd', module: 'families', method: 'POST', path: '/api/students/:studentId/households/:membershipId/end',
-    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: false, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
+    targets: ['A', 'B', 'Y2'], allow: FAMILY_EDIT, mfa: true, ok: 200, deny: familyEditDeny, fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({
       path: `/api/students/${obj.studentId}/households/${obj.membershipId}/end`,
       body: { endsOn: '2020-01-01', reason: 'Zakończenie członkostwa (syntetyczne)' },
@@ -1902,7 +1920,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     // Członkostwo opiekuna (#86, #535): wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403.
     id: 'families.guardianHouseholdEnd', module: 'families', method: 'POST', path: '/api/guardians/:guardianId/households/:membershipId/end',
-    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 200,
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: true, ok: 200,
     deny: (actor, targetKey, mfa) => (actor.key === 'boardA' ? 403 : familyEditDeny(actor, targetKey, mfa)),
     fixture: 'fresh', object: { kind: 'household' },
     build: ({ obj }) => ({
@@ -1913,7 +1931,7 @@ export const ROUTE_MATRIX = Object.freeze([
   {
     // Dodanie członkostwa: wyłącznie zakres szeroki — zarząd z przydziałem klasy dostaje 403 (#86, wariant zachowawczy).
     id: 'families.studentHouseholdAdd', module: 'families', method: 'POST', path: '/api/students/:studentId/households',
-    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: false, ok: 201,
+    targets: ['A', 'B', 'Y2'], allow: { admin: ['A', 'B'], board: ['A', 'B'] }, mfa: true, ok: 201,
     deny: (actor, targetKey, mfa) => (actor.key === 'boardA' ? 403 : familyEditDeny(actor, targetKey, mfa)),
     fixture: 'fresh', object: { kind: 'householdSpare' },
     build: ({ obj }) => ({

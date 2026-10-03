@@ -10,7 +10,10 @@
 //     bez `isPrimaryHousehold`, bez `isPrimary` przy gospodarstwach i bez `paymentTotals` —
 //     te pola są więc opcjonalne; obiekt poza zakresem = 404 `not_found` jak nieistniejący;
 //   * karta gospodarstwa nie zawiera należności ani statusu „dłużnik” (składka dobrowolna);
-//     `paymentTotals` (suma netto zapisanych wpłat) widzą wyłącznie role finansowe z MFA.
+//     `paymentTotals` (suma netto zapisanych wpłat) widzą wyłącznie role finansowe z MFA;
+//   * #751: karta gospodarstwa dla sesji bez potwierdzonego MFA nie ma pola `email` opiekuna
+//     (klucz pominięty, w każdym zakresie), więc pole jest opcjonalne; każdy zapis wymaga MFA
+//     na samej trasie (bez MFA 403 `forbidden`, także gdy MFA_REQUIRED_ROLES nie obejmuje roli).
 import { PII_ERRORS, mergeErrors, nullable, ref, requestObject, strictObject } from './common.js';
 
 export const name = 'families';
@@ -77,7 +80,9 @@ export const components = {
     lastName: { type: 'string' },
     email: {
       ...nullable({ type: 'string' }),
-      description: 'Zakres klasowy: tylko przy zgodzie opiekuna i zgodzie relacji z widocznym dzieckiem, inaczej null (założenie D-08).',
+      description: 'Pole tylko dla sesji z potwierdzonym MFA (#751, wskazanie użytkownika 2026-10-03); bez MFA klucza nie ma '
+        + 'w żadnym zakresie. Z MFA zakres klasowy dostaje adres tylko przy zgodzie opiekuna i zgodzie relacji z widocznym '
+        + 'dzieckiem, inaczej null (założenie D-08); zakres szeroki — adres albo null, gdy go brak.',
     },
     contactAllowed: { type: 'boolean' },
     relations: {
@@ -85,7 +90,7 @@ export const components = {
       description: 'Aktywne relacje opiekuna z uczniami widocznymi na karcie.',
       items: strictObject({ studentId: ref('EntityId'), contactAllowed: { type: 'boolean' }, isPrimaryContact: { type: 'boolean' } }),
     },
-  }),
+  }, ['email']),
   HouseholdPaymentTotal: strictObject({
     schoolYearId: ref('EntityId'),
     netAmountCents: { ...ref('NonNegativeCents'), description: 'Suma netto zapisanych wpłat (po korektach i zwrotach); nie jest należnością.' },
@@ -160,6 +165,7 @@ const CHANGED = { type: 'boolean', description: 'false = stan już był taki (po
 const ok = (description, schema) => ({ 200: { description, schema } });
 
 // Wspólne błędy zapisu modułu (bez Idempotency-Key): JSON do 8 KiB, powód, zakres (404 jak nieistniejący).
+// 403 `forbidden` także bez potwierdzonego MFA (#751, przed odczytem treści i obiektu).
 const FAMILY_WRITE = mergeErrors({
   400: ['invalid_json', 'invalid_reason'],
   403: ['forbidden', 'invalid_origin'],

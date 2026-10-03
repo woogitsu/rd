@@ -61,6 +61,14 @@ export function fullName(person) {
   return [person.lastName, person.firstName].filter(Boolean).join(" ");
 }
 
+// Kolumna „E-mail” na karcie gospodarstwa. #751: bez potwierdzonego MFA sesji serwer
+// pomija pole `email` (brak klucza) — to nie znaczy „brak adresu”, więc osobny tekst.
+// null: brak adresu albo (zakres klasowy) brak zgody na kontakt.
+export function guardianEmailText(guardian) {
+  if (!Object.hasOwn(guardian ?? {}, "email")) return "ukryty — wymaga MFA";
+  return guardian.email ?? (guardian.contactAllowed ? "—" : "ukryty");
+}
+
 export function canEditFamilies(grants) {
   return Array.isArray(grants) && grants.some((grant) => grant.role === "admin" || grant.role === "board");
 }

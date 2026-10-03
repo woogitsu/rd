@@ -10,6 +10,7 @@ import { computeSnapshot } from '../src/pg/routes/email.js';
 import { DEFAULT_CATEGORY } from '../src/email/content.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
 import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
+import { assertEvery } from './helpers/assertions.js';
 
 const Y1 = 'y-2026';
 const Y2 = 'y-2027';
@@ -56,6 +57,8 @@ async function setup(t) {
   };
   const cookies = {
     repA: await seedUserSession(db, { userId: 'u-rep-a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }] }),
+    // #751: ten sam przedstawiciel z sesją po MFA — dopiero ona dostaje e-maile opiekunów na karcie.
+    repAMfa: await seedUserSession(db, { userId: 'u-rep-a-mfa', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }], mfa: true }),
     // Zarząd z sesją MFA: bramka MFA routera wymaga jej od ról z MFA_REQUIRED_ROLES.
     board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true }),
     treasurer: await seedUserSession(db, { userId: 'u-treasurer', roles: [{ role: 'treasurer', schoolYearId: Y1 }], mfa: true }),
@@ -234,11 +237,14 @@ describe('katalog rodzin (osobna baza na test)', () => {
     assert.equal(JSON.stringify((await call('/api/classes/c-1a/students', { cookie: cookies.repA })).body).includes('h-2'), false);
     const boardCard = await call('/api/households/h-2', { cookie: cookies.board });
     assert.equal(boardCard.body.guardians[0].email, 'nowy.opiekun2@example.invalid');
-    // Po włączeniu zgody relacji przedstawiciel widzi gospodarstwo i e-mail.
+    // Po włączeniu zgody relacji przedstawiciel widzi gospodarstwo i (z MFA, #751) e-mail.
     await db.query(`UPDATE student_guardians SET contact_allowed = true WHERE student_id = 's-1' AND guardian_id = 'g-2'`);
-    const card = await call('/api/households/h-2', { cookie: cookies.repA });
+    const card = await call('/api/households/h-2', { cookie: cookies.repAMfa });
     assert.equal(card.status, 200);
     assert.equal(card.body.guardians[0].email, 'nowy.opiekun2@example.invalid');
+    const cardNoMfa = await call('/api/households/h-2', { cookie: cookies.repA });
+    assert.equal(cardNoMfa.status, 200);
+    assert.equal(Object.hasOwn(cardNoMfa.body.guardians[0], 'email'), false);
     assert.deepEqual(card.body.students[0].otherHouseholds, [{ householdId: 'h-1' }]);
     await db.query(`UPDATE student_guardians SET contact_allowed = false WHERE student_id = 's-1' AND guardian_id = 'g-2'`);
 
@@ -412,8 +418,9 @@ describe('karta gospodarstwa: zakres klasowy i zgody relacji (#95)', () => {
       const response = await handlePgRequest(request(path, { cookie }), env);
       return { status: response.status, body: await response.json() };
     };
-    const rep1a = await seedUserSession(db, { userId: 'u-rep-1a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }] });
-    const rep3c = await seedUserSession(db, { userId: 'u-rep-3c', roles: [{ role: 'representative', classId: 'c-3c', schoolYearId: Y1 }] });
+    // #751: sesje z MFA — test sprawdza reguły zgód dla e-maila, który bez MFA nie jest wydawany wcale.
+    const rep1a = await seedUserSession(db, { userId: 'u-rep-1a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: Y1 }], mfa: true });
+    const rep3c = await seedUserSession(db, { userId: 'u-rep-3c', roles: [{ role: 'representative', classId: 'c-3c', schoolYearId: Y1 }], mfa: true });
     const board = await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }], mfa: true });
     const guardianView = (body) => body.guardians.map((g) => [g.id, g.contactAllowed, g.email]);
 
@@ -643,6 +650,201 @@ describe('kampania e-mail po odmowie zmiany kontaktu (#200)', () => {
     const after = await recipientsOf();
     assert.notEqual(after.hash, before.hash);
     assert.equal(after.recipients[0].email, 'nowy@example.invalid');
+  });
+});
+
+// #751 (wskazania użytkownika 2026-10-03): e-mail opiekuna na karcie gospodarstwa tylko
+// dla sesji z potwierdzonym MFA; każdy zapis modułu wymaga MFA na samej trasie.
+describe('moduł rodzin: e-mail opiekuna i zapisy tylko z MFA (#751)', () => {
+  const REASON = 'Korekta w ewidencji (syntetyczne)';
+  // Rodzeństwo w dwóch klasach (s-a w 1A, s-b w 1B, wspólne gospodarstwo h-s); dwoje opiekunów
+  // jednego dziecka (s-a: g-1 i g-2); g-3 — opiekun wyłącznie dziecka z 1B.
+  async function setup751(t, envExtra = {}) {
+    const db = await createTestDb();
+    t.after(() => db.close());
+    await seedSchoolYear(db, Y1, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
+    await seedClass(db, { id: 'c-1a', schoolYearId: Y1, name: '1A' });
+    await seedClass(db, { id: 'c-1b', schoolYearId: Y1, name: '1B' });
+    await db.exec(`
+      INSERT INTO households (id) VALUES ('h-s'), ('h-x');
+      INSERT INTO guardians (id, household_id, first_name, last_name, email, contact_allowed) VALUES
+        ('g-1', 'h-s', 'Anna', 'Wspolna', 'g1@example.invalid', true),
+        ('g-2', 'h-s', 'Bartosz', 'Wspolny', 'g2@example.invalid', true),
+        ('g-3', 'h-s', 'Celina', 'Inna', 'g3@example.invalid', true);
+      INSERT INTO students (id, household_id, first_name, last_name) VALUES
+        ('s-a', 'h-s', 'Ada', 'Wspolna'), ('s-b', 'h-s', 'Bruno', 'Wspolny');
+      INSERT INTO student_guardians (student_id, guardian_id, contact_allowed, is_primary_contact) VALUES
+        ('s-a', 'g-1', true, true), ('s-a', 'g-2', true, false),
+        ('s-b', 'g-1', true, true), ('s-b', 'g-3', true, false);
+      INSERT INTO enrollments (id, student_id, class_id, school_year_id) VALUES
+        ('e-a', 's-a', 'c-1a', '${Y1}'), ('e-b', 's-b', 'c-1b', '${Y1}');
+    `);
+    const env = { db, ...envExtra };
+    const call = async (path, { cookie, method = 'GET', body } = {}) => {
+      const response = await handlePgRequest(request(path, { cookie, method, body }), env);
+      const text = await response.text();
+      return { status: response.status, text, body: JSON.parse(text) };
+    };
+    const rep = (classId) => [{ role: 'representative', classId, schoolYearId: Y1 }];
+    const boardA = [{ role: 'board', classId: 'c-1a', schoolYearId: Y1 }];
+    const cookies = {
+      repA: await seedUserSession(db, { userId: 'u-rep-a', roles: rep('c-1a') }),
+      repAMfa: await seedUserSession(db, { userId: 'u-rep-a-mfa', roles: rep('c-1a'), mfa: true }),
+      repB: await seedUserSession(db, { userId: 'u-rep-b', roles: rep('c-1b') }),
+      repBMfa: await seedUserSession(db, { userId: 'u-rep-b-mfa', roles: rep('c-1b'), mfa: true }),
+      board: await seedUserSession(db, { userId: 'u-board', roles: [{ role: 'board' }] }),
+      boardMfa: await seedUserSession(db, { userId: 'u-board-mfa', roles: [{ role: 'board' }], mfa: true }),
+      boardA: await seedUserSession(db, { userId: 'u-board-a', roles: boardA }),
+      boardAMfa: await seedUserSession(db, { userId: 'u-board-a-mfa', roles: boardA, mfa: true }),
+    };
+    const firstId = async (sql) => (await db.query(sql)).rows[0].id;
+    const memberships = {
+      student: await firstId(`SELECT id FROM student_households WHERE student_id = 's-a' AND household_id = 'h-s'`),
+      guardian: await firstId(`SELECT id FROM guardian_households WHERE guardian_id = 'g-2' AND household_id = 'h-s'`),
+    };
+    return { db, call, cookies, memberships };
+  }
+
+  const guardiansOf = (body) => body.guardians.map((g) => [g.id, g.firstName, Object.hasOwn(g, 'email') ? g.email : 'BRAK']);
+
+  test('przedstawiciel bez MFA: lista klasy i karta bez e-maili opiekunów, uczniowie i relacje bez zmian; z MFA — e-maile', async (t) => {
+    const { call, cookies } = await setup751(t);
+    // Lista klasy nie niesie e-maili w żadnym wariancie; bez MFA dostępna jak dotąd.
+    const list = await call('/api/classes/c-1a/students', { cookie: cookies.repA });
+    assert.equal(list.status, 200);
+    assert.deepEqual(list.body.students.map((s) => [s.id, s.firstName, s.households]), [['s-a', 'Ada', [{ householdId: 'h-s' }]]]);
+    assert.doesNotMatch(list.text, /@/);
+
+    // Karta bez MFA: tylko dziecko z 1A, dwoje jego opiekunów z imionami i relacjami, bez klucza `email`.
+    const card = await call('/api/households/h-s', { cookie: cookies.repA });
+    assert.equal(card.status, 200);
+    assert.deepEqual(card.body.students.map((s) => s.id), ['s-a']);
+    assert.deepEqual(guardiansOf(card.body), [['g-1', 'Anna', 'BRAK'], ['g-2', 'Bartosz', 'BRAK']]);
+    assert.deepEqual(card.body.guardians.map((g) => [g.contactAllowed, g.relations.map((r) => r.studentId)]), [[true, ['s-a']], [true, ['s-a']]]);
+    assert.doesNotMatch(card.text, /@example\.invalid/);
+    for (const hidden of ['s-b', 'Bruno', 'g-3', 'Celina']) assert.equal(card.text.includes(hidden), false, hidden);
+
+    // Z MFA: ta sama karta z e-mailami obojga opiekunów dziecka z 1A, nadal bez opiekuna rodzeństwa z 1B.
+    const withMfa = await call('/api/households/h-s', { cookie: cookies.repAMfa });
+    assert.equal(withMfa.status, 200);
+    assert.deepEqual(guardiansOf(withMfa.body), [['g-1', 'Anna', 'g1@example.invalid'], ['g-2', 'Bartosz', 'g2@example.invalid']]);
+    assert.equal(withMfa.text.includes('g3@example.invalid'), false);
+
+    // Przedstawiciel 1B: tylko rodzeństwo z 1B; bez MFA bez e-maili, z MFA — opiekunowie s-b, bez g-2.
+    const cardB = await call('/api/households/h-s', { cookie: cookies.repB });
+    assert.deepEqual(cardB.body.students.map((s) => s.id), ['s-b']);
+    assert.deepEqual(guardiansOf(cardB.body), [['g-3', 'Celina', 'BRAK'], ['g-1', 'Anna', 'BRAK']]);
+    assert.doesNotMatch(cardB.text, /@example\.invalid/);
+    const cardBMfa = await call('/api/households/h-s', { cookie: cookies.repBMfa });
+    assert.deepEqual(guardiansOf(cardBMfa.body), [['g-3', 'Celina', 'g3@example.invalid'], ['g-1', 'Anna', 'g1@example.invalid']]);
+    assert.equal(cardBMfa.text.includes('g2@example.invalid'), false);
+  });
+
+  test('eksport listy klasy bez zmian: przedstawiciel bez MFA — odmowa MFA, z MFA — lista z e-mailami', async (t) => {
+    const { call, cookies } = await setup751(t);
+    const denied = await call('/api/exports/class-roster?classId=c-1a', { cookie: cookies.repA });
+    assert.deepEqual([denied.status, denied.body], [403, { error: 'mfa_enrollment_required' }]);
+    const roster = await call('/api/exports/class-roster?classId=c-1a', { cookie: cookies.repAMfa });
+    assert.equal(roster.status, 200);
+    assert.match(roster.text, /g1@example\.invalid/);
+    assert.match(roster.text, /g2@example\.invalid/);
+    assert.equal(roster.text.includes('g3@example.invalid'), false);
+  });
+
+  test('MFA_REQUIRED_ROLES bez zarządu: karta dla zarządu (szkolnego i klasowego) bez MFA — bez e-maili; z MFA — pełna', async (t) => {
+    const { call, cookies } = await setup751(t, { MFA_REQUIRED_ROLES: 'admin,treasurer' });
+    for (const cookie of [cookies.board, cookies.boardA]) {
+      const card = await call('/api/households/h-s', { cookie });
+      assert.equal(card.status, 200);
+      assert.doesNotMatch(card.text, /@example\.invalid/);
+      assertEvery(card.body.guardians, (g) => !Object.hasOwn(g, 'email'), 'bez MFA brak klucza email');
+    }
+    const full = await call('/api/households/h-s', { cookie: cookies.boardMfa });
+    assert.deepEqual(guardiansOf(full.body).map(([id, , email]) => [id, email]).sort(), [
+      ['g-1', 'g1@example.invalid'], ['g-2', 'g2@example.invalid'], ['g-3', 'g3@example.invalid'],
+    ]);
+    const classBoard = await call('/api/households/h-s', { cookie: cookies.boardAMfa });
+    assert.deepEqual(guardiansOf(classBoard.body), [['g-1', 'Anna', 'g1@example.invalid'], ['g-2', 'Bartosz', 'g2@example.invalid']]);
+  });
+
+  const writeRoutes = (memberships) => [
+    ['PATCH', '/api/guardians/g-1/contact', { email: 'nowy-g1@example.invalid', reason: REASON }, 200],
+    ['PATCH', '/api/guardians/g-1/identity', { lastName: 'Sprostowana', reason: REASON }, 200],
+    ['PATCH', '/api/students/s-a/identity', { firstName: 'Adela', reason: REASON }, 200],
+    ['PATCH', '/api/guardians/g-2/students/s-a', { contactAllowed: false, reason: REASON }, 200],
+    ['POST', '/api/students/s-a/enrollments', { schoolYearId: Y1, classId: 'c-1b', effectiveOn: '2026-10-01', reason: REASON }, 200],
+    ['POST', '/api/students/s-b/enrollments/e-b/end', { endedOn: '2026-12-31', reason: REASON }, 200],
+    ['POST', '/api/guardians/g-3/students/s-b/end', { endsOn: '2026-12-31', reason: REASON }, 200],
+    ['POST', `/api/students/s-a/households/${memberships.student}/end`, { endsOn: '2026-12-31', reason: REASON }, 200],
+    ['POST', `/api/guardians/g-2/households/${memberships.guardian}/end`, { endsOn: '2026-12-31', reason: REASON }, 200],
+    ['POST', '/api/students/s-a/households', { householdId: 'h-x', isPrimary: false, startsOn: '2026-10-01', reason: REASON }, 201],
+  ];
+
+  // Dane biznesowe modułu i audyt bez śladu odmowy (access.denied).
+  async function snapshot(db) {
+    const all = async (sql) => (await db.query(sql)).rows;
+    return {
+      guardians: await all('SELECT id, first_name, last_name, email, contact_allowed FROM guardians ORDER BY id'),
+      students: await all('SELECT id, first_name, last_name FROM students ORDER BY id'),
+      enrollments: await all('SELECT id, class_id, ended_on FROM enrollments ORDER BY id'),
+      relations: await all('SELECT student_id, guardian_id, contact_allowed, ends_on FROM student_guardians ORDER BY student_id, guardian_id'),
+      studentHouseholds: await all('SELECT id, household_id, ends_on FROM student_households ORDER BY id'),
+      guardianHouseholds: await all('SELECT id, household_id, ends_on FROM guardian_households ORDER BY id'),
+      history: await all(`SELECT (SELECT count(*)::int FROM guardian_contact_changes) AS contact,
+                                 (SELECT count(*)::int FROM identity_changes) AS identity,
+                                 (SELECT count(*)::int FROM enrollment_history) AS enrollment,
+                                 (SELECT count(*)::int FROM student_guardian_changes) AS relation`),
+      audit: await all("SELECT id, action FROM audit_events WHERE action <> 'access.denied' ORDER BY id"),
+    };
+  }
+
+  test('MFA_REQUIRED_ROLES bez zarządu: zarząd bez MFA dostaje 403 forbidden na każdym zapisie; dane i audyt bez zmian, ślad access.denied', async (t) => {
+    const { db, call, cookies, memberships } = await setup751(t, { MFA_REQUIRED_ROLES: 'admin,treasurer' });
+    const before = await snapshot(db);
+    const routes = writeRoutes(memberships);
+    for (const [actorId, cookie] of [['u-board', cookies.board], ['u-board-a', cookies.boardA]]) {
+      for (const [method, path, body] of routes) {
+        const result = await call(path, { cookie, method, body });
+        assert.deepEqual([result.status, result.body], [403, { error: 'forbidden' }], `${actorId} ${method} ${path}`);
+      }
+      // Brak wyroczni istnienia: obiekt nieistniejący i poza zakresem — ta sama odmowa przed odczytem.
+      for (const path of ['/api/guardians/g-nope/contact', '/api/guardians/g-3/contact']) {
+        const result = await call(path, { cookie, method: 'PATCH', body: { contactAllowed: false, reason: REASON } });
+        assert.deepEqual([result.status, result.body], [403, { error: 'forbidden' }], `${actorId} ${path}`);
+      }
+      const { rows } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'access.denied' AND actor_id = $1", [actorId]);
+      assert.equal(rows[0].n, routes.length + 2, `ślad access.denied dla ${actorId}`);
+    }
+    assert.deepEqual(await snapshot(db), before, 'odmowa bez MFA nie zmienia danych rodzin, historii ani audytu');
+    const { rows: denied } = await db.query(
+      "SELECT metadata_json FROM audit_events WHERE action = 'access.denied' AND actor_id = 'u-board' AND entity_id = '/api/guardians/g-1/contact'",
+    );
+    assert.equal(denied.length, 1);
+    const metadata = typeof denied[0].metadata_json === 'string' ? JSON.parse(denied[0].metadata_json) : denied[0].metadata_json;
+    assert.equal(metadata.requiredRole, 'admin,board');
+  });
+
+  test('MFA_REQUIRED_ROLES bez zarządu: zarząd z MFA wykonuje te same zapisy (kontrola pozytywna)', async (t) => {
+    const { db, call, cookies, memberships } = await setup751(t, { MFA_REQUIRED_ROLES: 'admin,treasurer' });
+    for (const [method, path, body, status] of writeRoutes(memberships)) {
+      const result = await call(path, { cookie: cookies.boardMfa, method, body });
+      assert.equal(result.status, status, `${method} ${path}: ${result.text}`);
+    }
+    const guardian = await db.query("SELECT email, last_name FROM guardians WHERE id = 'g-1'");
+    assert.deepEqual(guardian.rows, [{ email: 'nowy-g1@example.invalid', last_name: 'Sprostowana' }]);
+    const { rows } = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'access.denied'");
+    assert.equal(rows[0].n, 0);
+  });
+
+  test('domyślne MFA_REQUIRED_ROLES: zarząd bez MFA zatrzymuje bramka routera, przedstawiciel nie ma zapisu', async (t) => {
+    const { call, cookies, memberships } = await setup751(t);
+    const [method, path, body] = writeRoutes(memberships)[0];
+    const gate = await call(path, { cookie: cookies.board, method, body });
+    assert.deepEqual([gate.status, gate.body], [403, { error: 'mfa_enrollment_required' }]);
+    for (const cookie of [cookies.repA, cookies.repAMfa]) {
+      const result = await call(path, { cookie, method, body });
+      assert.deepEqual([result.status, result.body], [403, { error: 'forbidden' }]);
+    }
   });
 });
 

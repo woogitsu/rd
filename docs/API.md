@@ -230,6 +230,27 @@ Schemat OpenAPI modułu (`src/pg/schemas/guardian-updates.js`, #160 etap 14) opi
 (opis „trasy zarządu: MFA na trasie…”), `tests/pg-guardian-update-verify.test.js` (potwierdzenie kodu przy pustym
 `MFA_REQUIRED_ROLES`).
 
+## Katalog rodzin: e-mail opiekuna i zapisy tylko z MFA (#751)
+
+Wskazania użytkownika 2026-10-03 (do formalnego potwierdzenia, D-08/D-10; `docs/DECISIONS.md`). Ścieżki bez zmian.
+
+- `GET /api/households/{householdId}`: sesja bez potwierdzonego MFA dostaje kartę **bez pola `email`** u opiekunów
+  (klucz pominięty, nie `null`), w każdym zakresie — przedstawiciel, zarząd z przydziałem klasy, a przy
+  `MFA_REQUIRED_ROLES` bez nich także admin, zarząd i skarbnik. Uczniowie, imiona, nazwiska, zgody i relacje bez
+  zmian. Z MFA odpowiedź jak dotąd: zakres klasowy ma adres przy zgodzie opiekuna i zgodzie relacji, inaczej `null`.
+  Schemat `HouseholdGuardian` ma `email` jako pole opcjonalne. Panel `families/` pokazuje wtedy „ukryty — wymaga MFA”.
+- `GET /api/classes/{classId}/students` nie zawiera e-maili opiekunów (bez zmian, także z MFA).
+- Każdy zapis modułu (`PATCH …/contact`, `…/identity` ucznia i opiekuna, `PATCH /api/guardians/{g}/students/{s}`,
+  przypisanie i zakończenie przypisania do klasy, zakończenie relacji opiekun–dziecko, dodanie i zakończenie członkostwa
+  ucznia oraz zakończenie członkostwa opiekuna) wymaga MFA na samej trasie: bez MFA `403 forbidden` i ślad
+  `access.denied`, bez zmiany danych, historii i audytu. Odmowa zapada przed odczytem treści i obiektu, więc obiekt
+  nieistniejący, poza zakresem i w zakresie dają tę samą odpowiedź. Przy domyślnym `MFA_REQUIRED_ROLES` wcześniej
+  odpowiada bramka routera (`mfa_enrollment_required`/`mfa_required`). Z MFA kody 404/403 (SR-07) bez zmian.
+- `GET /api/exports/class-roster` bez zmian (MFA na trasie, #161).
+
+Testy: `tests/pg-families.test.js` (opis „moduł rodzin: e-mail opiekuna i zapisy tylko z MFA (#751)”),
+`tests/openapi-contract-families.test.js`, macierz (`householdEmailCheck` w `tests/helpers/route-matrix.js`).
+
 ## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-14)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
@@ -289,7 +310,8 @@ Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zm
   `201` przy zapisie, `200` przy ponowieniu). Listy klas i uczniów klasy nie są stronicowane (bez kursora).
   Zakres klasowy dostaje węższy kształt karty gospodarstwa: bez `isPrimaryHousehold`, bez `isPrimary` przy
   gospodarstwach i bez `paymentTotals` (te pola są w schemacie opcjonalne). Obiekt poza zakresem i błędny
-  identyfikator w ścieżce dają `404 not_found` jak nieistniejący.
+  identyfikator w ścieżce dają `404 not_found` jak nieistniejący. Od #751 `email` opiekuna jest w karcie tylko
+  dla sesji z MFA (pole opcjonalne), a zapisy wymagają MFA na trasie (sekcja wyżej).
 - `session`: logowanie (`login`) i MFA (`mfa`) są osobnymi modułami (schematy od etapu 11, niżej). Macierz tras
   przypisuje `GET /api/session` i `GET /api/access` status odmowy `403`, choć trasy są dostępne dla każdego
   zalogowanego i zwolnione z bramki MFA, więc `403` nie występuje (stąd pusta lista kodów).

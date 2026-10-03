@@ -23,9 +23,9 @@ Stan na 27.09.2026 (uzupełnione 29.09.2026 o pytania zebrane 28–29.09): żadn
 | D-05 | Dostawcy, umowy powierzenia, lokalizacja | #1, #31, #40, #41 | otwarta |
 | D-06 | Obowiązek informacyjny wobec rodziców | #1, #2, #10 | otwarta |
 | D-07 | Procedura incydentowa, sprostowanie i usuwanie danych | #1, #41 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
-| D-08 | Role i macierz kompetencji | #4, #35 | otwarta |
+| D-08 | Role i macierz kompetencji | #4, #35 | otwarta — wskazanie użytkownika 2026-10-03 (zob. „Wskazania użytkownika 2026-10-03”); do formalnego potwierdzenia |
 | D-09 | Uprawnienia dyrekcji i Komisji Rewizyjnej | #4, #6, #7, #35 | otwarta — wskazanie użytkownika 2026-10-02 (zob. „Wskazania użytkownika 2026-10-02”); do formalnego potwierdzenia |
-| D-10 | Dostawca logowania i przyjmowanie zaproszeń | #3, #35 | otwarta — wskazanie użytkownika 2026-09-27: e-mail + hasło + TOTP; do formalnego potwierdzenia; 2026-10-02: lista słabych haseł offline |
+| D-10 | Dostawca logowania i przyjmowanie zaproszeń | #3, #35 | otwarta — wskazanie użytkownika 2026-09-27: e-mail + hasło + TOTP; do formalnego potwierdzenia; 2026-10-02: lista słabych haseł offline; 2026-10-03: MFA dla e-maili opiekunów i zapisów modułu rodzin (zob. „Wskazania użytkownika 2026-10-03”) |
 | D-11 | Jednostka ewidencji składki i opieka dzielona | #5, #6, #10, #11 | otwarta |
 | D-12 | Zasady korekt wpłat i ich zatwierdzania | #6, #37 | otwarta |
 | D-13 | Rachunek bankowy, gotówka i uzgadnianie | #6, #7, #10 | otwarta |
@@ -62,6 +62,15 @@ Wskazania właściciela prototypu, przekazane w sesji roboczej 02.10.2026. To **
 | Zawiadomienie nieaktualne po zakolejkowaniu kampanii | D-21, D-08 | Wstrzymać wysyłkę | Zmiana porządku, terminu lub nowa wersja zawiadomienia po zakolejkowaniu: worker pomija kampanię (`meeting_notice_outdated`, wiersze zostają w kolejce), bez automatycznego anulowania; zarząd anuluje i przygotowuje nową kampanię. |
 | Weryfikacja nowego adresu e-mail z wniosku rodzica (#140 pkt 5) | D-16, D-17, D-07 | Opcjonalna z ostrzeżeniem | Zarząd może zatwierdzić wniosek z niepotwierdzonym adresem; kolejka wniosków (API i panel `families/`) pokazuje stan `verification` (none, sent, confirmed, expired, failed) z powodem, a zatwierdzenie bez potwierdzenia zapisuje w audycie pole `unverifiedContactChange` (bez adresu). |
 | Moment wysłania kodu weryfikacyjnego (#140 pkt 5) | D-16, D-17 | Automatycznie po złożeniu wniosku z nowym e-mailem | Bez kliknięcia zarządu przy każdym wniosku, ale tylko z szablonem treści zatwierdzonym raz przez zarząd (inna osoba niż autor, świeże MFA), za flagą `GUARDIAN_VERIFY_EMAIL_ENABLED` (domyślnie wyłączona), wyłącznie na adres z tego wniosku, jedna wiadomość na wniosek (`verify:{requestId}`), przez kolejkę i worker w limicie Brevo; nadawca wyłącznie z `BREVO_FROM_EMAIL`. Migracja 0184, notatka techniczna w D-16. |
+
+## Wskazania użytkownika 2026-10-03
+
+Wskazania właściciela prototypu z przeglądu tras po #748 (issue #751), przekazane 03.10.2026. Tak jak wskazania z 2026-10-02 **nie** są decyzjami zarządu ani IOD. Prototyp realizuje wskazany wariant, aby można go było ocenić na danych syntetycznych. Każde wymaga formalnego potwierdzenia w sekcji D-08 lub D-10.
+
+| Temat | Decyzja w rejestrze | Wskazany wariant | Skutek w prototypie |
+|---|---|---|---|
+| E-mail opiekuna w module rodzin bez MFA (#751) | D-08, D-10 | W zakresie klasowym (przedstawiciel, zarząd z przydziałem klasy) bez potwierdzonego MFA pole e-mail opiekuna jest pomijane; z MFA odpowiedź pełna; uczniowie, imiona i relacje dostępne bez MFA | `GET /api/households/:householdId` bez MFA sesji nie ma klucza `email` u opiekunów; lista uczniów klasy nie zawiera e-maili w żadnym wariancie. Założenie wykonawcy (do potwierdzenia razem ze wskazaniem): ta sama reguła obejmuje role szerokie (admin, zarząd, skarbnik). Przy domyślnym `MFA_REQUIRED_ROLES` i tak zatrzymuje je bramka routera, więc różnica dotyczy tylko listy ról bez nich. Panel pokazuje „ukryty — wymaga MFA”. |
+| Zapisy modułu rodzin bez MFA (#751) | D-08, D-10 | MFA wymagane na samej trasie, jak zatwierdzenie wniosku rodzica po #750 | Każdy zapis `src/pg/routes/families.js` (kontakt, sprostowanie imienia, zgoda w relacji, przypisanie do klasy i jego zakończenie, zakończenie relacji, członkostwa w gospodarstwie) bez MFA: `403 forbidden` i ślad `access.denied`, bez zmiany danych, także gdy `MFA_REQUIRED_ROLES` nie obejmuje admina lub zarządu. Przy domyślnej konfiguracji użytkownicy nie widzą zmiany. Dokumenty, aktualności, wydarzenia i zgody na wizerunek mają ten sam wzorzec (MFA tylko przez bramkę routera), ale nie są objęte tym wskazaniem. |
 
 ## Dane osobowe
 
@@ -161,7 +170,7 @@ Wskazania właściciela prototypu, przekazane w sesji roboczej 02.10.2026. To **
 
   | Moduł | Role (stałe w kodzie) | Plik | Test |
   |---|---|---|---|
-  | Rodziny | odczyt: `admin, board, treasurer, representative` (representative — własna klasa); edycja: `admin, board`; finanse/e-mail rodziny: `admin, board, treasurer` (e-mail widoczny bez względu na zgodę dla ostatniej trójki) | `src/pg/routes/families.js` (`READ_ROLES`, `EDIT_ROLES`, `FINANCIAL_ROLES`) i `src/pg/scope.js` (`HOUSEHOLD_WIDE_ROLES`) | `tests/pg-families.test.js` |
+  | Rodziny | odczyt: `admin, board, treasurer, representative` (representative — własna klasa); edycja: `admin, board`, z MFA na trasie (#751); finanse/e-mail rodziny: `admin, board, treasurer` (e-mail widoczny bez względu na zgodę dla ostatniej trójki); e-mail opiekuna na karcie gospodarstwa tylko dla sesji z MFA, w każdym zakresie (#751, wskazanie użytkownika 2026-10-03) | `src/pg/routes/families.js` (`READ_ROLES`, `EDIT_ROLES`, `FINANCIAL_ROLES`) i `src/pg/scope.js` (`HOUSEHOLD_WIDE_ROLES`) | `tests/pg-families.test.js` |
   | Wpłaty | `admin, board, treasurer` | `src/pg/routes/payments.js` (`FINANCIAL_ROLES`) | `tests/pg-payments-api.test.js` |
   | Księga | `admin, board, treasurer` | `src/pg/routes/ledger.js` (`FINANCIAL_ROLES`) | `tests/pg-ledger-api.test.js` |
   | Kasa (przelewy, bilans otwarcia) | transfer/odczyt: `admin, board, treasurer`; otwarcie: `board` | `src/pg/routes/ledger-cash.js` (`TRANSFER_ROLES`, `READ_ROLES`, `OPENING_ROLES`) | `tests/pg-ledger-cash.test.js` |

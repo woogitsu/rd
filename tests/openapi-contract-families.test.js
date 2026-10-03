@@ -92,6 +92,7 @@ async function familiesWorld() {
     boardA: await seedUserSession(db, { userId: 'u-board-a', mfa: true, roles: [{ role: 'board', classId: 'c-1a', schoolYearId: YEAR }] }),
     treasurer: await seedUserSession(db, { userId: 'u-treasurer', mfa: true, roles: [{ role: 'treasurer', schoolYearId: YEAR }] }),
     repA: await seedUserSession(db, { userId: 'u-rep-a', roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }] }),
+    repAMfa: await seedUserSession(db, { userId: 'u-rep-a-mfa', mfa: true, roles: [{ role: 'representative', classId: 'c-1a', schoolYearId: YEAR }] }),
     audit: await seedUserSession(db, { userId: 'u-audit', mfa: true, roles: [{ role: 'audit' }] }),
   };
   const client = createContractClient({ spec, fetch: (req) => handlePgRequest(req, { db }) });
@@ -154,6 +155,10 @@ test('kontrakt rodzin: odczyty — rodzeństwo, dwoje opiekunów, opieka dzielon
     assert.equal('paymentTotals' in repCard.body, false);
     assert.deepEqual(repCard.body.students[0].otherHouseholds, [{ householdId: 'h-2' }]);
     assert.deepEqual(repCard.body.guardians.map((item) => item.relations.map((relation) => relation.studentId)), [['s-1'], ['s-1']]);
+    // #751: sesja bez MFA — karta bez klucza `email` (schemat: pole opcjonalne); z MFA — adresy obojga opiekunów.
+    assert.deepEqual(repCard.body.guardians.map((item) => Object.hasOwn(item, 'email')), [false, false]);
+    const repCardMfa = await client.call('GET', '/api/households/h-1', { cookie: cookies.repAMfa, expect: 200 });
+    assert.deepEqual(repCardMfa.body.guardians.map((item) => item.email).sort(), ['opiekun1@example.invalid', 'opiekun2@example.invalid']);
     const repShared = await client.call('GET', '/api/households/h-2', { cookie: cookies.repA, expect: 200 });
     assert.deepEqual(repShared.body.students.map((item) => item.id), ['s-1']);
     // Skarbnik z przydziałem roku: karta z sumami tego roku.
