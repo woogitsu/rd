@@ -169,6 +169,8 @@ export const REASON_LABELS = Object.freeze({
   invitation: "zaproszenie",
   reads_without_valid_grant: "odczyty bez ważnego przydziału",
   school_year_ended: "rok szkolny się zakończył",
+  school_year_required: "zaproszenie dyrekcji bez roku szkolnego",
+  year_scope_required: "przydział dyrekcji bez roku szkolnego (ważny we wszystkich latach)",
   login_succeeded: "udane logowanie",
   logout: "wylogowanie",
   malformed: "błędny adres",

@@ -12,6 +12,7 @@ test('świeża baza bez dzienników: „brak danych”, nigdy „w normie”', (
   const rows = byKey(buildOpsRows({
     migrations: { appliedCount: 5, pendingCount: 0, pending: [] },
     emailWorker: null, emailQueue: { pending: 0, failed: 0, oldestPendingAt: null },
+    guardianVerifyQueue: { queued: 0, sending: 0, oldestPendingAt: null, overdue: false },
     backup: { status: 'no_data', lastRun: null }, storageBackup: { status: 'no_data', lastRun: null },
     restoreDrill: { status: 'no_data', lastRun: null }, lastExport: null, writeMode: 'normal', appVersion: null,
   }, NOW));
@@ -25,7 +26,7 @@ test('świeża baza bez dzienników: „brak danych”, nigdy „w normie”', (
 test('pusta odpowiedź lub brak pól nie rzuca i daje „brak danych”', () => {
   for (const input of [undefined, null, {}, 'x']) {
     const rows = buildOpsRows(input, NOW);
-    assert.equal(rows.length, 9);
+    assert.equal(rows.length, 10);
     assertEvery(rows, (r) => r.label && r.stateLabel);
   }
 });
@@ -48,6 +49,26 @@ test('zaległa migracja to błąd, nieudany backup i wiadomości failed to uwaga
   assert.equal(rows.writeMode.state, 'attention');
   assert.match(rows.appVersion.detail, /abcdef1/i);
   assert.equal(overallState(Object.values(rows)), 'error');
+});
+
+test('kolejka kodów weryfikacyjnych (#140 pkt 5): liczby i wiek, uwaga tylko gdy serwer oznaczył zaległość, brak tabeli to „brak danych”', () => {
+  const quiet = byKey(buildOpsRows({ guardianVerifyQueue: { queued: 0, sending: 0, oldestPendingAt: null, overdue: false } }, NOW)).guardianVerifyQueue;
+  assert.equal(quiet.state, 'ok');
+  assert.equal(quiet.label, 'Kolejka kodów weryfikacyjnych');
+  assert.match(quiet.detail, /W kolejce: 0, w wysyłce: 0\./);
+  const waiting = byKey(buildOpsRows({ guardianVerifyQueue: { queued: 3, sending: 1, oldestPendingAt: '2026-09-29T11:30:00Z', overdue: false } }, NOW)).guardianVerifyQueue;
+  assert.equal(waiting.state, 'ok', 'widok sam nie zgaduje progu');
+  assert.match(waiting.detail, /W kolejce: 3, w wysyłce: 1\. Data dotyczy najstarszego oczekującego\./);
+  assert.match(waiting.whenText, /30 min temu/);
+  const late = byKey(buildOpsRows({ guardianVerifyQueue: { queued: 2, sending: 0, oldestPendingAt: '2026-09-29T07:00:00Z', overdue: true } }, NOW)).guardianVerifyQueue;
+  assert.equal(late.state, 'attention');
+  assert.match(late.detail, /sprawdź zadanie wysyłki/);
+  for (const missing of [undefined, null]) {
+    const row = byKey(buildOpsRows({ guardianVerifyQueue: missing }, NOW)).guardianVerifyQueue;
+    assert.equal(row.state, 'no_data');
+  }
+  // Wiersz nie niesie niczego poza liczbami i czasem: ani adresu, ani kodu.
+  assert.doesNotMatch(JSON.stringify([quiet, waiting, late]), /@|example\.invalid/);
 });
 
 test('wiek zdarzenia po polsku; przyszłość i brak daty dają null', () => {

@@ -167,6 +167,9 @@ test('dziennik kont: słowniki typów obiektów i powodów pokrywają wartości 
   assert.equal(entityTypeLabel('role_grant'), 'Przydział roli');
   assert.equal(reasonLabel('rotated'), 'odnowienie sesji');
   assert.equal(reasonLabel('nieznany_kod'), 'nieznany_kod');
+  // Przegląd dostępu: przydział dyrekcji sprzed wymogu roku (wskazanie 2026-10-02).
+  assert.equal(reasonLabel('year_scope_required'), 'przydział dyrekcji bez roku szkolnego (ważny we wszystkich latach)');
+  assert.equal(reasonLabel('school_year_ended'), 'rok szkolny się zakończył');
 });
 
 // Powody pominięcia wiadomości przez zadanie wysyłki (last_error wiersza kolejki i `reason`

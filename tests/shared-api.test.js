@@ -321,7 +321,7 @@ test('panele nie wołają fetch bezpośrednio — wszystkie żądania przez shar
 // Panele = katalogi z main.js i index.html poza stroną publiczną (site) i logowaniem (login/
 // używa tego samego klienta, ale bez przekierowań i z własnym słownikiem — test niżej). Nowy panel bez wpisu w PANELS ma wywalić
 // test, a nie po cichu ominąć kontrolę.
-const NON_PANEL_DIRS = new Set(['login', 'site']);
+const NON_PANEL_DIRS = new Set(['kontakt', 'login', 'site']);
 function panelDirs() {
   return readdirSync(ROOT, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !NON_PANEL_DIRS.has(entry.name) && existsSync(join(ROOT, entry.name, 'main.js')))
@@ -594,6 +594,17 @@ test('login/main.js używa wspólnego klienta bez przekierowań i nie pyta o sta
   assert.match(main, /refreshState\(\{ initial: true \}\)/);
   const shell = readFileSync(join(ROOT, 'shared/shell.js'), 'utf8');
   assert.match(shell, /forgetSession\(\);\s*window\.location\.href = "\/login\/"/);
+});
+
+test('kontakt/ (publiczna strona wniosku rodzica) używa wspólnego klienta: bez fetch, bez przekierowań i bez pytania o sesję', () => {
+  for (const name of readdirSync(join(ROOT, 'kontakt')).filter((file) => file.endsWith('.js'))) {
+    assert.doesNotMatch(readFileSync(join(ROOT, 'kontakt', name), 'utf8'), /\bfetch\s*\(/, `kontakt/${name} woła fetch bezpośrednio`);
+  }
+  const main = readFileSync(join(ROOT, 'kontakt/main.js'), 'utf8');
+  assert.match(main, /from "\.\.\/shared\/api\.js"/);
+  assert.match(main, /createApiClient\(/);
+  assert.match(main, /messages: KONTAKT_MESSAGES, redirect: false/);
+  assert.doesNotMatch(main, /checkSession|mountShell/);
 });
 
 test('lokalne słowniki zebrań i dokumentów: nieznany kod daje polski tekst bez numeru statusu', () => {

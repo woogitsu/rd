@@ -1,0 +1,109 @@
+/* Publiczna strona „Aktualizacja kontaktu” — paleta z docs/DESIGN.md, kontrast z docs/ACCESSIBILITY.md.
+   Białe tło, oszczędny czerwony akcent, proste przyciski; bez ikon. */
+[hidden] { display: none !important; }
+:root {
+  color: #282c2f;
+  background: #ffffff;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #ffffff; }
+button, input, textarea { font: inherit; }
+
+.skip-link { position: absolute; left: 16px; top: -48px; padding: .6rem .9rem; color: #ffffff; background: #8e2026; z-index: 10; }
+.skip-link:focus { top: 8px; }
+
+.site-header {
+  min-height: 64px;
+  padding: .75rem 5vw;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  border-top: 3px solid #b3262d;
+  border-bottom: 1px solid #e4e4e2;
+}
+.brand { color: inherit; text-decoration: none; font-weight: 700; line-height: 1.2; min-height: 44px; display: inline-flex; align-items: center; }
+.brand small { color: #5d6266; font-weight: 500; }
+.header-note { margin: 0; color: #5d6266; font-size: .9rem; }
+
+main { width: min(560px, 100%); margin: 0 auto; padding: 2.5rem 16px 4rem; }
+h1 { margin: 0 0 1rem; font-family: Georgia, serif; font-size: clamp(1.6rem, 5vw, 2.2rem); font-weight: 500; }
+h1:focus-visible, h2:focus-visible { outline: 3px solid #8e2026; outline-offset: 4px; }
+h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
+p { margin: 0 0 1rem; }
+a { color: #b3262d; }
+a:hover { color: #8e2026; }
+
+.card { padding: 1.5rem 0 1rem; border-top: 1px solid #b3262d; }
+.hint { color: #5d6266; font-size: .9rem; }
+label { display: block; margin: 1rem 0 .35rem; font-weight: 650; }
+label + .hint { margin: -.15rem 0 .45rem; }
+input[type="email"], input[type="text"], textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: .6rem .7rem;
+  color: #282c2f;
+  background: #ffffff;
+  border: 1px solid #767676;
+  border-radius: 0;
+}
+textarea { resize: vertical; }
+.code-input { max-width: 14rem; font-size: 1.35rem; letter-spacing: .2em; font-variant-numeric: tabular-nums; }
+input[aria-invalid="true"] { border-color: #9b1a23; border-width: 2px; }
+:focus-visible { outline: 3px solid #8e2026; outline-offset: 2px; }
+
+fieldset { margin: 1.25rem 0 0; padding: 0; border: 0; }
+legend { padding: 0; font-weight: 650; }
+.choice { display: flex; align-items: center; gap: .6rem; margin: 0; min-height: 44px; font-weight: 500; }
+.choice input { width: 24px; height: 24px; margin: 0; accent-color: #b3262d; }
+
+button {
+  min-height: 44px;
+  padding: .55rem 1rem;
+  color: #282c2f;
+  background: #ffffff;
+  border: 1px solid #767676;
+  border-radius: 0;
+  font-weight: 650;
+  cursor: pointer;
+}
+button:hover { border-color: #282c2f; }
+button.primary { margin-top: .5rem; color: #ffffff; background: #b3262d; border-color: #b3262d; }
+button.primary:hover { background: #8e2026; border-color: #8e2026; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+
+.message { min-height: 1.5em; color: #5d6266; }
+.form-error { min-height: 1.5em; margin: .6rem 0 0; color: #9b1a23; font-weight: 600; }
+.success { min-height: 1.5em; margin: .6rem 0 0; font-weight: 600; }
+.notice { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #e4e4e2; color: #5d6266; font-size: .85rem; }
+
+/* Wspólne okno potwierdzenia (shared/confirm-dialog.js), gdy uwaga wygląda na dane osobowe (#152). */
+#shared-confirm-dialog {
+  box-sizing: border-box;
+  width: min(34rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 0;
+  color: #282c2f;
+  background: #ffffff;
+  border: 1px solid #282c2f;
+}
+#shared-confirm-dialog::backdrop { background: rgb(40 44 47 / 45%); }
+#shared-confirm-dialog form { display: grid; gap: 1rem; margin: 0; padding: 1.25rem; }
+#shared-confirm-dialog h2 { margin: 0; font-size: 1.25rem; line-height: 1.3; overflow-wrap: anywhere; }
+#shared-confirm-body ul { display: grid; gap: .35rem; margin: 0; padding-left: 1.25rem; }
+#shared-confirm-warning { margin: 0; padding: .6rem .75rem; border-left: 3px solid #b3262d; color: #8e2026; font-weight: 600; }
+#shared-confirm-dialog .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+@media (forced-colors: active) {
+  button.primary { border: 2px solid ButtonText; }
+}

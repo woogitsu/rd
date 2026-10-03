@@ -72,7 +72,7 @@ Regulamin Rady Rodziców Szkoły Polskiej im. Joachima Lelewela w Brukseli i Pro
 
 Jedyna droga, która dziś daje działający panel (dane wyłącznie syntetyczne, `@example.invalid`; AGENTS.md):
 
-1. `npm ci && npm run build` — buduje wszystkie 17 paneli Vite (`import`, `panel`, `ledger`, `print`, `events`, `documents`, `site`, `meetings`, `admin`, `families`, `login`, `email`, `reconciliation`, `year-close`, `audit`, `data-export`, `news` — polecenia `build:<panel>` w `package.json`).
+1. `npm ci && npm run build` — buduje wszystkie 18 paneli Vite (`import`, `panel`, `ledger`, `print`, `events`, `documents`, `site`, `meetings`, `admin`, `families`, `login`, `email`, `reconciliation`, `year-close`, `audit`, `data-export`, `news`, `kontakt` — polecenia `build:<panel>` w `package.json`).
 2. Lokalny PostgreSQL (albo dowolny serwer zgodny z wersją z `docs/RAILWAY_OPERATIONS.md`) i `DATABASE_URL=postgres://… npm run db:migrate:postgres`.
 3. `DATABASE_URL=postgres://… PORT=3000 npm start` — jeden proces Node.js udostępnia API (`src/pg/app.js`) i wszystkie panele pod wspólnym originem (`/panel/`, `/ledger/`, `/admin/`, `/families/`, …, pełna lista w [docs/NODE_SERVER.md](docs/NODE_SERVER.md)).
 4. Konta i sesji testowych nie zakłada publiczne API (`docs/ACCOUNTS.md`). Do lokalnego pokazu i prób służy `npm run demo:seed` (konta ról z danymi syntetycznymi `@example.invalid`, hasła i sekrety TOTP wypisywane tylko na konsolę) oraz `npm run demo:start` — patrz sekcja „Pokaz dla zarządu” niżej i [docs/DEMO.md](docs/DEMO.md). Skrypt odmawia działania na `production`, z `BREVO_API_KEY` i z `DATABASE_URL` poza localhostem. Pierwszego administratora na pustej bazie (poza pokazem) zakłada `npm run auth:bootstrap-admin` — [docs/RAILWAY_OPERATIONS.md](docs/RAILWAY_OPERATIONS.md), „Pierwszy administrator (bootstrap)”; użycie w środowisku produkcyjnym wymaga osobnej decyzji szkoły (D-20).
@@ -142,6 +142,10 @@ Prototyp `/news/`: szkic, zgłoszenie, zatwierdzenie przez drugą osobę, publik
 ## Logowanie
 
 Ekran `/login/` (`/` przekierowuje tutaj, strona publiczna jest pod `/site/`): e-mail i hasło, potem kod z aplikacji uwierzytelniającej (Google Authenticator, Microsoft Authenticator lub inna zgodna z TOTP RFC 6238). Konto powstaje wyłącznie z zaproszenia (`/login/#invite=<token>`); reset hasła tylko tokenem od administratora (`/login/#reset=<token>`), bez wiadomości e-mail. Role `admin`, `board` i `treasurer` muszą skonfigurować aplikację przed użyciem paneli (`MFA_REQUIRED_ROLES`). Buduj i uruchamiaj razem z API według „Uruchomienie lokalne” wyżej; `npm run dev:login` samo w sobie nie tworzy sesji. Metodę wskazał użytkownik 2026-09-27; wymaga formalnego potwierdzenia przez zarząd i IOD (D-10). Prototyp na danych syntetycznych, niewdrożony. [Instrukcja ekranu](login/README.md), [przepływ i parametry](docs/AUTH.md).
+
+## Aktualizacja kontaktu przez rodzica
+
+Publiczna strona `/kontakt/#token=<jednorazowy token>` (#140): wniosek o zmianę adresu e-mail lub zgody na kontakt i, po odpowiedzi `emailVerification: requested`, wpisanie 8-cyfrowego kodu weryfikacyjnego nowego adresu (`POST /api/public/guardian-update/verify`, ta sama treść dla każdej porażki). Wniosek niczego nie zmienia — decyduje zarząd w panelu `families/` (kolejka wniosków i widok szablonu wiadomości z kodem). Token wydaje zarząd (`POST /api/admin/guardian-links`) i przekazuje poza systemem; panel niczego nie wysyła automatycznie. Prototyp na danych syntetycznych; adres strony to założenie techniczne do potwierdzenia. [Instrukcja strony](kontakt/README.md), [kod weryfikacyjny](docs/EMAIL.md).
 
 ## Pokaz dla zarządu (dane demo, wyłącznie lokalnie)
 

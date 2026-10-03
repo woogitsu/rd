@@ -614,6 +614,36 @@ test('przyjęcie zaproszenia: nowe konto z adresem z zaproszenia, rola, sesja; j
   assert.equal((await post('/api/invitations/accept', { token: 'x'.repeat(43), password })).status, 400);
 });
 
+// Zaproszenie dyrekcji bez roku (sprzed wymogu roku, wskazanie 2026-10-02) nie może zostać
+// przyjęte: 422 school_year_required, bez konta, przydziału i zużycia zaproszenia.
+test('przyjęcie zaproszenia dyrekcji bez roku szkolnego: 422 school_year_required, bez konta i przydziału', async () => {
+  const email = 'dyrekcja.bez.roku@example.invalid';
+  await seedUser(db, { userId: 'u-login-inviter' });
+  const { secret, tokenHash } = await createSessionSecret();
+  const id = crypto.randomUUID();
+  await db.query(
+    `INSERT INTO invitations (id, email, token_hash, role, school_year_id, created_by, expires_at)
+     VALUES ($1, $2, $3, 'principal', NULL, 'u-login-inviter', now() + interval '1 day')`,
+    [id, email, tokenHash],
+  );
+  const password = newPassword();
+  const accepted = await post('/api/invitations/accept', { token: secret, password, passwordRepeat: password });
+  assert.equal(accepted.status, 422);
+  assert.deepEqual(await accepted.json(), { error: 'school_year_required' });
+  const state = (await db.query(
+    `SELECT (SELECT count(*) FROM users WHERE lower(email) = $1)::int AS users,
+            (SELECT count(*) FROM role_grants WHERE source_invitation_id = $2)::int AS grants,
+            (SELECT accepted_at FROM invitations WHERE id = $2) AS accepted_at`,
+    [email, id],
+  )).rows[0];
+  assert.deepEqual(state, { users: 0, grants: 0, accepted_at: null });
+  // Kontrola pozytywna: zaproszenie dyrekcji z rokiem jest przyjmowane.
+  const dated = await invite('dyrekcja.z.rokiem@example.invalid', 'principal');
+  const datedPassword = newPassword();
+  const ok = await post('/api/invitations/accept', { token: dated.secret, password: datedPassword, passwordRepeat: datedPassword });
+  assert.equal(ok.status, 201);
+});
+
 test('zaproszenie na adres różniący się tylko wielkością liter trafia do jednego konta (#198)', async () => {
   const email = 'wielkosc.liter@example.invalid';
   const { secret, invitationId } = await invite(`  ${email.toUpperCase()} `);

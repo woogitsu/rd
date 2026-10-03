@@ -227,9 +227,10 @@ export function describeProviderPause(pause) {
 // #130: alarm „brak przebiegów” zadania wysyłki (GET /api/email/worker-status).
 // Kody jak w src/pg/routes/email.js (computeWorkerStatus); nieznany kod — wprost.
 export const WORKER_ALARM_LABELS = Object.freeze({
-  worker_never_ran: 'Kampania czeka na wysyłkę, a zadanie wysyłki nie zapisało jeszcze żadnego przebiegu.',
-  worker_stale: 'Kampania czeka na wysyłkę, a zadanie wysyłki nie działało dłużej niż próg alarmu.',
-  worker_dry_run_only: 'Kampania czeka na wysyłkę, a zadanie działa tylko w trybie próbnym — nic nie jest wysyłane.',
+  worker_never_ran: 'Kampania albo kod weryfikacyjny czeka na wysyłkę, a zadanie wysyłki nie zapisało jeszcze żadnego przebiegu.',
+  worker_stale: 'Kampania albo kod weryfikacyjny czeka na wysyłkę, a zadanie wysyłki nie działało dłużej niż próg alarmu.',
+  worker_dry_run_only: 'Kampania albo kod weryfikacyjny czeka na wysyłkę, a zadanie działa tylko w trybie próbnym — nic nie jest wysyłane.',
+  guardian_verify_queue_stale: 'Kod weryfikacyjny nowego adresu (wniosek rodzica) czeka w kolejce dłużej niż próg alarmu — rodzic nie dostał jeszcze wiadomości.',
 });
 
 // Zwraca null, gdy nie ma alarmu (sekcja ukryta). Tekst zawiera tylko kody,
@@ -247,7 +248,12 @@ export function describeWorkerStatus(status) {
   const hours = Number(status.alarmAfterHours);
   const threshold = Number.isFinite(hours) && hours > 0 ? `Próg alarmu: ${hours} h.` : '';
   const due = Number(status.campaigns?.due) || 0;
-  return { lines, details: [last, `Kampanie czekające na wysyłkę w tym roku: ${due}.`, threshold].filter(Boolean).join(' ') };
+  // #140 pkt 5: liczby kolejki kodów weryfikacyjnych (tylko przy włączonej fladze serwera).
+  const verify = status.guardianVerifications;
+  const codes = verify && verify.enabled
+    ? `Kody weryfikacyjne w kolejce: ${Number(verify.queued) || 0}, w wysyłce: ${Number(verify.sending) || 0}${verify.oldestQueuedAt ? `, najstarszy od ${brusselsDateTime(verify.oldestQueuedAt)} (czas w Brukseli)` : ''}.`
+    : '';
+  return { lines, details: [last, `Kampanie czekające na wysyłkę w tym roku: ${due}.`, codes, threshold].filter(Boolean).join(' ') };
 }
 
 // Stan kampanii w szczegółach: kampania w wysyłce przy aktywnej pauzie konta

@@ -43,10 +43,10 @@ test('PANELS: unikalne id, href zaczyna/kończy się na "/", niepusta polska ety
 
 // Pilnuje, żeby PANELS i STATIC_PREFIXES (src/node-app.js) nigdy się nie rozjechały:
 // dodanie nowego panelu bez wpisu w PANELS (lub odwrotnie) ma wywalić test, zanim
-// trafi do produkcji. `login` i `site` celowo nie mają wpisu w PANELS — `login` to
+// trafi do produkcji. `kontakt`, `login` i `site` celowo nie mają wpisu w PANELS — `kontakt` to publiczna strona wniosku rodzica (bez powłoki panelu, #140), `login` to
 // ekran logowania (bez nawigacji powłoki), `site` to jedyny publiczny prefiks
 // (PUBLIC_STATIC_PREFIX w src/node-app.js), obydwa poza zakresem tej nawigacji.
-const NAV_EXEMPT_PREFIXES = new Set(['login', 'site']);
+const NAV_EXEMPT_PREFIXES = new Set(['kontakt', 'login', 'site']);
 
 test('każdy prefiks z STATIC_PREFIXES poza login/site ma wpis w PANELS', () => {
   for (const prefix of STATIC_PREFIXES) {

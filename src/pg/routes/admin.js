@@ -68,8 +68,10 @@
 //        roku i bez ważnego przydziału oraz PROPOZYCJA (`revoke` dla aktywnego
 //        przydziału roku, który się skończył; `review`; `keep`). Tylko odczyt —
 //        nic nie jest odbierane automatycznie; odebranie wykonuje admin jawnie
-//        przez POST /api/admin/grants/{id}/revoke. Bez imion i e-maili. Sam
-//        zapisuje `access_review.viewed`. Wyłącznie admin + MFA.
+//        przez POST /api/admin/grants/{id}/revoke. Aktywny przydział `principal`
+//        bez roku (sprzed wymogu roku, 2026-10-02) pojawia się w przeglądzie
+//        każdego roku z propozycją `revoke` i powodem `year_scope_required`.
+//        Bez imion i e-maili. Sam zapisuje `access_review.viewed`. Wyłącznie admin + MFA.
 //   GET  /api/admin/data-requests?status=&kind=  rejestr żądań osób (RODO, #100)
 //   POST /api/admin/data-requests                { kind, householdId?|guardianId?|studentId?, receivedOn, dueOn? }
 //        opcjonalny nagłówek Idempotency-Key: ponowienie → 200 + Idempotency-Replayed: true,

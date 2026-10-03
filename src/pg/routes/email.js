@@ -49,6 +49,8 @@ import {
 } from '../list-cursor.js';
 import { effectiveDay } from '../today.js';
 import { createBrevoTransport, emailConfig, EmailTransportError, previewRecipientRefusal } from '../../email/brevo.js';
+import { guardianVerifyEnabled } from '../../email/guardian-verify.js';
+import { guardianVerifyQueueStatus } from '../ops-status.js';
 import {
   CATEGORIES, ContentError, contentHash, contentWarnings, emailHash, maskEmail, normalizeEmail,
   AUDIENCES, inviteeGrantSql, isAccountAudience, MEETING_AUDIENCES, MEETING_INVITEE_ROLES, parseCampaignContent, recipientsHash, renderMessage,
@@ -1395,6 +1397,12 @@ async function providerPauseLift(request, env, json) {
 //   worker_stale        — ostatni przebieg starszy niż EMAIL_WORKER_ALARM_HOURS (domyślnie 2 h);
 //   worker_dry_run_only — przebiegi są, ale w tym czasie żaden nie był wysyłką
 //                         (np. usługa z railway.email-worker.json w trybie próbnym).
+// Kody weryfikacyjne nowych adresów (#140 pkt 5) obsługuje ten sam worker, więc czekający kod
+// (`guardian_update_verifications.state = 'queued'`, przy włączonej fladze) liczy się jak
+// kampania do wysyłki dla trzech alarmów wyżej, a blok `guardianVerifications` (stany
+// queued/sending, najstarszy oczekujący — bez adresów, kodów i identyfikatorów wniosków) ma
+// własny alarm `guardian_verify_queue_stale`: najstarszy oczekujący starszy niż próg alarmu.
+// Liczby są ogólnoszkolne (kolejka kodów nie należy do roku), jak przebiegi zadania.
 // Kampania „czeka na wysyłkę” = `sending` z nadejściem send_not_before (albo bez
 // niego); `paused` i start w przyszłości nie włączają alarmu. Odczyt nie zmienia
 // stanu, więc nie tworzy zdarzenia audytu (jak GET …/provider-pause).
@@ -1405,7 +1413,9 @@ function workerAlarmHours(env) {
   return Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_WORKER_ALARM_HOURS;
 }
 
-export async function computeWorkerStatus(db, { schoolYearId, alarmHours = DEFAULT_WORKER_ALARM_HOURS, now = new Date() }) {
+export async function computeWorkerStatus(db, {
+  schoolYearId, alarmHours = DEFAULT_WORKER_ALARM_HOURS, now = new Date(), guardianVerify = false,
+}) {
   const { rows: runs } = await db.query(
     'SELECT mode, finished_at, stopped_reason FROM email_worker_runs ORDER BY finished_at DESC, id DESC LIMIT 1',
   );
@@ -1428,16 +1438,25 @@ export async function computeWorkerStatus(db, { schoolYearId, alarmHours = DEFAU
   const { due, scheduled, paused } = counts[0];
   const cutoff = now.getTime() - alarmHours * 60 * 60 * 1000;
   const recent = (run) => Boolean(run) && new Date(run.finishedAt).getTime() >= cutoff;
+  const verifyQueue = await guardianVerifyQueueStatus(db);
+  const verifyWaiting = guardianVerify && Boolean(verifyQueue) && verifyQueue.queued > 0;
   const alarms = [];
-  if (due > 0) {
+  if (due > 0 || verifyWaiting) {
     if (!lastRun) alarms.push('worker_never_ran');
     else if (!recent(lastRun)) alarms.push('worker_stale');
     else if (!recent(lastLiveRun)) alarms.push('worker_dry_run_only');
   }
+  const oldestQueuedAt = verifyQueue?.oldestPendingAt ? iso(verifyQueue.oldestPendingAt) : null;
+  if (verifyWaiting && oldestQueuedAt && new Date(oldestQueuedAt).getTime() < cutoff) alarms.push('guardian_verify_queue_stale');
   return {
     lastRun,
     lastLiveRun,
     campaigns: { due, scheduled, paused },
+    // #140 pkt 5: kolejka kodów weryfikacyjnych. `enabled` = flaga GUARDIAN_VERIFY_EMAIL_ENABLED
+    // (przy wyłączonej wiersze w kolejce czekają celowo i nie włączają alarmów); null = brak tabeli.
+    guardianVerifications: verifyQueue
+      ? { enabled: guardianVerify, queued: verifyQueue.queued, sending: verifyQueue.sending, oldestQueuedAt }
+      : null,
     alarmAfterHours: alarmHours,
     alarms,
     generatedAt: now.toISOString(),
@@ -1449,7 +1468,7 @@ async function workerStatus(request, env, url, json) {
   if (!validId(schoolYearId)) throw new RequestError('invalid_request');
   const context = await requireContext(request, env, EDITOR_ROLES);
   requireYear(context, EDITOR_ROLES, schoolYearId);
-  const status = await computeWorkerStatus(env.db, { schoolYearId, alarmHours: workerAlarmHours(env) });
+  const status = await computeWorkerStatus(env.db, { schoolYearId, alarmHours: workerAlarmHours(env), guardianVerify: guardianVerifyEnabled(env) });
   // Czy serwer zna okno wysyłki (EMAIL_SEND_WINDOW_ENABLED) — bez godzin; te są w podglądzie kampanii.
   status.sendWindowEnabled = emailConfig(env).sendWindow.enabled;
   return json({ workerStatus: status }, 200, { 'Cache-Control': 'no-store' });

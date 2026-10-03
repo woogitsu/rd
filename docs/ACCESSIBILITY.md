@@ -244,5 +244,6 @@ Wspólny arkusz `shared/print.css` i blok metadanych `shared/print-meta.js` (rok
 ## Poza zakresem przeglądu
 
 - Ekran logowania (`login/`) — sprawdzany statycznie zarówno w `tests/login-core.test.js`, jak i (od #112) w `tests/a11y-static.test.js`. Przegląd z czytnikiem ekranu i przy 320 px — do wykonania.
+- Publiczna strona wniosku rodzica (`kontakt/`, #140) — sprawdzana statycznie w `tests/a11y-static.test.js` (jak `login/`: skip link, etykiety pól, błędy w `role="alert"`, pole kodu `inputmode="numeric"` i `autocomplete="one-time-code"`, cele 44 px) i w przeglądarce w `tests/e2e/kontakt.spec.js` (bez sprawdzania kontrastu ani czytnika ekranu). Przegląd z czytnikiem ekranu i przy 320 px — do wykonania.
 - Plakietki statusu mają zaokrąglone rogi (`border-radius: 999px`) — kwestia stylu, nie dostępności; zostawione.
 - Kolejność Tab w długich tabelach (przycisk w każdym wierszu) — przy dużej liczbie wierszy rozważyć paginację lub jedną akcję na zaznaczenie; wymaga decyzji projektowej.

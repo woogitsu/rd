@@ -12,6 +12,7 @@
 import { fileURLToPath } from 'node:url';
 import { loadMigrations } from '../postgres-migrations.js';
 import { accountsUnderPressure } from './login.js';
+import { guardianVerifyEnabled } from '../email/guardian-verify.js';
 
 async function tableExists(db, name) {
   const { rows } = await db.query('SELECT to_regclass($1) AS t', [name]);
@@ -64,6 +65,35 @@ export async function emailQueueStatus(db) {
   return { pending: byState.queued, failed: byState.failed, oldestPendingAt: oldestQueued };
 }
 
+// Kolejka kodów weryfikacyjnych nowych adresów (#140 pkt 5, migracja 0184) — jak email_outbox,
+// ale wyłącznie liczby i znacznik czasu: stany `queued` (czeka na worker) i `sending`
+// (przejęte przez przebieg; zawieszone odzyskuje recoverStaleVerifications), najstarszy
+// oczekujący (`created_at` najstarszego `queued`). Bez adresów, kodów, skrótów i identyfikatorów
+// wniosków. Tabela nie istnieje przed migracją 0184 → null (jak pozostałe bloki).
+export const DEFAULT_GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS = 2;
+
+// Kod jest ważny 24 h od przejęcia do wysyłki, a rodzic czeka na wiadomość po złożeniu
+// wniosku — dlatego próg jest krótszy niż próg kolejki kampanii (24 h). Konfigurowalny.
+export function guardianVerifyQueueMaxAgeHours(env) {
+  const n = Number(env?.GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS;
+}
+
+export async function guardianVerifyQueueStatus(db) {
+  if (!(await tableExists(db, 'guardian_update_verifications'))) return null;
+  const { rows } = await db.query(
+    `SELECT state, count(*)::int AS n, min(created_at) AS oldest
+     FROM guardian_update_verifications WHERE state IN ('queued', 'sending') GROUP BY state`,
+  );
+  const byState = { queued: 0, sending: 0 };
+  let oldestQueued = null;
+  for (const row of rows) {
+    byState[row.state] = row.n;
+    if (row.state === 'queued') oldestQueued = row.oldest;
+  }
+  return { queued: byState.queued, sending: byState.sending, oldestPendingAt: oldestQueued };
+}
+
 // Wspólne dla #90 (backup) i #103 (storage_backup) — patrz backup_runs.
 export async function lastBackupRun(db, kind) {
   if (!(await tableExists(db, 'backup_runs'))) return { status: 'no_data', lastRun: null };
@@ -100,10 +130,11 @@ async function loginPressureStatus(db, env, now) {
 }
 
 export async function computeOpsStatus({ db, env, now = () => new Date() }) {
-  const [migrations, emailWorker, emailQueue, backup, storageBackup, restoreDrill, exportRun, loginPressure] = await Promise.all([
+  const [migrations, emailWorker, emailQueue, guardianVerifyQueue, backup, storageBackup, restoreDrill, exportRun, loginPressure] = await Promise.all([
     migrationsStatus(db),
     emailWorkerStatus(db),
     emailQueueStatus(db),
+    guardianVerifyQueueStatus(db),
     lastBackupRun(db, 'backup'),
     lastBackupRun(db, 'storage_backup'),
     lastBackupRun(db, 'restore_drill'),
@@ -114,6 +145,14 @@ export async function computeOpsStatus({ db, env, now = () => new Date() }) {
     migrations,
     emailWorker,
     emailQueue,
+    // #140 pkt 5: kolejka kodów weryfikacyjnych (liczby i czas najstarszego oczekującego);
+    // `overdue` = najstarszy oczekujący starszy niż GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS, tylko przy
+    // włączonej fladze GUARDIAN_VERIFY_EMAIL_ENABLED (przy wyłączonej wiersze czekają celowo).
+    guardianVerifyQueue: guardianVerifyQueue && {
+      ...guardianVerifyQueue,
+      overdue: guardianVerifyEnabled(env) && guardianVerifyQueue.queued > 0
+        && (ageHours(guardianVerifyQueue.oldestPendingAt, now()) ?? 0) > guardianVerifyQueueMaxAgeHours(env),
+    },
     backup,
     storageBackup,
     restoreDrill,

@@ -135,3 +135,76 @@ describe('przegląd dostępu po kadencji (#133)', () => {
     assert.equal(unknown.body.error, 'school_year_not_found');
   });
 });
+
+// Wskazanie 2026-10-02: przydział `principal` wymaga roku. Przydziały sprzed wymogu (bez
+// school_year_id) działają we wszystkich latach — przegląd je wskazuje, niczego nie odbiera.
+describe('przegląd dostępu: przydziały dyrekcji bez roku szkolnego (sprzed wymogu roku)', () => {
+  const post = (path, key = 'admin') => call(path, { method: 'POST', cookie: cookies[key], body: {} });
+  const grantRows = async () => (await db.query('SELECT id, user_id, role, school_year_id, expires_at, revoked_at FROM role_grants ORDER BY id')).rows;
+
+  before(async () => {
+    db = await createTestDb();
+    env = { db };
+    await seedSchoolYear(db, OLD, { startsOn: '1999-09-01', endsOn: '2000-08-31' });
+    await seedSchoolYear(db, FUTURE, { startsOn: '2998-09-01', endsOn: '2999-08-31' });
+    cookies.admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin', schoolYearId: OLD }], mfa: true });
+    // Dyrekcja bez roku (sprzed wymogu), dyrekcja z rokiem, dyrekcja bez roku już cofnięta i wygasła,
+    // oraz audit bez roku (inna rola — bez wymogu roku, nie jest oznaczany).
+    await seedUserSession(db, { userId: 'u-legacy', roles: [{ role: 'principal' }], mfa: true });
+    await seedUserSession(db, { userId: 'u-dated', roles: [{ role: 'principal', schoolYearId: FUTURE }], mfa: true });
+    await seedUserSession(db, { userId: 'u-legacy-revoked', roles: [{ role: 'principal', revoked: true }], mfa: true });
+    await seedUserSession(db, { userId: 'u-legacy-expired', roles: [{ role: 'principal', expiresAt: '2020-01-01T00:00:00Z' }], mfa: true });
+    await seedUserSession(db, { userId: 'u-audit', roles: [{ role: 'audit' }], mfa: true });
+  });
+  after(async () => { await db?.close(); });
+
+  test('aktywny principal bez roku: propozycja revoke z powodem year_scope_required w przeglądzie każdego roku', async () => {
+    for (const yearId of [OLD, FUTURE]) {
+      const res = await review(yearId);
+      assert.equal(res.status, 200, yearId);
+      const rows = res.body.grants.filter((g) => g.userId === 'u-legacy');
+      assert.equal(rows.length, 1, `${yearId}: jeden wiersz przydziału`);
+      assert.equal(rows[0].role, 'principal');
+      assert.equal(rows[0].schoolYearId, null);
+      assert.equal(rows[0].status, 'active');
+      assert.equal(rows[0].proposal, 'revoke');
+      assert.equal(rows[0].reason, 'year_scope_required');
+      assert.equal(res.body.automaticRevocation, false);
+    }
+    const future = await review(FUTURE);
+    assert.equal(future.body.schoolYear.ended, false);
+    assert.equal(future.body.summary.proposedRevoke, 1, 'rok w toku: tylko przydział bez roku');
+  });
+
+  test('principal z rokiem, cofnięty i wygasły bez roku oraz audit bez roku nie dostają year_scope_required', async () => {
+    const res = await review(FUTURE);
+    const dated = res.body.grants.find((g) => g.userId === 'u-dated');
+    assert.equal(dated.proposal, 'keep');
+    assert.equal(dated.reason, null);
+    // Cofnięte i wygasłe przydziały bez roku nie są ważne w żadnym roku — nie trafiają do przeglądu.
+    assert.equal(res.body.grants.some((g) => g.userId === 'u-legacy-revoked'), false);
+    assert.equal(res.body.grants.some((g) => g.userId === 'u-legacy-expired'), false);
+    // audit bez roku: inna rola, bez wymogu roku — poza przeglądem roku, jak dotąd.
+    assert.equal(res.body.grants.some((g) => g.userId === 'u-audit'), false);
+    const flagged = res.body.grants.filter((g) => g.reason === 'year_scope_required');
+    assert.deepEqual(flagged.map((g) => g.userId), ['u-legacy']);
+    assert.ok(!res.text.includes('@'), 'brak e-maili');
+  });
+
+  test('przegląd niczego nie odbiera; odebranie to jawna trasa POST /api/admin/grants/{id}/revoke i znika z propozycji', async () => {
+    const legacyId = (await review(FUTURE)).body.grants.find((g) => g.userId === 'u-legacy').grantId;
+    const before = await grantRows();
+    await review(OLD);
+    await review(FUTURE);
+    assert.deepEqual(await grantRows(), before, 'przegląd nie zmienia role_grants');
+
+    assert.equal((await post(`/api/admin/grants/${legacyId}/revoke`)).status, 200);
+    assert.notEqual((await grantRows()).find((g) => g.id === legacyId).revoked_at, null);
+    const audit = await db.query("SELECT actor_id, entity_id FROM audit_events WHERE action = 'role_grant.revoked'");
+    assert.deepEqual(audit.rows, [{ actor_id: 'u-admin', entity_id: legacyId }]);
+
+    const res = await review(FUTURE);
+    assert.equal(res.body.grants.some((g) => g.userId === 'u-legacy'), false, 'cofnięty przydział bez roku poza przeglądem roku');
+    assert.equal(res.body.summary.proposedRevoke, 0);
+  });
+});

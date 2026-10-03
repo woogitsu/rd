@@ -558,6 +558,7 @@ export async function acceptInvitationWithPassword(env, { token, password, passw
 
   return database(env).transaction(async (tx) => {
     const locked = await lockInvitation(tx, tokenHash);
+    if (locked.deny?.error === 'school_year_required') throw new LoginError('school_year_required', 422);
     if (locked.deny) throw new LoginError('invalid_invitation', 400);
     const { invitation } = locked;
     if (String(invitation.email).toLowerCase() !== email) throw new LoginError('invalid_invitation', 400);

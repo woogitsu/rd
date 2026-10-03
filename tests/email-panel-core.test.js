@@ -241,6 +241,23 @@ test('#130 alarm zadania wysyłki: bez alarmu sekcja ukryta; kody → opisy, cza
   assert.match(stale.details, /26\.10\.2026.*09:00.*wysyłka, zatrzymanie: outside_send_window/);
 });
 
+test('#140 pkt 5: alarm kolejki kodów weryfikacyjnych i jej liczby w szczegółach (tylko przy włączonej fladze serwera)', () => {
+  const view = describeWorkerStatus({
+    alarms: ['guardian_verify_queue_stale'],
+    lastRun: { mode: 'live', finishedAt: '2026-10-26T08:00:00.000Z', stoppedReason: null },
+    campaigns: { due: 0 },
+    guardianVerifications: { enabled: true, queued: 3, sending: 1, oldestQueuedAt: '2026-10-26T06:00:00.000Z' },
+    alarmAfterHours: 2,
+  });
+  assert.deepEqual(view.lines, [WORKER_ALARM_LABELS.guardian_verify_queue_stale]);
+  assert.match(view.lines[0], /Kod weryfikacyjny nowego adresu/);
+  assert.match(view.details, /Kody weryfikacyjne w kolejce: 3, w wysyłce: 1, najstarszy od 26\.10\.2026.*07:00/);
+  // Wyłączona flaga: liczby nie są pokazywane (kolejka czeka celowo).
+  const off = describeWorkerStatus({ alarms: ['worker_stale'], lastRun: null, campaigns: { due: 1 }, guardianVerifications: { enabled: false, queued: 3, sending: 0, oldestQueuedAt: null } });
+  assert.doesNotMatch(off.details, /Kody weryfikacyjne/);
+  assert.match(WORKER_ALARM_LABELS.worker_stale, /kod weryfikacyjny/);
+});
+
 test('#130 panel: alarm zadania wysyłki z trasy zgodnej z serwerem', () => {
   const main = readFileSync(new URL('../email/main.js', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../email/index.html', import.meta.url), 'utf8');

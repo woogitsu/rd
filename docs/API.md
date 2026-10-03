@@ -130,6 +130,12 @@ niepełna; panel wtedy pokazuje komunikat o obcięciu:
 | Trasa | Pokazane | Pole |
 | --- | --- | --- |
 | `GET /api/meetings/shared-minutes` | 200 najnowszych | `truncated` |
+| `GET /api/admin/access-review?schoolYearId=` | 500 przydziałów | `truncated` |
+
+Przegląd dostępu zwraca przydziały roku oraz aktywne przydziały `principal` bez roku
+szkolnego (sprzed wymogu roku, 2026-10-02) — te ostatnie w przeglądzie każdego roku, z
+`schoolYearId: null`, `proposal: revoke` i `reason: year_scope_required`. Odpowiedź ma ten
+sam kształt co dotąd (bez nowych pól); nic nie jest odbierane automatycznie.
 
 Kanał `GET /api/public/events.ics` nie ma kursora (format iCal nie niesie sygnału
 obcięcia): zwraca najwyżej `limit` (domyślnie 200) najbliższych wydarzeń. Pełną
@@ -141,6 +147,26 @@ strona to teraz 500 wierszy, a klient czytający tylko `reviews` ma sprawdzić
 przycisku „Pokaż więcej” nie ma.
 
 Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCursor`.
+
+## Monitoring kolejki kodów weryfikacyjnych (#140 pkt 5)
+
+Trasy się nie zmieniają (nowych ścieżek nie ma, więc `docs/openapi.json` jest bez zmian — generator
+opisuje ścieżki, role i statusy, nie schematy odpowiedzi). Zmieniły się kształty trzech odczytów
+techniczno-operacyjnych; wszystkie niosą wyłącznie liczby, znaczniki czasu i kody — bez adresów,
+kodów weryfikacyjnych, skrótów i identyfikatorów wniosków:
+
+| Odczyt | Nowe pola |
+|---|---|
+| `GET /health/jobs` (token) | nazwa progu `guardian_verify_queue_too_old` w `failedThresholds`; kod czekający w kolejce włącza też `email_worker_stale` (ten sam worker) |
+| `GET /api/admin/ops-status` (admin) | `guardianVerifyQueue`: `queued`, `sending`, `oldestPendingAt` (`created_at` najstarszego `queued`), `overdue`; `null`, gdy tabeli nie ma (baza sprzed 0184) |
+| `GET /api/email/worker-status?schoolYearId=` (zarząd, skarbnik) | `guardianVerifications`: `enabled`, `queued`, `sending`, `oldestQueuedAt` (`null`, gdy brak tabeli); alarm `guardian_verify_queue_stale` w `alarms`; czekający kod liczy się dla alarmów `worker_*` jak kampania do wysyłki |
+
+Próg: `GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS` (domyślnie 2 h, niepoprawna wartość = domyślna); alarm
+`worker-status` używa progu `EMAIL_WORKER_ALARM_HOURS`. Przy wyłączonej fladze
+`GUARDIAN_VERIFY_EMAIL_ENABLED` w procesie aplikacji liczby są widoczne, ale `overdue`/progi/alarmy
+nie włączają się (wiersze w kolejce czekają celowo). Liczby kolejki kodów są ogólnoszkolne (kolejka
+nie należy do roku szkolnego), jak przebiegi zadania w `worker-status`. Szczegóły: docs/EMAIL.md,
+docs/RAILWAY_OPERATIONS.md („Stan systemu”).
 
 ## Poza zakresem (nadal ograniczone)
 

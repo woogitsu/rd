@@ -8,6 +8,7 @@ import {
 } from '../src/pg/auth.js';
 import { requireAccess, revokeRoleGrant } from '../src/pg/authorization.js';
 import { assertNoPii } from '../src/pg/audit.js';
+import { createSessionSecret } from '../src/auth.js';
 import { resolveRuntime } from '../src/server.js';
 import { assertEvery } from './helpers/assertions.js';
 import { createTestDb, request, seedClass, seedUser, seedUserSession } from './helpers/pg.js';
@@ -305,6 +306,43 @@ test('invitation is one-time, expires, can be revoked and must match the account
 
   const { rows: invitations } = await db.query('SELECT token_hash FROM invitations');
   assertEvery(invitations, (row) => row.token_hash !== invite.secret && row.token_hash.length === 64);
+}));
+
+// Wskazanie 2026-10-02: zaproszenie `principal` utworzone przed wymogiem roku (school_year_id NULL)
+// nie nadaje przydziału ważnego we wszystkich latach — przyjęcie jest blokowane, zaproszenie
+// zostaje oczekujące (do jawnego wycofania), a inne role bez roku działają jak dotąd.
+test('acceptInvitation: zaproszenie principal bez roku jest blokowane kodem school_year_required', async () => withDb(async (db, env) => {
+  await seedUser(db, { userId: 'admin' });
+  await seedUser(db, { userId: 'dyrekcja', email: 'dyrekcja.synthetic@example.invalid' });
+  const legacy = await createSessionSecret();
+  const legacyId = crypto.randomUUID();
+  await db.query(
+    `INSERT INTO invitations (id, email, token_hash, role, school_year_id, created_by, expires_at)
+     VALUES ($1, 'dyrekcja.synthetic@example.invalid', $2, 'principal', NULL, 'admin', now() + interval '1 day')`,
+    [legacyId, legacy.tokenHash],
+  );
+  assert.deepEqual(
+    await acceptInvitation(env, { token: legacy.secret, userId: 'dyrekcja' }),
+    { ok: false, error: 'school_year_required', reason: 'school_year_required' },
+  );
+  const state = (await db.query(
+    `SELECT (SELECT count(*) FROM role_grants WHERE user_id = 'dyrekcja')::int AS grants,
+            (SELECT accepted_at FROM invitations WHERE id = $1) AS accepted_at,
+            (SELECT revoked_at FROM invitations WHERE id = $1) AS revoked_at`,
+    [legacyId],
+  )).rows[0];
+  assert.deepEqual(state, { grants: 0, accepted_at: null, revoked_at: null }, 'nic nie zmienione ani odebrane automatycznie');
+  // Zaproszenie nadal można jawnie wycofać.
+  assert.equal(await revokeInvitation(env, { invitationId: legacyId, actorId: 'admin' }), true);
+
+  // Kontrola pozytywna: z rokiem przyjęcie działa; audit bez roku (inna rola) też.
+  await seedClass(db, { id: 'c-dyr', schoolYearId: 'y-2026' });
+  const dated = await createInvitation(env, { actorId: 'admin', email: 'dyrekcja.synthetic@example.invalid', role: 'principal', schoolYearId: 'y-2026' });
+  assert.equal((await acceptInvitation(env, { token: dated.secret, userId: 'dyrekcja' })).ok, true);
+  const audit = await createInvitation(env, { actorId: 'admin', email: 'dyrekcja.synthetic@example.invalid', role: 'audit' });
+  assert.equal((await acceptInvitation(env, { token: audit.secret, userId: 'dyrekcja' })).ok, true);
+  const { rows } = await db.query("SELECT role, school_year_id FROM role_grants WHERE user_id = 'dyrekcja' ORDER BY role");
+  assert.deepEqual(rows, [{ role: 'audit', school_year_id: null }, { role: 'principal', school_year_id: 'y-2026' }]);
 }));
 
 test('no email addresses reach audit metadata or console logs', async () => withDb(async (db, env) => {

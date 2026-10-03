@@ -17,7 +17,7 @@ protokołu, `/api/admin/ops-status` i `/health/jobs`).
 | Usługa cron e-mail | `railway.email-worker.json` | osobna usługa (#130): build `npm ci`, start `node scripts/email-worker.js` (**dry-run**, bez `--send`), `cronSchedule` `15 * * * *`, restart `NEVER`, region `europe-west4-drams3a`; nie jest utworzona w żadnym środowisku (sekcja „Zadanie wysyłki e-mail”) |
 | Usługi cron kopii i próby odtworzenia | `railway.backup.json`, `railway.restore-drill.json` | osobne usługi `rd-backup` (`node scripts/backup-postgres.js`, `17 2 * * *`) i `rd-restore-drill` (`node scripts/restore-drill.js`, `43 4 * * 1`, bez `--allow-production`); restart `NEVER`, region `europe-west4-drams3a`; nie są utworzone w żadnym środowisku, zmienne `BACKUP_*`/`RESTORE_DRILL_*` i magazyn dopiero po D-01/D-20 (sekcja „Backup PostgreSQL”) |
 | Test konfiguracji | `tests/railway-config.test.js` | brak migracji/odtworzenia przy starcie, brak sekretów, region UE; usługa cron e-mail bez `--send` i bez restartu |
-| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 17 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
+| Smoke test | `npm run smoke` (`scripts/smoke-postgres.js`) | migracje na PGlite w pamięci (dwukrotnie, druga bez zmian), readiness po migracjach, serwer na losowym porcie `127.0.0.1`, `/health`, `/health/ready` bez bazy (`503`) i przez prawdziwy HTTP z migracjami (`200`), wszystkich 18 paneli (`STATIC_PREFIXES`), nagłówki, `404` dla ścieżek prywatnych/traversal i brak `*.map`, granice ról na poziomie HTTP |
 | Smoke test zdalny | `npm run smoke:remote` (`scripts/smoke-remote.js`) | wyłącznie `GET`, po deployu stagingu (sekcja „Smoke test po deployu” niżej) |
 | Test wolumenu | `tests/postgres-volume.test.js` | 1000 uczniów, 2000 kontaktów opiekunów, 50 użytkowników z uprawnieniami, wpłaty częściowe i korekty |
 | Test wydajności | `npm run load:test` (`scripts/load-test.js`), wariant skrócony `tests/load-smoke.test.js` | 50 równoczesnych użytkowników na danych 1000/2000/50; lokalnie PGlite, zdalnie wyłącznie staging (sekcja „Test wydajności”) |
@@ -131,7 +131,8 @@ słowem „sekret” oznacza zmienną ustawianą wyłącznie w Railway.
 | `BACKUP_MAX_AGE_HOURS` | aplikacja | nie | `26` | próg alarmu „stara kopia” w `/health/jobs` |
 | `EMAIL_WORKER_MAX_AGE_HOURS` | aplikacja | nie | `6` | próg alarmu „brak przebiegu workera” w `/health/jobs` |
 | `EMAIL_QUEUE_MAX_AGE_HOURS` | aplikacja | nie | `24` | próg alarmu „stara wiadomość w kolejce” |
-| `EMAIL_WORKER_ALARM_HOURS` | aplikacja | nie | `2` | alarm „brak przebiegów” dla zarządu (`/api/email/worker-status`) |
+| `GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS` | aplikacja | nie | `2` | próg alarmu „stary kod weryfikacyjny w kolejce” w `/health/jobs`, `ops-status` i `worker-status` (#140 pkt 5; niepoprawna wartość = domyślna) |
+| `EMAIL_WORKER_ALARM_HOURS` | aplikacja | nie | `2` | alarm „brak przebiegów” dla zarządu (`/api/email/worker-status`); ten sam próg dla alarmu `guardian_verify_queue_stale` |
 | `DOCUMENT_MAX_BYTES` | aplikacja | nie | `10485760` | limit pliku dokumentu w bajtach (najwyżej 25 MiB) |
 | `DOCUMENT_MAX_CONCURRENT_UPLOADS` | aplikacja | nie | `4` | równoległe wysyłki dokumentów |
 | `BUCKET_ENDPOINT` | aplikacja | tak (dokumenty) | brak | adres Storage Bucket; wszystkie pięć `BUCKET_*` albo żadna (częściowa konfiguracja zatrzymuje start) |
@@ -1000,7 +1001,9 @@ bez potrzeby dostępu do Railway:
 
 - **`GET /api/admin/ops-status`** (wyłącznie rola `admin`, `Cache-Control: no-store`):
   migracje (nałożone/zaległe), ostatni przebieg workera e-mail, stan kolejki
-  (`email_outbox`), ostatnia udana kopia PostgreSQL/bucketu/próba odtworzenia
+  (`email_outbox`), stan kolejki kodów weryfikacyjnych nowych adresów
+  (`guardianVerifyQueue`: `queued`, `sending`, najstarszy oczekujący i
+  `overdue` — #140 pkt 5, tabela `guardian_update_verifications`), ostatnia udana kopia PostgreSQL/bucketu/próba odtworzenia
   (#90, #103 — dziennik `backup_runs`, jeśli już scalone; w przeciwnym razie
   `no_data`, nie fałszywe „w normie”), ostatni eksport roczny, tryb pracy
   (`APP_WRITE_MODE`, #143), wersja aplikacji (`RAILWAY_GIT_COMMIT_SHA`) i
@@ -1012,9 +1015,17 @@ bez potrzeby dostępu do Railway:
   `/health/ready` (Railway). Chroniony tokenem stałej długości porównania
   (`HEALTH_JOBS_TOKEN` w nagłówku `Authorization: Bearer …`); brak lub zły
   token → `401`. Zwraca `503` z nazwą przekroczonego progu (`backup_too_old`,
-  `email_worker_stale`, `email_queue_too_old`) — bez liczb i dat w
-  odpowiedzi. Progi są konfiguracją (`BACKUP_MAX_AGE_HOURS`,
-  `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS`), nie kodem.
+  `email_worker_stale`, `email_queue_too_old`, `guardian_verify_queue_too_old`)
+  — bez liczb i dat w odpowiedzi. Progi są konfiguracją (`BACKUP_MAX_AGE_HOURS`,
+  `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS`,
+  `GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS`), nie kodem. Kody weryfikacyjne (#140
+  pkt 5) obsługuje ten sam worker co kampanie: czekający kod (`queued`) wymaga
+  świeżego przebiegu (ta sama nazwa `email_worker_stale`), a najstarszy
+  oczekujący starszy niż `GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS` (domyślnie 2 h —
+  rodzic czeka na wiadomość, kod jest ważny 24 h od przejęcia do wysyłki) daje
+  `guardian_verify_queue_too_old`. Przy wyłączonej fladze
+  `GUARDIAN_VERIFY_EMAIL_ENABLED` w procesie aplikacji kolejka kodów nie włącza
+  żadnego progu (wiersze czekają celowo).
 - Widok „Stan systemu” w panelu `admin/` (`admin/ops-status.js`, czyste
   funkcje w `admin/ops-status-core.js`): tabela nad odpowiedzią `ops-status`,
   kolor wyłącznie dla stanu (w normie / uwaga / błąd / brak danych, zawsze z
