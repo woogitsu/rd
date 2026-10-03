@@ -1,4 +1,4 @@
-// Rejestr schematów OpenAPI (#160, etapy 2-6) i jawny rejestr pokrycia.
+// Rejestr schematów OpenAPI (#160, etapy 2-7) i jawny rejestr pokrycia.
 //
 // Każdy plik `src/pg/schemas/<moduł>.js` eksportuje:
 //   name        nazwa modułu tras (jak `name` w src/pg/routes/*.js i `module` w macierzy tras),
@@ -35,20 +35,22 @@ import * as ledgerCash from './ledger-cash.js';
 import * as ledgerCostCenters from './ledger-cost-centers.js';
 import * as email from './email.js';
 import * as families from './families.js';
+import * as meetings from './meetings.js';
 import * as reconciliation from './reconciliation.js';
 import * as session from './session.js';
 import { COMMON_COMPONENTS } from './common.js';
 
 export const SCHEMA_MODULES = Object.freeze([
-  email, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, paymentInstructions, paymentReferences, payments,
-  reconciliation, session,
+  email, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, meetings, paymentInstructions, paymentReferences,
+  payments, reconciliation, session,
 ]);
 
-// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 6: wpłaty, księga
-// z preliminarzem, kasą i centrami kosztów, rodziny, sesja, uzgodnienia wyciągów bankowych i kampanie e-mail).
+// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 7: wpłaty, księga
+// z preliminarzem, kasą i centrami kosztów, rodziny, sesja, uzgodnienia wyciągów bankowych, kampanie e-mail
+// i zebrania).
 export const UNCOVERED_MODULES = Object.freeze([
   'admin', 'audit-history', 'audit-reviews', 'board', 'documents', 'events', 'exports',
-  'financial-reports', 'guardian-updates', 'import', 'login', 'meetings', 'mfa', 'news', 'print',
+  'financial-reports', 'guardian-updates', 'import', 'login', 'mfa', 'news', 'print',
   'privacy-notice', 'representative', 'year-close',
 ]);
 
