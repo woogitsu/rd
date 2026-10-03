@@ -319,6 +319,9 @@ export const MESSAGES = Object.freeze({
   opening_balance_exists: "Bilans otwarcia dla tego roku szkolnego już istnieje.",
   opening_balance_not_found: "Nie znaleziono bilansu otwarcia dla tego roku szkolnego.",
   not_first_school_year: "Bilans otwarcia można wpisać ręcznie tylko dla pierwszego roku szkolnego w systemie.",
+  // Pola tekstowe z długością sprawdzaną przez helper `text(…, kod)` (bilans otwarcia, zamknięcie roku, uzgodnienie).
+  invalid_note: "Opis lub uwaga musi mieć od 3 do 500 znaków.",
+  invalid_notes: "Uwagi muszą mieć od 3 do 1000 znaków.",
   // Import wyciągu CODA / CAMT.053 (#105).
   invalid_statement_file: "Nie udało się odczytać pliku wyciągu. Sprawdź format pliku.",
   statement_account_mismatch: "Rachunek w pliku wyciągu nie jest zatwierdzonym rachunkiem Rady.",

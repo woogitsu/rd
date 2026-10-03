@@ -254,12 +254,13 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-3)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-4)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
-etap 3 — `families`, `session`; razem 48 operacji) mają schematy ciał żądań i odpowiedzi
+etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; razem 63 operacje)
+mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
 - rejestr pokrycia: każda trasa macierzy pokrytego modułu ma schemat (kontrola pozytywna: detektor wskazuje
@@ -296,11 +297,40 @@ Rejestr pokrycia i katalog kodów w tym pliku obejmują wszystkie pokryte moduł
 `409 school_year_closed` (zamknięty rok) jest w schematach rodzin, ale nie w tym teście: wymaga obejścia triggerów
 (`TRIGGER_BYPASS_ALLOWED` w `tests/test-quality-lint.test.js`), a reakcję tras sprawdza `tests/pg-family-changes.test.js`.
 
+Prawdziwe odpowiedzi etapu 4 sprawdza `tests/openapi-contract-ledger-extra.test.js` (ten sam `createContractClient`,
+PGlite, dane syntetyczne; rok testowy jest pierwszym rokiem w systemie):
+
+- `ledger-budget`: pierwsza wersja linii (z uwagą i bez), rewizja wskazująca poprzednią wersję, druga rewizja
+  zastąpionej wersji `409 budget_line_superseded` z `currentLineId`, przyjęcie preliminarza bez uchwały i z przyjętą
+  uchwałą zebrania ogólnego (tylko zarząd), wyłączenie kategorii z historią (`409 category_inactive` przy ponownym),
+  historia wersji i przyjęć, wykonanie w czterech formatach (JSON z `check`, JSON na dzień `asOf` — przed przyjęciem
+  i po — oraz CSV, XLSX, HTML); błędy `budget_line_exists`, `budget_empty`, `invalid_category`, `invalid_amount`,
+  `invalid_reason`, `resolution_not_found`, `school_year_not_found`, `415`, `422`;
+- `ledger-cash`: bilans otwarcia przed zapisem (`null`), zapis z dowodem, ponowienie, `opening_balance_exists`,
+  `not_first_school_year`, `invalid_source_document`, `invalid_note`; poprawka z ponowieniem, `cash_below_zero`,
+  `opening_balance_not_found`, `invalid_amount`; przeniesienie z ponowieniem, storno, drugie storno
+  (`transfer_already_reversed`), storno storna (`invalid_reversal`), `transfer_not_found`, data poza rokiem (`422`),
+  `413` i bramka danych osobowych;
+- `ledger-cost-centers`: wpis bez przypisania, pierwsza wersja (wydarzenie) z ponowieniem, druga „pierwsza” wersja
+  innym kluczem `409 allocation_version_conflict` z `currentVersionId`, nowa wersja z podziałem na dwie klasy,
+  `allocation_exceeds_net`, `allocation_reason_required`, `invalid_allocation`, `invalid_cost_center`, `invalid_id`,
+  `ledger_entry_not_found`; raport per wydarzenie i per klasa (JSON, CSV, XLSX) i rozliczenie wydarzenia
+  (`event_not_found`);
+- granice ról na odczytach i zapisach wszystkich trzech modułów: brak sesji `401`, przedstawiciel klasy i Komisja
+  Rewizyjna `403 forbidden`, zarząd bez MFA `403 mfa_enrollment_required`, obcy `Origin` `403 invalid_origin`,
+  skarbnik przy przyjęciu preliminarza i bilansie otwarcia `403`; pominięcie każdego wymaganego pola ciała → `400`;
+- **zamknięty rok** bez obchodzenia triggerów: rok zamykają trasy `year-close` (lista kontrolna i druga osoba
+  zarządu), po czym linia, rewizja, przyjęcie, wyłączenie kategorii, poprawka bilansu, przeniesienie i przypisanie
+  dają `409 school_year_closed`, a bilans otwarcia następnego roku ma `carriedFromSchoolYearId`;
+- trasy z parametrem `format` mają w specyfikacji schemat na każdy typ treści; klient kontraktu wybiera go po
+  rzeczywistym `Content-Type` (kontrola pozytywna: nieopisany `Content-Type` jest błędem), a test wymaga walidacji
+  każdego formatu.
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
 `tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`, jak
-`tests/openapi-contract-families.test.js`).
+`tests/openapi-contract-families.test.js` i `tests/openapi-contract-ledger-extra.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 

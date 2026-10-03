@@ -4,10 +4,12 @@
 //   * ciało żądania zgodne ze schematem `requestBody` (chyba że test wysyła je celowo błędne),
 //   * parametry zapytania są opisane w operacji,
 //   * status odpowiedzi jest opisany, a treść JSON zgodna ze schematem tej odpowiedzi
-//     (pliki: zgodny Content-Type), nagłówek Idempotency-Replayed zgodny ze specyfikacją,
+//     (pliki: zgodny Content-Type; przy kilku formatach schemat wybiera Content-Type odpowiedzi),
+//     nagłówek Idempotency-Replayed zgodny ze specyfikacją,
 //   * kod błędu należy do `x-rd-error-codes` danego statusu.
 // Zebrane trójki `METODA /ścieżka status` (`client.validated`) pozwalają testowi sprawdzić,
-// że każda odpowiedź sukcesu opisana w schematach została choć raz zwalidowana na prawdziwej odpowiedzi.
+// że każda odpowiedź sukcesu opisana w schematach została choć raz zwalidowana na prawdziwej odpowiedzi;
+// odpowiedź z kilkoma formatami dodaje też `METODA /ścieżka status typ-treści` dla każdego formatu.
 import assert from 'node:assert/strict';
 import { validateSchema } from './json-schema.js';
 import { request } from './pg.js';
@@ -88,10 +90,16 @@ export function createContractClient({ spec, fetch }) {
       assert.equal(replayedHeader, null, `${method} ${template} ${response.status}: odpowiedź ma Idempotency-Replayed, a specyfikacja go nie opisuje`);
     }
     if (described.content) {
-      const [declaredType, media] = Object.entries(described.content)[0];
+      // Kilka formatów jednej odpowiedzi (parametr `format`): schemat wybiera rzeczywisty Content-Type.
+      const media = Object.entries(described.content);
+      const chosen = media.length === 1 ? media[0]
+        : media.find(([type]) => (type === 'application/json' ? isJson : type === contentType));
+      assert.ok(chosen, `${method} ${template} ${response.status}: Content-Type ${contentType} nie jest opisany w specyfikacji`);
+      const [declaredType, { schema }] = chosen;
+      if (media.length > 1) validated.add(`${method} ${template} ${response.status} ${declaredType}`);
       if (declaredType === 'application/json') {
         assert.ok(isJson, `${method} ${template} ${response.status}: oczekiwano JSON, jest ${contentType}`);
-        assert.deepEqual(validateSchema(media.schema, parsed, { components }), [],
+        assert.deepEqual(validateSchema(schema, parsed, { components }), [],
           `${method} ${template} ${response.status}: odpowiedź niezgodna ze schematem`);
       } else {
         assert.equal(contentType, declaredType, `${method} ${template} ${response.status}: zły Content-Type`);

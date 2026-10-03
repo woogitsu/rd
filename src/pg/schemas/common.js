@@ -112,5 +112,15 @@ export function fileResponse(description, contentType) {
   };
 }
 
+export const HTML_CONTENT_TYPE = 'text/html; charset=utf-8';
+
+/**
+ * Odpowiedź w kilku formatach jednej trasy (parametr `format`, #160 etap 4): mapa
+ * `typ treści → schemat`. Klient kontraktu wybiera schemat po rzeczywistym Content-Type.
+ * @param {string} description
+ * @param {Record<string, object>} content
+ */
+export const formatsResponse = (description, content) => ({ description, content });
+
 /** Odpowiedź JSON z nagłówkiem `Idempotency-Replayed` (`'true'` dla 200 odtworzenia, `'false'` dla 201). */
 export const replayed = (value, description, schema) => ({ description, schema, replayed: value });
