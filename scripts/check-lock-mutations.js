@@ -6,6 +6,8 @@
 //   npm run test:pg-mutations                 wszystkie mutanty
 //   npm run test:pg-mutations -- --list       tylko lista (bez uruchamiania)
 //   npm run test:pg-mutations -- admin-last   wybrane (po id)
+//   npm run test:pg-mutations -- --shard=2/3  część 2 z 3 (CI: job test-pg-mutations;
+//                                             podział: scripts/lock-mutation-shards.js)
 //
 // Kod repozytorium NIE jest zmieniany: skrypt kopiuje potrzebne katalogi do
 // katalogu tymczasowego, tam podmienia jeden plik, uruchamia
@@ -23,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LOCK_KINDS, scanSource } from './lock-inventory.js';
+import { parseShard, shardMutants } from './lock-mutation-shards.js';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -163,10 +166,19 @@ function runTests(dir, file) {
 async function main() {
   const args = process.argv.slice(2);
   const selected = args.filter((a) => !a.startsWith('--'));
-  const mutants = selected.length ? MUTANTS.filter((m) => selected.includes(m.id)) : MUTANTS;
+  let mutants = selected.length ? MUTANTS.filter((m) => selected.includes(m.id)) : MUTANTS;
   if (selected.length && mutants.length !== selected.length) {
     console.error(`Nieznany mutant: ${selected.filter((id) => !MUTANTS.some((m) => m.id === id)).join(', ')}`);
     return 2;
+  }
+  const shardArg = args.find((a) => a.startsWith('--shard='));
+  if (shardArg) {
+    // Część i/N liczona zawsze z pełnej listy MUTANTS (każdy mutant w dokładnie jednej części).
+    if (selected.length) { console.error('--shard nie łączy się z wyborem mutantów po id.'); return 2; }
+    let shard;
+    try { shard = parseShard(shardArg.slice('--shard='.length)); } catch (error) { console.error(error.message); return 2; }
+    mutants = shardMutants(MUTANTS, shard.index, shard.total);
+    console.error(`# część ${shard.index}/${shard.total}: mutantów ${mutants.length} z ${MUTANTS.length}`);
   }
   for (const mutant of mutants) applyMutant(await readFile(join(root, mutant.file), 'utf8'), mutant);
   if (args.includes('--list')) {

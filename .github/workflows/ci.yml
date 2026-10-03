@@ -142,11 +142,12 @@ jobs:
   # (hasło poniżej dotyczy wyłącznie efemerycznego kontenera CI).
   # Skrypt `scripts/test-pg-real.js` przy ustawionym RD_TEST_PG_URL używa tego
   # serwera zamiast uruchamiać własny (docs/TESTING.md).
+  # Kontrola mutacyjna blokad biegnie osobno (job `test-pg-mutations`, #111):
+  # razem z nią ten job trwał ok. 9 min i wyznaczał czas PR.
   test-pg-real:
     runs-on: ubuntu-latest
-    # 30 -> 45 min (#208): kontrola mutacyjna ma teraz 42 mutanty (po ~10 s lokalnie na każdy)
-    # i dwa dodatkowe pliki z barierą; zapas ≥ 20% względem pomiaru z podsumowania joba.
-    timeout-minutes: 45
+    # Pomiar na GitHub (#111): krok testów 106–127 s, job ok. 2,5 min; limit z dużym zapasem.
+    timeout-minutes: 15
     services:
       postgres:
         # postgres:16 (multi-arch index) przypięty do digestu.
@@ -171,10 +172,47 @@ jobs:
           node-version: '22'
       - run: npm ci --ignore-scripts
       - run: npm run test:pg-real
-      # Kontrola mutacyjna blokad (#208): usunięcie każdej blokady z listy w
-      # scripts/check-lock-mutations.js (FOR UPDATE / pg_advisory_xact_lock)
-      # musi dać czerwony test. Kod repozytorium nie jest zmieniany (kopia).
-      - run: npm run test:pg-mutations
+
+  # Kontrola mutacyjna blokad (#208): usunięcie każdej blokady z listy w
+  # scripts/check-lock-mutations.js (FOR UPDATE / pg_advisory_xact_lock) musi
+  # dać czerwony test na prawdziwym PostgreSQL. Kod repozytorium nie jest
+  # zmieniany (kopia). #111: mutanty podzielone na 3 części, każda w osobnym
+  # jobie z własną usługą `postgres` (ten sam digest i hasło tylko dla CI).
+  # Podział i/N liczy scripts/lock-mutation-shards.js (deterministycznie, każdy
+  # mutant w dokładnie jednej części — pilnuje tests/lock-mutations.test.js);
+  # zmiana N wymaga zmiany macierzy i `--shard=…/N` naraz.
+  test-pg-mutations:
+    runs-on: ubuntu-latest
+    # Pomiar na GitHub (#111): wszystkie mutanty w jednym kroku 361–404 s; szacunek części ok. 130 s.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    services:
+      postgres:
+        # postgres:16 (multi-arch index) przypięty do digestu.
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_PASSWORD: rd_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RD_TEST_PG_URL: postgres://postgres:rd_ci_only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm run test:pg-mutations -- --shard=${{ matrix.part }}/3
 
   # Integralność i kolejność migracji PostgreSQL (issue #79): manifest sum
   # kontrolnych aktualny, a PR ani nie zmienia scalonego pliku migracji, ani
@@ -251,9 +289,11 @@ jobs:
 
   # Jedyny wymagany check: oblewa, gdy którykolwiek z powyższych jobów nie
   # zakończył się sukcesem (włącznie z anulowaniem albo pominięciem). `e2e`
-  # jest CELOWO poza tą listą (patrz komentarz przy tym jobie).
+  # jest CELOWO poza tą listą (patrz komentarz przy tym jobie). Dla jobu z
+  # macierzą (`test`, `test-pg-mutations`) `needs.<job>.result` to „success”
+  # tylko wtedy, gdy zakończyły się sukcesem WSZYSTKIE jego części.
   ci-ok:
-    needs: [test, test-pg-real, audit, build, smoke, migrations-order, typecheck]
+    needs: [test, test-pg-real, test-pg-mutations, audit, build, smoke, migrations-order, typecheck]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -262,6 +302,7 @@ jobs:
         run: |
           echo "test: ${{ needs.test.result }}"
           echo "test-pg-real: ${{ needs.test-pg-real.result }}"
+          echo "test-pg-mutations: ${{ needs.test-pg-mutations.result }}"
           echo "audit: ${{ needs.audit.result }}"
           echo "build: ${{ needs.build.result }}"
           echo "smoke: ${{ needs.smoke.result }}"
@@ -269,6 +310,7 @@ jobs:
           echo "typecheck: ${{ needs.typecheck.result }}"
           if [ "${{ needs.test.result }}" != "success" ] ||
              [ "${{ needs.test-pg-real.result }}" != "success" ] ||
+             [ "${{ needs.test-pg-mutations.result }}" != "success" ] ||
              [ "${{ needs.audit.result }}" != "success" ] ||
              [ "${{ needs.build.result }}" != "success" ] ||
              [ "${{ needs.smoke.result }}" != "success" ] ||
