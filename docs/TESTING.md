@@ -155,6 +155,11 @@ występować w linii `test(...)` wskazanego pliku (sprawdza to meta-test).
 | zebrania | Korekty | tests/pg-meetings.test.js | approved minutes are immutable, lock the meeting and are corrected by new versions |
 | zebrania | Korekty | tests/pg-meeting-board-notice.test.js | zmiana porządku lub terminu po zatwierdzeniu kampanii |
 | zebrania | Błędny e-mail | tests/pg-meeting-board-notice.test.js | błędny adres odrzucony przez dostawcę i odbicie |
+| zebrania | 2 opiekunów | tests/pg-meetings-class-recheck.test.js | dwoje opiekunów jednego dziecka |
+| zebrania | Rodzeństwo | tests/pg-meetings-class-recheck.test.js | rodzeństwo w 1A i 2B |
+| zebrania | Ponowienie | tests/pg-meetings-class-recheck.test.js | ponowienie zadania niczego nie dubluje |
+| zebrania | Podw. kliknięcie | tests/pg-meetings-agenda-order.test.js | podwójne kliknięcie to powtórka |
+| zebrania | Korekty | tests/pg-meetings-agenda-order.test.js | zmiana kolejności po zatwierdzonym zawiadomieniu |
 | druk | 2 opiekunów | tests/pg-primary-household.test.js | opieka naprzemienna: dwa obowiązujące gospodarstwa |
 | druk | Rodzeństwo | tests/pg-print.test.js | rodzeństwo: jedna rodzina z uczniami z różnych klas |
 | druk | Wpł. częściowe | tests/pg-print.test.js | kwoty netto tylko dla roli finansowej z MFA |

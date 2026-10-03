@@ -138,6 +138,16 @@ export const ENTITY_TYPE_LABELS = Object.freeze({
 
 export const REASON_LABELS = Object.freeze({
   account_disabled: "konto wyłączone",
+  // Powody pominięcia wiadomości przez zadanie wysyłki tuż przed wysyłką (src/email/worker.js,
+  // #113: zawiadomienia o zebraniach) — dane po zatwierdzeniu kampanii zmieniły się.
+  account_address_changed: "adres konta zmieniony po zatwierdzeniu kampanii",
+  campaign_cancelled: "kampania anulowana przed wysyłką",
+  category_opted_out: "rezygnacja z tej kategorii wiadomości",
+  consent_or_address_changed: "zgoda na kontakt lub adres opiekuna zmienione po zatwierdzeniu kampanii",
+  payment_reference_missing: "brak aktywnej komunikacji strukturalnej rodziny w chwili wysyłki",
+  role_grant_inactive: "brak aktywnego przydziału roli w roku kampanii",
+  student_left_class: "dziecko nie jest już zapisane do klasy zebrania",
+  student_withdrawn: "dziecko nie jest już zapisane do szkoły w tym roku",
   // #140 pkt 5 (0184): kod weryfikacyjny nowego adresu opiekuna.
   address_suppressed: "adres na liście wyłączeń",
   attempts_exhausted: "wyczerpany limit prób wpisania kodu",
