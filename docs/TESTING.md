@@ -247,6 +247,33 @@ więc bramka routera nie zatrzymuje admina ani zarządu bez czynnika — odmowę
 Kontrola pozytywna: na kodzie sprzed poprawki zarząd bez MFA dostaje `201` z tokenem przy wydaniu linku,
 a błędne kodowanie w `approve` daje `503 service_unavailable`. Oba testy wtedy nie przechodzą.
 
+## Katalog rodzin: e-mail opiekuna i zapisy tylko z MFA (#751)
+
+Testy na PGlite z danymi syntetycznymi (`@example.invalid`), bez sieci. Świat testu: rodzeństwo w dwóch klasach
+(1A i 1B, wspólne gospodarstwo), dwoje opiekunów dziecka z 1A i opiekun wyłącznie dziecka z 1B.
+
+- `tests/pg-families.test.js`, opis „moduł rodzin: e-mail opiekuna i zapisy tylko z MFA (#751)”:
+  - przedstawiciel bez MFA (domyślne `MFA_REQUIRED_ROLES`): lista klasy i karta gospodarstwa bez żadnego adresu,
+    karta bez klucza `email`, z imionami, zgodami i relacjami. Z MFA: adresy obojga opiekunów dziecka z własnej klasy.
+    Przedstawiciel 1A nie widzi rodzeństwa z 1B ani jego opiekuna, w obu wariantach; przedstawiciel 1B — symetrycznie;
+  - eksport listy klasy bez zmian: bez MFA `403 mfa_enrollment_required`, z MFA lista z adresami;
+  - `MFA_REQUIRED_ROLES=admin,treasurer`: zarząd szkolny i zarząd z przydziałem klasy bez MFA dostają kartę bez
+    adresów, z MFA pełną;
+  - `MFA_REQUIRED_ROLES=admin,treasurer`: zarząd (szkolny i klasowy) bez MFA dostaje `403 forbidden` na każdym
+    z dziesięciu zapisów modułu i na zapisie nieistniejącego opiekuna (brak wyroczni istnienia). Migawka `guardians`,
+    `students`, przypisań, relacji, członkostw, liczników historii i audytu (bez `access.denied`) jest bez zmian.
+    Każda odmowa zostawia ślad `access.denied` z `requiredRole: admin,board`;
+  - kontrola pozytywna: zarząd z MFA wykonuje te same zapisy (200/201), bez śladu odmowy;
+  - domyślne `MFA_REQUIRED_ROLES`: zarząd bez MFA zatrzymuje bramka routera, przedstawiciel nie ma prawa zapisu.
+- Starsze testy reguł zgód dla adresu na karcie (#95, #200) używają sesji przedstawiciela z MFA.
+- `tests/openapi-contract-families.test.js`: karta przedstawiciela bez MFA przechodzi schemat bez `email`, z MFA ma adresy.
+- Macierz (`tests/pg-authz-matrix.test.js`): zapisy modułu mają `mfa: true`. `families.household` ma sprawdzenie
+  `householdEmailCheck`: klucz `email` jest wtedy i tylko wtedy, gdy sesja ma MFA, a bez MFA w odpowiedzi nie ma adresu.
+- `tests/families-core.test.js`: `guardianEmailText` pokazuje „ukryty — wymaga MFA” przy braku pola.
+
+Kontrola pozytywna: na kodzie sprzed poprawki nie przechodzą trzy nowe testy: karta przedstawiciela, karta zarządu
+przy `MFA_REQUIRED_ROLES=admin,treasurer` (adresy bez MFA) oraz zapisy zarządu bez MFA (wcześniej 200 i zmiana danych).
+
 ## Strażnik metod HTTP: trasa zapisu tylko własną metodą (po #748)
 
 `tests/pg-route-method-guard.test.js` to stały test regresyjny pomyłki metody z #748 (`GET …/approve` rozstrzygał

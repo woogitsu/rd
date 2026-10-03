@@ -12,6 +12,7 @@ import {
   formatCents,
   fullName,
   groupClassesByYear,
+  guardianEmailText,
   overviewRows,
   boardOverviewExportUrl,
   exportFilename,
@@ -337,7 +338,7 @@ async function renderHousehold(householdId) {
     }
     row.append(
       cell(fullName(guardian)),
-      cell(guardian.email ?? (guardian.contactAllowed ? "—" : "ukryty")),
+      cell(guardianEmailText(guardian)),
       cell(guardian.contactAllowed ? "tak" : "nie"),
       actions,
     );

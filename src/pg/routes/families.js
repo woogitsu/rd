@@ -27,6 +27,17 @@
 // nieistniejący i obiekt poza zakresem dają ten sam wynik: 404 not_found.
 // Karta gospodarstwa nie zawiera pól zadłużenia; sumy wpłat netto widzą
 // wyłącznie role finansowe z MFA. Jednostka ewidencji składki — decyzja D-11.
+// #751 (wskazania użytkownika 2026-10-03, do potwierdzenia w D-08/D-10):
+// * odczyt bez potwierdzonego MFA sesji — karta gospodarstwa nie ma pola
+//   `email` opiekuna (klucz pominięty, nie null), w każdym zakresie; uczniowie,
+//   imiona, nazwiska i relacje bez zmian. Z MFA odpowiedź jak dotąd. Inaczej
+//   lista klasy z adresami (eksport class-roster wymaga MFA) dałaby się
+//   odtworzyć z kart gospodarstw bez MFA;
+// * każdy zapis modułu wymaga MFA na samej trasie (`requireMfa: true`, jak
+//   guardian-updates po #750), niezależnie od MFA_REQUIRED_ROLES: bez MFA
+//   403 `forbidden` i ślad `access.denied` PRZED odczytem treści i obiektu
+//   (ta sama odpowiedź dla obiektu w zakresie, poza nim i nieistniejącego —
+//   bez wyroczni istnienia).
 
 import { isSameOrigin } from '../../auth.js';
 import { isSafeMethod } from '../http.js';
@@ -122,17 +133,29 @@ const STUDENT_IN_SCOPE = (studentExpr) => `($1::boolean OR EXISTS (
   SELECT 1 FROM enrollments se JOIN classes sc ON sc.id = se.class_id
    WHERE se.student_id = ${studentExpr} AND ${CLASS_IN_SCOPE('sc')}))`;
 
-async function requireReadContext(request, env, roles = READ_ROLES) {
+async function requireReadContext(request, env, roles = READ_ROLES, { requireMfa = false } = {}) {
   const context = await loadAuthorizationContext(request, env);
   if (!context) throw new RequestError('unauthenticated', 401);
-  const scope = householdScope(context, roles);
+  // requireMfa: sesja bez potwierdzonego MFA dostaje pusty zakres (resolveScope),
+  // więc odmowa jest ta sama co przy braku roli — ogólne 403 `forbidden`.
+  const scope = requireMfa
+    ? resolveScope(context, { roles, requireMfa: true, schoolWideRoles: HOUSEHOLD_WIDE_ROLES })
+    : householdScope(context, roles);
   if (!scope.any) {
     // #184: ślad odmowy 403 (przed transakcją żądania).
-    await logAccessDenied(env, context, { roles }, request);
+    await logAccessDenied(env, context, requireMfa ? { roles, requireMfa: true } : { roles }, request);
     throw new RequestError('forbidden', 403);
   }
   return { context, scope };
 }
+
+// #751: każdy zapis modułu — role edycji i potwierdzone MFA na samej trasie
+// (bramka routera działa tylko dla ról z MFA_REQUIRED_ROLES). Wołane przed
+// odczytem treści żądania i przed jakimkolwiek zapytaniem o obiekt.
+const requireEditContext = (request, env) => requireReadContext(request, env, EDIT_ROLES, { requireMfa: true });
+
+// #751: e-mail opiekuna tylko dla sesji z potwierdzonym MFA (w każdym zakresie).
+const sessionHasMfa = (context) => Boolean(context?.session?.mfaVerified);
 
 async function listClasses(request, env, url, json) {
   const schoolYearId = url.searchParams.get('schoolYearId');
@@ -268,6 +291,7 @@ async function getHousehold(request, env, householdId, json) {
     [householdId, visibleStudentIds],
   );
 
+  const withEmail = sessionHasMfa(context);
   const body = {
     household: { id: household.rows[0].id, archived: Boolean(household.rows[0].archived_at) },
     students: students.rows.map((row) => ({
@@ -282,13 +306,14 @@ async function getHousehold(request, env, householdId, json) {
     guardians: guardians.rows.map((row) => {
       // Założenie (D-08): zakres klasowy widzi e-mail tylko przy obu zgodach;
       // role szerokie widzą e-mail zawsze (bez zmian, do decyzji D-08).
+      // #751: bez MFA sesji pola `email` nie ma wcale (także dla ról szerokich).
       const contactAllowed = classScoped ? row.contact_allowed && row.relation_contact_allowed : row.contact_allowed;
       return {
         id: row.id,
         membershipId: row.membership_id,
         firstName: row.first_name,
         lastName: row.last_name,
-        email: !classScoped || contactAllowed ? row.email ?? null : null,
+        ...(withEmail ? { email: !classScoped || contactAllowed ? row.email ?? null : null } : {}),
         contactAllowed,
         relations: row.relations,
       };
@@ -364,7 +389,7 @@ async function setChangeContext(tx, { actorId, reason, effectiveOn = null }) {
 }
 
 async function updateGuardianContact(request, env, guardianId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   const contactData = await readJson(request);
   const input = parseContactInput(contactData);
   const actorId = context.session.user.id;
@@ -469,7 +494,7 @@ async function checkRectificationRequest(tx, dataRequestId, subjectType, subject
 }
 
 async function updateIdentity(request, env, subjectType, subjectId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   const identityData = await readJson(request);
   const input = parseIdentityInput(identityData);
   const actorId = context.session.user.id;
@@ -541,7 +566,7 @@ function parseRelationInput(data) {
 }
 
 async function updateRelationContact(request, env, guardianId, studentId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   const relationData = await readJson(request);
   const input = parseRelationInput(relationData);
   const actorId = context.session.user.id;
@@ -594,7 +619,7 @@ function parseEnrollmentInput(data) {
 }
 
 async function changeEnrollment(request, env, studentId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   const enrollmentData = await readJson(request);
   const input = parseEnrollmentInput(enrollmentData);
   const actorId = context.session.user.id;
@@ -655,7 +680,7 @@ function parseEndEnrollmentInput(data) {
 }
 
 async function endEnrollment(request, env, studentId, enrollmentId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   const endData = await readJson(request);
   const input = parseEndEnrollmentInput(endData);
   const actorId = context.session.user.id;
@@ -730,7 +755,7 @@ function parseEndRelationInput(data) {
 // obowiązującym dniem (0035). Zakres klasowy: wystarczy uczeń z zakresu, także
 // gdy relacja już się zakończyła (ponowienie zwraca changed: false, nie 404).
 async function endRelation(request, env, guardianId, studentId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   const endData = await readJson(request);
   const input = parseEndRelationInput(endData);
   const actorId = context.session.user.id;
@@ -774,7 +799,7 @@ async function endRelation(request, env, guardianId, studentId, json) {
 // bez następcy oznacza, że uczeń nie ma głównego gospodarstwa: wypada z kampanii
 // i kartek (wariant zachowawczy do D-11), co odpowiedź zgłasza flagą.
 async function endStudentHousehold(request, env, studentId, membershipId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   const endData = await readJson(request);
   const input = parseEndRelationInput(endData);
   const actorId = context.session.user.id;
@@ -840,7 +865,7 @@ const GUARDIAN_MEMBERSHIP_IN_SCOPE = `($1::boolean OR EXISTS (
      WHERE rel.guardian_id = gh.guardian_id AND ${STUDENT_IN_SCOPE('rel.student_id')}))`;
 
 async function endGuardianHousehold(request, env, guardianId, membershipId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   if (isClassScoped(scope)) {
     // #184: zakres wyłącznie klasowy — ślad odmowy przed transakcją.
     await logAccessDenied(env, context, { roles: EDIT_ROLES }, request);
@@ -899,7 +924,7 @@ function parseAddHouseholdInput(data) {
 // nowego (startsOn = D) — dwa zapisy w historii; nakładające się główne
 // członkostwo daje 409 student_household_overlap.
 async function addStudentHousehold(request, env, studentId, json) {
-  const { context, scope } = await requireReadContext(request, env, EDIT_ROLES);
+  const { context, scope } = await requireEditContext(request, env);
   if (isClassScoped(scope)) {
     // #184: zakres wyłącznie klasowy — ślad odmowy przed transakcją.
     await logAccessDenied(env, context, { roles: EDIT_ROLES }, request);

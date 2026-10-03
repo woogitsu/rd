@@ -23819,7 +23819,7 @@
           "families.guardianContact",
           "families.guardianContactShared"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -24081,7 +24081,7 @@
         "x-rd-matrix-ids": [
           "families.guardianHouseholdEnd"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -24282,7 +24282,7 @@
           "families.guardianIdentity",
           "families.guardianIdentityShared"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -24543,7 +24543,7 @@
         "x-rd-matrix-ids": [
           "families.relationContact"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -24765,7 +24765,7 @@
         "x-rd-matrix-ids": [
           "families.relationEnd"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -48561,7 +48561,7 @@
         "x-rd-matrix-ids": [
           "families.enrollment"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -48775,7 +48775,7 @@
         "x-rd-matrix-ids": [
           "families.enrollmentEnd"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -48985,7 +48985,7 @@
         "x-rd-matrix-ids": [
           "families.studentHouseholdAdd"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           201
         ],
@@ -49207,7 +49207,7 @@
         "x-rd-matrix-ids": [
           "families.studentHouseholdEnd"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -49419,7 +49419,7 @@
         "x-rd-matrix-ids": [
           "families.studentIdentity"
         ],
-        "x-rd-mfa": false,
+        "x-rd-mfa": true,
         "x-rd-ok-status": [
           200
         ],
@@ -60801,7 +60801,7 @@
                 "type": "null"
               }
             ],
-            "description": "Zakres klasowy: tylko przy zgodzie opiekuna i zgodzie relacji z widocznym dzieckiem, inaczej null (założenie D-08)."
+            "description": "Pole tylko dla sesji z potwierdzonym MFA (#751, wskazanie użytkownika 2026-10-03); bez MFA klucza nie ma w żadnym zakresie. Z MFA zakres klasowy dostaje adres tylko przy zgodzie opiekuna i zgodzie relacji z widocznym dzieckiem, inaczej null (założenie D-08); zakres szeroki — adres albo null, gdy go brak."
           },
           "contactAllowed": {
             "type": "boolean"
@@ -60836,7 +60836,6 @@
           "membershipId",
           "firstName",
           "lastName",
-          "email",
           "contactAllowed",
           "relations"
         ],

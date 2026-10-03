@@ -10,6 +10,7 @@ import {
   filterStudentsByName,
   formatPercent,
   groupClassesByYear,
+  guardianEmailText,
   hasRepresentativeGrant,
   hasPaymentColumn,
   overviewRows,
@@ -179,4 +180,12 @@ test('zakończenie członkostwa opiekuna: przycisk tylko dla zakresu szerokiego 
   assert.equal(canEndGuardianHousehold([{ role: 'board', classId: 'c-1' }]), false);
   assert.equal(canEndGuardianHousehold([{ role: 'treasurer' }, { role: 'representative', classId: 'c' }]), false);
   assert.equal(canEndGuardianHousehold(null), false);
+});
+
+test('guardianEmailText: brak pola email (sesja bez MFA, #751) to „ukryty — wymaga MFA”, nie „brak adresu”', () => {
+  assert.equal(guardianEmailText({ id: 'g-1', contactAllowed: true }), 'ukryty — wymaga MFA');
+  assert.equal(guardianEmailText({ id: 'g-1', contactAllowed: false }), 'ukryty — wymaga MFA');
+  assert.equal(guardianEmailText({ id: 'g-1', contactAllowed: true, email: 'opiekun@example.invalid' }), 'opiekun@example.invalid');
+  assert.equal(guardianEmailText({ id: 'g-1', contactAllowed: true, email: null }), '—');
+  assert.equal(guardianEmailText({ id: 'g-1', contactAllowed: false, email: null }), 'ukryty');
 });
