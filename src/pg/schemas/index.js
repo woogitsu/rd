@@ -1,4 +1,4 @@
-// Rejestr schematów OpenAPI (#160, etapy 2-10) i jawny rejestr pokrycia.
+// Rejestr schematów OpenAPI (#160, etapy 2-11) i jawny rejestr pokrycia.
 //
 // Każdy plik `src/pg/schemas/<moduł>.js` eksportuje:
 //   name        nazwa modułu tras (jak `name` w src/pg/routes/*.js i `module` w macierzy tras),
@@ -19,7 +19,10 @@
 //                   `content` = { typ treści: schemat } dla trasy z kilkoma formatami (parametr `format`,
 //                   helper `formatsResponse`); bez `schema` i `content` = odpowiedź bez treści (np. 204),
 //   errors          { status: [kody] } — kody błędów tej trasy; muszą istnieć w docs/API_ERRORS.md.
-//                   Pusta lista = status z macierzy tras, którego trasa w praktyce nie zwraca.
+//                   Pusta lista = status z macierzy tras, którego trasa w praktyce nie zwraca. Status odpowiedzi
+//                   wspólnej (`401` trasy z sesją → `Unauthenticated`) nie przyjmuje kodów (generator zgłasza błąd),
+//   errorDescriptions { status: opis } — opis błędu właściwy trasie (etap 11, np. `401` logowania = złe dane
+//                   logowania, nie brak sesji); tylko dla statusu z niepustą listą `errors`.
 //
 // Generator (scripts/build-openapi.js) dołącza wpisy do operacji z macierzy tras
 // (tests/helpers/route-matrix.js); tests/openapi-contract.test.js sprawdza pokrycie
@@ -39,23 +42,25 @@ import * as documents from './documents.js';
 import * as email from './email.js';
 import * as events from './events.js';
 import * as families from './families.js';
+import * as login from './login.js';
 import * as meetings from './meetings.js';
+import * as mfa from './mfa.js';
 import * as news from './news.js';
 import * as reconciliation from './reconciliation.js';
 import * as session from './session.js';
 import { COMMON_COMPONENTS } from './common.js';
 
 export const SCHEMA_MODULES = Object.freeze([
-  documents, email, events, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, meetings, news, paymentInstructions,
-  paymentReferences, payments, reconciliation, session,
+  documents, email, events, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, login, meetings, mfa, news,
+  paymentInstructions, paymentReferences, payments, reconciliation, session,
 ]);
 
-// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 10: wpłaty, księga
+// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 11: wpłaty, księga
 // z preliminarzem, kasą i centrami kosztów, rodziny, sesja, uzgodnienia wyciągów bankowych, kampanie e-mail,
-// zebrania, dokumenty, wydarzenia i aktualności z galerią).
+// zebrania, dokumenty, wydarzenia, aktualności z galerią, logowanie hasłem i MFA).
 export const UNCOVERED_MODULES = Object.freeze([
   'admin', 'audit-history', 'audit-reviews', 'board', 'exports',
-  'financial-reports', 'guardian-updates', 'import', 'login', 'mfa', 'print',
+  'financial-reports', 'guardian-updates', 'import', 'print',
   'privacy-notice', 'representative', 'year-close',
 ]);
 

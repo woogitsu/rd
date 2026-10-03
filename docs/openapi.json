@@ -104,7 +104,9 @@
       "ledger-budget",
       "ledger-cash",
       "ledger-cost-centers",
+      "login",
       "meetings",
+      "mfa",
       "news",
       "payment-instructions",
       "payment-references",
@@ -121,8 +123,6 @@
       "financial-reports",
       "guardian-updates",
       "import",
-      "login",
-      "mfa",
       "print",
       "privacy-notice",
       "representative",
@@ -130,7 +130,7 @@
     ],
     "operations": {
       "total": 297,
-      "withSchema": 193
+      "withSchema": 206
     }
   },
   "paths": {
@@ -4079,20 +4079,28 @@
         "operationId": "login_state",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Stan MFA i hasła bieżącej sesji.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthState"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
           },
           "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "description": "Status z macierzy tras (x-rd-deny-status); trasa go nie zwraca, więc lista kodów jest pusta.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": []
           }
         },
         "security": [
@@ -11706,7 +11714,7 @@
             ]
           },
           "429": {
-            "description": "Błąd (kod z katalogu).",
+            "description": "Zbyt wiele prób (kod z katalogu; nagłówek Retry-After).",
             "content": {
               "application/json": {
                 "schema": {
@@ -11815,7 +11823,7 @@
             ]
           },
           "429": {
-            "description": "Błąd (kod z katalogu).",
+            "description": "Zbyt wiele prób (kod z katalogu; nagłówek Retry-After).",
             "content": {
               "application/json": {
                 "schema": {
@@ -11905,7 +11913,7 @@
             ]
           },
           "429": {
-            "description": "Błąd (kod z katalogu).",
+            "description": "Zbyt wiele prób (kod z katalogu; nagłówek Retry-After).",
             "content": {
               "application/json": {
                 "schema": {
@@ -17480,9 +17488,150 @@
     "/api/invitations/accept": {
       "post": {
         "operationId": "login_invitationAccept",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationAcceptRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "Utworzono."
+            "description": "Zaproszenie przyjęte, sesja bez MFA w cookie `Set-Cookie`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationAcceptResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_display_name",
+              "invalid_invitation",
+              "invalid_json",
+              "password_common",
+              "password_contains_email",
+              "password_mismatch",
+              "password_too_long",
+              "password_too_short"
+            ]
+          },
+          "401": {
+            "description": "Zaproszenie na adres konta z hasłem, a podane hasło nie jest jego obecnym hasłem.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_credentials"
+            ]
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Stan konta zmienił się między sprawdzeniem hasła a zapisem — ponów żądanie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Zaproszenie dyrekcji bez roku szkolnego (sprzed wymogu roku): nie zostaje zużyte; administrator wystawia nowe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_required"
+            ]
+          },
+          "429": {
+            "description": "Limit błędnych tokenów na IP albo błędnych haseł istniejącego konta — nagłówek Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "too_many_attempts"
+            ]
+          },
+          "503": {
+            "description": "Kolejka obliczeń scrypt pełna — nagłówek Retry-After: 5; token nie jest zużyty, ponowienie jest bezpieczne.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "login_busy"
+            ]
           }
         },
         "security": [],
@@ -17507,9 +17656,92 @@
     "/api/invitations/preview": {
       "post": {
         "operationId": "login_invitationPreview",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationPreviewRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Podgląd zaproszenia; token nie jest zużywany, sesja nie powstaje.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_invitation",
+              "invalid_json"
+            ]
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Limit błędnych tokenów na adres IP (wspólny z przyjęciem zaproszenia i resetem) — nagłówek Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "too_many_attempts"
+            ]
           }
         },
         "security": [],
@@ -22837,9 +23069,118 @@
     "/api/login": {
       "post": {
         "operationId": "login_password",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Sesja bez MFA (cookie `Set-Cookie`) i stan kolejnego kroku.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "password_too_long"
+            ]
+          },
+          "401": {
+            "description": "Nieznany adres, złe hasło, konto wyłączone albo bez hasła — jedna, ta sama odpowiedź (bez wyroczni istnienia konta).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_credentials"
+            ]
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Limit prób pary (adres, IP) albo adresu IP — nagłówek Retry-After (sekundy).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "too_many_attempts"
+            ]
+          },
+          "503": {
+            "description": "Kolejka obliczeń scrypt pełna — nagłówek Retry-After: 5; próba nie jest liczona.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "login_busy"
+            ]
           }
         },
         "security": [],
@@ -28282,22 +28623,123 @@
     "/api/mfa/confirm": {
       "post": {
         "operationId": "mfa_confirm",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaCodeRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Czynnik potwierdzony, kody odzyskiwania (jeden raz), sesja zrotowana.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaConfirmed"
+                }
+              }
+            }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthenticated"
-          },
-          "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+          "400": {
+            "description": "Błędne ciało albo kod nieprawidłowy, spoza okna ±1 krok lub już użyty (ponowne użycie liczy się jako błąd).",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_code",
+              "invalid_json"
+            ]
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Obcy Origin albo wymiana potwierdzonego czynnika z sesji bez potwierdzonego MFA.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_required"
+            ]
+          },
+          "409": {
+            "description": "Brak oczekującego czynnika (zapis nie rozpoczęty albo zastąpiony) — rozpocznij `enroll` ponownie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Za dużo błędnych kodów w sesji albo na koncie — nagłówek Retry-After (sekundy); w czasie blokady kod nie jest sprawdzany.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_locked"
+            ]
+          },
+          "503": {
+            "description": "Brak klucza szyfrowania albo klucza w wersji zapisanej przy czynniku (rotacja, #134).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_key_missing",
+              "mfa_unavailable"
+            ]
           }
         },
         "security": [
@@ -28330,20 +28772,45 @@
         "operationId": "mfa_enroll",
         "responses": {
           "201": {
-            "description": "Utworzono."
+            "description": "Oczekujący czynnik z sekretem (jeden raz); poprzedni niepotwierdzony wyłączony.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaEnrollment"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
           },
           "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "description": "Obcy Origin albo wymiana potwierdzonego czynnika bez MFA w tej sesji (`mfa_required`) lub z MFA starszym niż próg kroku w górę (`mfa_stale`).",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_required",
+              "mfa_stale"
+            ]
+          },
+          "503": {
+            "description": "Brak poprawnego klucza szyfrowania sekretów (`MFA_ENCRYPTION_KEY`/`MFA_ENCRYPTION_KEYS`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_unavailable"
+            ]
           }
         },
         "security": [
@@ -28374,9 +28841,40 @@
     "/api/mfa/recovery": {
       "post": {
         "operationId": "mfa_recovery",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaRecoveryRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Bieżąca sesja potwierdzona jednorazowym kodem odzyskiwania i zrotowana.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaVerified"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błędne ciało albo kod nieprawidłowy, spoza okna ±1 krok lub już użyty (ponowne użycie liczy się jako błąd).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_code",
+              "invalid_json"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28389,7 +28887,62 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Konto nie ma potwierdzonego czynnika.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_not_enrolled"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Za dużo błędnych kodów w sesji albo na koncie — nagłówek Retry-After (sekundy); w czasie blokady kod nie jest sprawdzany.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_locked"
+            ]
           }
         },
         "security": [
@@ -28420,9 +28973,40 @@
     "/api/mfa/verify": {
       "post": {
         "operationId": "mfa_verify",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaCodeRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Bieżąca sesja potwierdzona kodem TOTP i zrotowana.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaVerified"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błędne ciało albo kod nieprawidłowy, spoza okna ±1 krok lub już użyty (ponowne użycie liczy się jako błąd).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_code",
+              "invalid_json"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -28435,7 +29019,76 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "409": {
+            "description": "Konto nie ma potwierdzonego czynnika.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_not_enrolled"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Za dużo błędnych kodów w sesji albo na koncie — nagłówek Retry-After (sekundy); w czasie blokady kod nie jest sprawdzany.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_locked"
+            ]
+          },
+          "503": {
+            "description": "Brak klucza szyfrowania albo klucza w wersji zapisanej przy czynniku (rotacja, #134).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_key_missing",
+              "mfa_unavailable"
+            ]
           }
         },
         "security": [
@@ -31246,9 +31899,45 @@
     "/api/password/change": {
       "post": {
         "operationId": "login_passwordChange",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Hasło zmienione; nowy sekret bieżącej sesji w cookie `Set-Cookie`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordChangeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_current_password",
+              "invalid_json",
+              "password_common",
+              "password_contains_email",
+              "password_too_long",
+              "password_too_short",
+              "password_unchanged"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -31261,7 +31950,77 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "409": {
+            "description": "Hasło zmieniło się w międzyczasie (np. drugie kliknięcie) — odśwież i spróbuj ponownie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "conflict"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Limit błędnych obecnych haseł (para adres konta i IP, adres IP) — nagłówek Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "too_many_attempts"
+            ]
+          },
+          "503": {
+            "description": "Kolejka obliczeń scrypt pełna — nagłówek Retry-After: 5; hasło i sesje bez zmian.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "login_busy"
+            ]
           }
         },
         "security": [
@@ -31292,9 +32051,109 @@
     "/api/password/reset": {
       "post": {
         "operationId": "login_passwordReset",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Hasło ustawione, sesje konta wycofane; bez sesji i bez cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_token",
+              "password_common",
+              "password_contains_email",
+              "password_too_long",
+              "password_too_short"
+            ]
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "429": {
+            "description": "Limit błędnych tokenów na adres IP — nagłówek Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "too_many_attempts"
+            ]
+          },
+          "503": {
+            "description": "Kolejka obliczeń scrypt pełna — nagłówek Retry-After: 5; token nie jest zużyty.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "login_busy"
+            ]
           }
         },
         "security": [],
@@ -38521,20 +39380,28 @@
         "operationId": "sessions_list",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Aktywne sesje wołającego (bez adresu IP, User-Agent i sekretów).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnSessions"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
           },
           "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "description": "Status z macierzy tras (x-rd-deny-status); trasa go nie zwraca, więc lista kodów jest pusta.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": []
           }
         },
         "security": [
@@ -38567,7 +39434,14 @@
         "operationId": "mfa_revokeAll",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wycofane sesje własnego konta (z bieżącą); cookie wyczyszczone. Trasa nie czyta ciała.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnSessionsRevoked"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -38580,7 +39454,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
           }
         },
         "security": [
@@ -38617,13 +39494,20 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Własna sesja cofnięta; cofnięcie bieżącej czyści cookie (jak wylogowanie). Trasa nie czyta ciała.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnSessionRevoked"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -38636,7 +39520,23 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Cudza, nieistniejąca albo już cofnięta sesja — ta sama odpowiedź (zakres „tylko własne”, SR-07).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "not_found"
+            ]
           }
         },
         "security": [
@@ -41526,6 +42426,49 @@
         ],
         "additionalProperties": false,
         "description": "Zapis ścieżki kontroli Komisji Rewizyjnej (#137; niezmienny)."
+      },
+      "AuthState": {
+        "type": "object",
+        "properties": {
+          "authenticated": {
+            "const": true
+          },
+          "mfaVerified": {
+            "type": "boolean",
+            "description": "Bieżąca sesja ma potwierdzone MFA."
+          },
+          "mfaEnrolled": {
+            "type": "boolean"
+          },
+          "mfaRequired": {
+            "type": "boolean"
+          },
+          "mfaRequiredByRole": {
+            "type": "boolean"
+          },
+          "hasPassword": {
+            "type": "boolean",
+            "description": "Konto ma ustawione hasło (sam fakt, bez hasha)."
+          },
+          "mustChangePassword": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "authenticated",
+          "mfaVerified",
+          "mfaEnrolled",
+          "mfaRequired",
+          "mfaRequiredByRole",
+          "hasPassword",
+          "mustChangePassword",
+          "expiresAt"
+        ],
+        "additionalProperties": false,
+        "description": "Stan MFA i hasła bieżącej sesji dla ekranu logowania (#99)."
       },
       "BankStatementFileBalances": {
         "type": "object",
@@ -44666,9 +45609,11 @@
           "meeting_status_transition_invalid",
           "meetings_cannot_be_deleted",
           "method_not_allowed",
+          "mfa_enrollment_not_found",
           "mfa_enrollment_required",
           "mfa_key_missing",
           "mfa_locked",
+          "mfa_not_enrolled",
           "mfa_required",
           "mfa_stale",
           "mfa_unavailable",
@@ -44708,9 +45653,12 @@
           "opening_balance_not_found",
           "outbox_not_found",
           "outbox_resolution_not_found",
+          "password_common",
+          "password_contains_email",
           "password_mismatch",
           "password_required",
           "password_too_long",
+          "password_too_short",
           "password_unchanged",
           "payment_allocation_already_reversed",
           "payment_allocation_exceeds_net",
@@ -46366,6 +47314,146 @@
               "lastName"
             ]
           }
+        ]
+      },
+      "InvitationAcceptRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "writeOnly": true,
+            "description": "Jednorazowy token z linku zaproszenia (43 znaki base64url)."
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Nowe konto: nowe hasło (polityka 12-128 znaków po NFKC, bez popularnych haseł i adresu e-mail). Konto z hasłem: jego OBECNE hasło (błędne → 401 `invalid_credentials`). Najwyżej 1024 bajty UTF-8."
+          },
+          "passwordRepeat": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Powtórzenie hasła; wymagane przy tworzeniu konta (#164), inaczej 400 `password_mismatch`."
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Nazwa wyświetlana nowego konta (do 100 znaków po usunięciu znaków sterujących); brak = część lokalna adresu."
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ]
+      },
+      "InvitationAcceptResult": {
+        "type": "object",
+        "properties": {
+          "mfaRequired": {
+            "type": "boolean"
+          },
+          "mfaEnrolled": {
+            "type": "boolean"
+          },
+          "mfaRequiredByRole": {
+            "type": "boolean"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "true = powstało nowe konto; false = rola dopisana do istniejącego konta."
+          },
+          "mfaVerified": {
+            "const": false
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Koniec nowej sesji (sekret wyłącznie w cookie `Set-Cookie`)."
+          }
+        },
+        "required": [
+          "mfaRequired",
+          "mfaEnrolled",
+          "mfaRequiredByRole",
+          "created",
+          "mfaVerified",
+          "expiresAt"
+        ],
+        "additionalProperties": false,
+        "description": "Zaproszenie przyjęte: konto (nowe albo istniejące), przydział roli i sesja bez MFA."
+      },
+      "InvitationPreview": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "pattern": "^[^@]{1,2}…@[^@]+$",
+            "description": "Adres zaproszenia zamaskowany: pierwszy znak, wielokropek, domena (#164)."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "className": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Nazwa klasy przydziału klasowego."
+          },
+          "schoolYear": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Etykieta roku szkolnego przydziału."
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "accountExists": {
+            "type": "boolean",
+            "description": "true = konto z tym adresem ma już hasło: przyjęcie wymaga obecnego hasła, rola zostanie dopisana. Widzi to wyłącznie posiadacz ważnego tokenu (#164)."
+          }
+        },
+        "required": [
+          "email",
+          "role",
+          "className",
+          "schoolYear",
+          "expiresAt",
+          "accountExists"
+        ],
+        "additionalProperties": false,
+        "description": "Podgląd zaproszenia przed przyjęciem: bez zapraszającego, identyfikatorów i pełnego adresu."
+      },
+      "InvitationPreviewRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "writeOnly": true,
+            "description": "Jednorazowy token z linku zaproszenia (część `#invite=…`, 43 znaki base64url). Podgląd go nie zużywa."
+          }
+        },
+        "required": [
+          "token"
         ]
       },
       "IsoDate": {
@@ -49032,6 +50120,66 @@
         ],
         "description": "Nowe przeniesienie (`direction`, `amountCents`, `transferredOn`) albo storno (`reversesId`)."
       },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320,
+            "description": "Adres konta (wielkość liter bez znaczenia). Dłuższy niż 320 znaków → 400 `invalid_json`; adres w złym formacie daje ten sam 401 `invalid_credentials` co nieznany."
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Hasło (najwyżej 1024 bajty UTF-8, inaczej 400 `password_too_long`). Nie trafia do logów, audytu ani odpowiedzi."
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "LoginResult": {
+        "type": "object",
+        "properties": {
+          "mfaRequired": {
+            "type": "boolean",
+            "description": "true, gdy konto ma czynnik albo rolę z `MFA_REQUIRED_ROLES` — następny krok to `/api/mfa/verify` albo zapis MFA."
+          },
+          "mfaEnrolled": {
+            "type": "boolean",
+            "description": "Konto ma potwierdzony czynnik TOTP."
+          },
+          "mfaRequiredByRole": {
+            "type": "boolean",
+            "description": "Aktywny przydział roli z `MFA_REQUIRED_ROLES` (założenie D-10)."
+          },
+          "mustChangePassword": {
+            "type": "boolean",
+            "description": "Hasło oznaczone do zmiany."
+          },
+          "mfaVerified": {
+            "const": false,
+            "description": "Sesja po samym haśle nigdy nie ma potwierdzonego MFA."
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Koniec sesji (najwyżej 24 h). Sekret sesji jest wyłącznie w cookie `Set-Cookie`."
+          }
+        },
+        "required": [
+          "mfaRequired",
+          "mfaEnrolled",
+          "mfaRequiredByRole",
+          "mustChangePassword",
+          "mfaVerified",
+          "expiresAt"
+        ],
+        "additionalProperties": false,
+        "description": "Wynik logowania hasłem. Bez identyfikatora konta, ról i sekretu sesji."
+      },
       "Meeting": {
         "type": "object",
         "properties": {
@@ -51649,6 +52797,120 @@
           "reason"
         ]
       },
+      "MfaCodeRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 64,
+            "writeOnly": true,
+            "description": "Sześciocyfrowy kod z aplikacji uwierzytelniającej (inny format → 400 `invalid_code`, liczony do limitu)."
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "MfaConfirmed": {
+        "type": "object",
+        "properties": {
+          "mfaVerified": {
+            "const": true
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "recoveryCodes": {
+            "type": "array",
+            "minItems": 10,
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z2-7]{4}(-[A-Z2-7]{4}){3}$"
+            },
+            "description": "Dziesięć kodów odzyskiwania (80 bitów każdy), zwracanych JEDEN raz; baza ma tylko SHA-256."
+          }
+        },
+        "required": [
+          "mfaVerified",
+          "expiresAt",
+          "recoveryCodes"
+        ],
+        "additionalProperties": false,
+        "description": "Czynnik potwierdzony (poprzedni wyłączony, jego kody unieważnione), sesja potwierdzona i zrotowana."
+      },
+      "MfaEnrollment": {
+        "type": "object",
+        "properties": {
+          "factorId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Identyfikator oczekującego czynnika (nie jest sekretem)."
+          },
+          "method": {
+            "const": "totp",
+            "description": "Metoda MFA (TOTP, RFC 6238) — założenie D-10."
+          },
+          "secret": {
+            "type": "string",
+            "pattern": "^[A-Z2-7]{32}$",
+            "description": "Sekret TOTP (160 bitów, base32) do ręcznego wpisania. Zwracany JEDEN raz, przy zapisie; baza ma tylko szyfrogram."
+          },
+          "otpauthUri": {
+            "type": "string",
+            "pattern": "^otpauth://totp/",
+            "description": "URI do kodu QR (zawiera ten sam sekret i adres konta); generowany lokalnie, nie trafia do zewnętrznych usług."
+          },
+          "digits": {
+            "const": 6
+          },
+          "period": {
+            "const": 30,
+            "description": "Krok w sekundach."
+          }
+        },
+        "required": [
+          "factorId",
+          "method",
+          "secret",
+          "otpauthUri",
+          "digits",
+          "period"
+        ],
+        "additionalProperties": false,
+        "description": "Rozpoczęty zapis czynnika; potwierdzenie pierwszym kodem: `POST /api/mfa/confirm`."
+      },
+      "MfaRecoveryRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 64,
+            "writeOnly": true,
+            "description": "Jednorazowy kod odzyskiwania `XXXX-XXXX-XXXX-XXXX`; wielkość liter, spacje i myślniki bez znaczenia."
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "MfaVerified": {
+        "type": "object",
+        "properties": {
+          "mfaVerified": {
+            "const": true
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Koniec zrotowanej sesji (bez przedłużenia limitu 24 h od pierwszego logowania)."
+          }
+        },
+        "required": [
+          "mfaVerified",
+          "expiresAt"
+        ],
+        "additionalProperties": false,
+        "description": "Sesja potwierdzona i zrotowana; nowy sekret wyłącznie w cookie `Set-Cookie`, stary przestaje działać."
+      },
       "NewsPhoto": {
         "type": "object",
         "properties": {
@@ -52828,6 +54090,168 @@
         "type": "integer",
         "minimum": 0,
         "description": "Kwota nieujemna w eurocentach (EUR)."
+      },
+      "OwnSession": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Identyfikator sesji (nie sekret) — do `POST /api/sessions/{id}/revoke`."
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ostatnia aktywność (zapis najwyżej co 5 min); null przed pierwszym zapisem."
+          },
+          "mfaVerified": {
+            "type": "boolean"
+          },
+          "current": {
+            "type": "boolean",
+            "description": "true dla sesji tego żądania."
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "lastSeenAt",
+          "mfaVerified",
+          "current"
+        ],
+        "additionalProperties": false
+      },
+      "OwnSessionRevoked": {
+        "type": "object",
+        "properties": {
+          "revoked": {
+            "const": true
+          }
+        },
+        "required": [
+          "revoked"
+        ],
+        "additionalProperties": false
+      },
+      "OwnSessions": {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OwnSession"
+            },
+            "description": "Aktywne sesje WYŁĄCZNIE wołającego, od najnowszej."
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "additionalProperties": false
+      },
+      "OwnSessionsRevoked": {
+        "type": "object",
+        "properties": {
+          "revoked": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Liczba wycofanych sesji (z bieżącą)."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "current"
+            ],
+            "description": "`current` — konto z czynnikiem, sesja bez potwierdzonego MFA wycofuje tylko siebie (#189)."
+          }
+        },
+        "required": [
+          "revoked",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "PasswordChangeRequest": {
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Obecne hasło (błędne → 400 `invalid_current_password`, liczone do limitu prób)."
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Nowe hasło (polityka 12-128 znaków po NFKC, inne niż obecne)."
+          }
+        },
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ]
+      },
+      "PasswordChangeResult": {
+        "type": "object",
+        "properties": {
+          "revokedSessions": {
+            "$ref": "#/components/schemas/Count",
+            "description": "Liczba wycofanych INNYCH sesji konta."
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Koniec zrotowanej bieżącej sesji (nowy sekret w cookie, termin bez przedłużenia)."
+          }
+        },
+        "required": [
+          "revokedSessions",
+          "expiresAt"
+        ],
+        "additionalProperties": false,
+        "description": "Hasło zmienione; bieżąca sesja zrotowana z tym samym stanem MFA, inne wycofane."
+      },
+      "PasswordResetRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "writeOnly": true,
+            "description": "Jednorazowy token resetu wydany przez administratora (`POST /api/admin/users/{id}/password-reset`), 43 znaki base64url."
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Nowe hasło (polityka 12-128 znaków po NFKC; najwyżej 1024 bajty UTF-8)."
+          }
+        },
+        "required": [
+          "token",
+          "newPassword"
+        ]
+      },
+      "PasswordResetResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false,
+        "description": "Hasło ustawione, wszystkie sesje konta wycofane; reset nie tworzy sesji (dalej logowanie hasłem i MFA)."
       },
       "Payment": {
         "type": "object",
@@ -56624,6 +58048,11 @@
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
       },
       {
+        "code": "mfa_enrollment_not_found",
+        "meaning": "Konfiguracja aplikacji uwierzytelniającej wygasła albo nie została rozpoczęta. Rozpocznij ją ponownie.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "mfa_enrollment_required",
         "meaning": "Twoja rola wymaga weryfikacji dwuetapowej. Skonfiguruj aplikację uwierzytelniającą.",
         "retry": "Nie — popraw dane żądania."
@@ -56636,6 +58065,11 @@
       {
         "code": "mfa_locked",
         "meaning": "Zbyt wiele błędnych kodów. Spróbuj ponownie za kilkanaście minut.",
+        "retry": "Nie — zależy od sesji/uprawnień, nie od ponowienia."
+      },
+      {
+        "code": "mfa_not_enrolled",
+        "meaning": "Konto nie ma skonfigurowanej aplikacji uwierzytelniającej.",
         "retry": "Nie — zależy od sesji/uprawnień, nie od ponowienia."
       },
       {
@@ -56834,6 +58268,16 @@
         "retry": "Nie — popraw dane żądania."
       },
       {
+        "code": "password_common",
+        "meaning": "To hasło jest zbyt łatwe do odgadnięcia. Wybierz inne, np. kilka niezwiązanych słów.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
+        "code": "password_contains_email",
+        "meaning": "Hasło nie może zawierać adresu e-mail.",
+        "retry": "Nie — popraw dane żądania."
+      },
+      {
         "code": "password_mismatch",
         "meaning": "Hasła nie są takie same.",
         "retry": "Nie — popraw dane żądania."
@@ -56847,6 +58291,11 @@
         "code": "password_too_long",
         "meaning": "Hasło jest za długie.",
         "retry": "Zależy od kontekstu (patrz moduł trasy)."
+      },
+      {
+        "code": "password_too_short",
+        "meaning": "Hasło musi mieć co najmniej 12 znaków.",
+        "retry": "Nie — popraw dane żądania."
       },
       {
         "code": "password_unchanged",

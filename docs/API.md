@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-10)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-11)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -212,8 +212,11 @@ który wysyła nagłówek `true` tylko przy ponowieniu, ma w specyfikacji nagł�
 `replayedOnRetry`, etap 6; eksporty CSV/XLSX, plik kalendarza `.ics` i treść dokumentu z typem pliku;
 trasa z kilkoma formatami wybieranymi parametrem `format` ma mapę `content` typ treści → schemat, helper
 `formatsResponse` w `src/pg/schemas/common.js`; wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
-per status, wyłącznie z katalogu. Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
-ale trasa go nie zwraca (dziś: `403` przy `GET /api/session` i `GET /api/access`, patrz niżej). Wspólne
+per status, wyłącznie z katalogu (od etapu 11 wpis `errorDescriptions` nadaje błędowi opis właściwy trasie, np. `401`
+logowania to złe dane logowania, a nie brak sesji; kody przy statusie wspólnej odpowiedzi `Unauthenticated` generator
+odrzuca). Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
+ale trasa go nie zwraca (dziś: `403` przy `GET /api/session`, `GET /api/access`, `GET /api/auth/state` i
+`GET /api/sessions`, patrz niżej). Pola tajne żądań (hasło, token zaproszenia i resetu, kod MFA) mają `writeOnly: true`. Wspólne
 elementy (`Id`, kwoty w eurocentach, daty) są w `src/pg/schemas/common.js`. Schematy odpowiedzi są ścisłe
 (`additionalProperties: false`): nowe pole w odpowiedzi trasy wymaga świadomej zmiany schematu;
 schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
@@ -221,22 +224,23 @@ schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
 `tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
 `tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
-`tests/openapi-contract-events.test.js` i `tests/openapi-contract-news.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js` i `tests/openapi-contract-auth.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
 dopasowania z cofnięciem, raport Komisji Rewizyjnej, zebranie z porządkiem obrad, zawiadomieniem, obecnością,
 uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i treścią po autoryzacji, wydarzenia od szkicu
 do publikacji i odwołania z zadaniami wolontariuszy, zapisami i widokiem publicznym, aktualności z galerią — zgody na
-wizerunek, weryfikacja, cofnięcie praw, plik zdjęcia i widok publiczny tylko z zatwierdzonymi danymi, zamknięty rok,
-odmowy i błędy) przechodzą
+wizerunek, weryfikacja, cofnięcie praw, plik zdjęcia i widok publiczny tylko z zatwierdzonymi danymi, logowanie hasłem
+z limitem prób, zaproszenia, reset i zmiana hasła, zapis i weryfikacja MFA z kodami odzyskiwania, sesje własne,
+zamknięty rok, odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (193 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (206 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news`; etap 11 (13): `login` (6), `mfa` (7) |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `print`, `privacy-notice`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -246,7 +250,7 @@ Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zm
   Zakres klasowy dostaje węższy kształt karty gospodarstwa: bez `isPrimaryHousehold`, bez `isPrimary` przy
   gospodarstwach i bez `paymentTotals` (te pola są w schemacie opcjonalne). Obiekt poza zakresem i błędny
   identyfikator w ścieżce dają `404 not_found` jak nieistniejący.
-- `session`: logowanie (`login`) i MFA (`mfa`) są osobnymi modułami, jeszcze bez schematów. Macierz tras
+- `session`: logowanie (`login`) i MFA (`mfa`) są osobnymi modułami (schematy od etapu 11, niżej). Macierz tras
   przypisuje `GET /api/session` i `GET /api/access` status odmowy `403`, choć trasy są dostępne dla każdego
   zalogowanego i zwolnione z bramki MFA, więc `403` nie występuje (stąd pusta lista kodów).
 
@@ -502,6 +506,47 @@ Cechy modułu etapu 10 (`news`, aktualności i galeria z prawami do zdjęć — 
   ujawniania istnienia obiektu). Pola tekstowe zdjęcia
   (w tym publiczny `altText`) i powód cofnięcia praw przechodzą bramkę danych osobowych z listą znanych imion i nazwisk
   ze wszystkich otwartych lat szkolnych (#741, `loadKnownNamesForOpenYears`, `docs/PII_CHECK.md`), bo zdjęcie nie należy do roku.
+
+Cechy modułów etapu 11 (`login` — logowanie hasłem, stan sesji ekranu logowania, zaproszenia, reset i zmiana hasła;
+`mfa` — zapis i weryfikacja TOTP, kody odzyskiwania, sesje własne; opis stanu, nie zmiana tras; zasady w `docs/AUTH.md`):
+
+- Specyfikacja obejmuje 13 operacji z macierzy tras: `POST /api/login`, `GET /api/auth/state`,
+  `POST /api/invitations/preview`, `POST /api/invitations/accept`, `POST /api/password/reset`, `POST /api/password/change`,
+  `POST /api/mfa/enroll`, `/confirm`, `/verify`, `/recovery`, `GET /api/sessions`, `POST /api/sessions/{id}/revoke` i
+  `POST /api/sessions/revoke-all`. Logowanie, zaproszenia i reset działają bez sesji (`security: []`, cookie jest
+  ignorowane), pozostałe wymagają sesji; wszystkie poza zmianą hasła są zwolnione z bramki MFA routera.
+- **Pola tajne**: żaden schemat odpowiedzi nie ma hasła, hasha, tokenu zaproszenia ani resetu; sekret TOTP (base32 i URI
+  `otpauth://`) zwraca wyłącznie `POST /api/mfa/enroll` (raz), kody odzyskiwania — wyłącznie `POST /api/mfa/confirm` (raz);
+  sekret sesji jest tylko w cookie `Set-Cookie` (logowanie, przyjęcie zaproszenia, zmiana hasła i potwierdzenia MFA rotują
+  sesję). Lista sesji nie ma adresu IP ani User-Agent (nie są zapisywane). Pola tajne żądań mają `writeOnly: true`.
+- **Bez wyroczni istnienia konta**: nieznany adres, złe hasło, konto wyłączone, konto bez hasła i adres w złym formacie →
+  jedna odpowiedź `401 invalid_credentials` (ta sama treść i nagłówki, ten sam koszt scrypt); limit pary (adres, IP) działa
+  tak samo dla nieistniejących adresów. Każda odmowa tokenu zaproszenia (nieznany, wygasły, wycofany, **już użyty**, konto
+  wyłączone) to `400 invalid_invitation`, tokenu resetu — `400 invalid_token`; cudza, nieistniejąca i już cofnięta sesja
+  w `POST /api/sessions/{id}/revoke` → `404 not_found`. Podgląd zaproszenia ujawnia `accountExists` i zamaskowany adres
+  wyłącznie posiadaczowi ważnego tokenu (#164).
+- **Limity**: `429 too_many_attempts` z `Retry-After` (para adres+IP 5 błędów, IP 20 błędów w 15 min; także błędne tokeny
+  i błędne obecne hasło przy zmianie i przy przyjęciu zaproszenia na istniejące konto), `429 mfa_locked` z `Retry-After`
+  (5 błędnych kodów w sesji, 20 na konto); w czasie blokady hasło ani kod nie są sprawdzane. Pełna kolejka scrypt →
+  `503 login_busy` z `Retry-After: 5` (logowanie, przyjęcie zaproszenia, reset, zmiana) bez liczenia próby i bez zużycia
+  tokenu. Ogólny limiter żądań (`429 rate_limited`) działa w serwerze Node przed routerem i nie jest w schematach tras.
+- **Bez `Idempotency-Key`**: ponowione logowanie tworzy nową sesję; ponowione przyjęcie zaproszenia albo reset tym samym
+  tokenem → `invalid_invitation`/`invalid_token`; ponowiona zmiana hasła → `invalid_current_password`; ten sam kod TOTP
+  (także w innej sesji) albo zużyty kod odzyskiwania → `400 invalid_code` liczony do limitu.
+- Kody zwracane tylko przez te moduły, a dotąd nieobecne w katalogu (detektor ich nie widział — polityka haseł zwraca
+  `return 'kod'`, a `attemptFactor` wybiera kod operatorem `?:`), są od etapu 11 w `docs/API_ERRORS.md` i w
+  `shared/messages.js`: `password_too_short`, `password_common`, `password_contains_email`, `mfa_enrollment_not_found`,
+  `mfa_not_enrolled` (ekran logowania miał już własne teksty w `login/core.js`).
+- Rozbieżności i uwagi (opis, trasy bez zmian): ponowne użycie tokenu zaproszenia daje `400 invalid_invitation`, a nie
+  osobny kod `already_used` (celowo — bez rozróżniania stanów tokenu); brak pola i pole złego typu w ciele dają
+  `400 invalid_json`, a nie `invalid_request` jak w modułach finansowych; `password_required` (z `checkPasswordPolicy` i
+  `acceptInvitationWithPassword`) i `invalid_method` (`enrollFactor`) są przez HTTP nieosiągalne — trasa wcześniej odrzuca
+  brak hasła jako `invalid_json`, a metody MFA nie przyjmuje — więc nie ma ich w schematach; `401 invalid_credentials`
+  przyjęcia zaproszenia (złe obecne hasło istniejącego konta) ma inny status niż złe obecne hasło przy zmianie hasła
+  (`400 invalid_current_password`); `409 conflict` przyjęcia zaproszenia i zmiany hasła wymaga przeplotu transakcji,
+  którego PGlite nie odtwarza (jest w schemacie, bez testu kontraktu); lista zwolnień w sekcji „Bramka MFA” w
+  `docs/AUTH.md` pomija `/api/invitations/preview`, `/api/sessions` i `/api/sessions/{id}/revoke` (zwolnienie sesji
+  opisuje sekcja #150), choć `MFA_GATE_EXEMPT_EXACT`/`MFA_GATE_EXEMPT_PREFIXES` je obejmują.
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
