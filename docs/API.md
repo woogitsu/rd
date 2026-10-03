@@ -436,11 +436,10 @@ Cechy modułu etapu 9 (`events`, wydarzenia, zadania i zapisy wolontariuszy — 
   Wewnętrzna lista roku i lista zadań nie są stronicowane. `personName` zapisu jest wyłącznie w liście zadań (w schemacie
   opcjonalne). Widok publiczny czyta wyłącznie ostatnią **opublikowaną** wersję z odbiorcami `public`; `volunteerTasks` ma
   tylko nieodwołane zadania z `isPublic` (`{ id, title, stillNeeded }`), a dla odwołanego wydarzenia jest puste.
-- **Zamknięty rok** (trasy `year-close`): utworzenie, zmiana, kroki przebiegu, odwołanie wydarzenia, nowe zadanie, zapis i
-  wycofanie zapisu → `409 school_year_closed`; odczyty i lista publiczna działają. Rozbieżność: **odwołanie zadania** w zamkniętym
-  roku przechodzi (`200`) — trigger zamrożenia `a0_year_freeze` obejmuje w `event_tasks` tylko `INSERT`
-  (`postgres/migrations/0076_event_volunteering.sql`), a docs/EVENTS.md opisuje zamrożenie zadań ogólnie; schemat tej trasy
-  nie wymienia `school_year_closed`.
+- **Zamknięty rok** (trasy `year-close`): utworzenie, zmiana, kroki przebiegu, odwołanie wydarzenia, nowe zadanie, odwołanie
+  zadania, zapis i wycofanie zapisu → `409 school_year_closed`; odczyty i lista publiczna działają. Odwołanie zadania jest
+  zamrożone od `postgres/migrations/0186_event_tasks_year_freeze_update.sql` (#80: trigger `a0_year_freeze` na `event_tasks`
+  obejmuje `INSERT` i `UPDATE`; wcześniej tylko `INSERT` i odwołanie przechodziło z `200`).
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.

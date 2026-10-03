@@ -72,7 +72,7 @@ Po zamknięciu triggery `a0_year_freeze` odrzucają (`school_year_closed`) nowe 
 
 - wpłaty, przypisania wpłat, korekty wpłat,
 - wpisy i korekty księgi, kategorie, preliminarz, bilans otwarcia i jego poprawki,
-- wydarzenia (również zmiana stanu i odwołanie),
+- wydarzenia (również zmiana stanu i odwołanie), ich zadania wolontariuszy (nowe zadanie i — od 0186, #80 — odwołanie zadania) oraz zapisy i wycofanie zapisu,
 - zebrania, porządek, obecność, sprawdzenia quorum, protokoły, publikacje protokołów, uchwały,
 - nowe przydziały ról w tym roku, także przydziały klasy tego roku wstawiane bez `school_year_id` (0022; API administratora zwraca `409 school_year_closed`); wygaszenie i cofnięcie istniejących pozostaje możliwe.
 - (#80, 0036) uzgodnienia rachunku: nowe uzgodnienie i każda jego zmiana (m.in. zatwierdzenie), import wyciągu, wiersze wyciągu, dopasowania oraz cofnięcie dopasowania,

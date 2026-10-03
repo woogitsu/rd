@@ -414,6 +414,8 @@ export const routes = {
       400: ['invalid_json', 'invalid_reason'],
       403: ['invalid_origin'],
       404: ['event_task_not_found'],
+      // Zamknięty rok: trigger a0_year_freeze na UPDATE event_tasks (0186, #80).
+      409: ['school_year_closed'],
       413: ['request_too_large'],
       415: ['invalid_content_type'],
     }),

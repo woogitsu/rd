@@ -1,0 +1,45 @@
+-- Zamrożenie zamkniętego roku obejmuje także UPDATE event_tasks (issue #80,
+-- luka po #142).
+--
+-- 0076_event_volunteering.sql założyła trigger a0_year_freeze na event_tasks
+-- wyłącznie jako BEFORE INSERT (na event_task_signups — BEFORE INSERT OR
+-- UPDATE). Jedyną dozwoloną zmianą istniejącego zadania jest odwołanie
+-- (cancelled_at/cancelled_by/cancellation_reason; event_tasks_guard z 0076), a
+-- `UPDATE event_tasks` w kodzie występuje wyłącznie w cancelTask
+-- (src/pg/events.js, POST /api/events/{eventId}/tasks/{taskId}/cancel). Przez
+-- tę lukę odwołanie zadania wydarzenia z zamkniętego roku przechodziło (200),
+-- choć nowe zadanie, zapis i wycofanie zapisu w tym roku dają
+-- 409 school_year_closed. Po zamknięciu roku nic nie zmienia legalnie
+-- event_tasks (także anonimizacja ani ponowne zastosowanie anonimizacji —
+-- 0185 — nie dotykają tej tabeli).
+--
+-- Zmiana: ten sam trigger, rozszerzony o UPDATE. Funkcja
+-- year_freeze_via_parent() NIE jest redefiniowana — gałąź event_tasks (rok
+-- wydarzenia-rodzica przez event_id) ma już jej najnowsza wersja
+-- (0106_document_descriptions_year_freeze.sql). Nazwa triggera bez zmian, więc
+-- kolejność odpalania (alfabetyczna: a0_stamp_transition_now z 0144, potem
+-- a0_year_freeze, potem event_tasks_guard) zostaje ta sama. Wydarzenia bez
+-- roku nie istnieją (events.school_year_id NOT NULL); NULL i tak pomija
+-- school_year_assert_open().
+--
+-- Skutki dla danych: żaden wiersz nie jest zmieniany ani usuwany; DROP i
+-- CREATE triggera w jednej transakcji migracji (bez okna, w którym tabela
+-- byłaby bez zamrożenia INSERT). Działa wyłącznie na przyszłe zapisy: od teraz
+-- odwołanie zadania wydarzenia z zamkniętego roku jest odrzucane
+-- (school_year_closed → API 409). Zadania odwołane w zamkniętym roku przed tą
+-- migracją zostają, jakie są (z wpisem event.task_cancelled w audit_events).
+-- Zapytanie kontrolne (informacyjne — ile zadań odwołano po zamknięciu roku
+-- przed tą poprawką; nic nie jest blokowane wstecz):
+--   SELECT count(*) FROM event_tasks t
+--     JOIN events e ON e.id = t.event_id
+--     JOIN school_year_closures c ON c.school_year_id = e.school_year_id AND c.status = 'closed'
+--    WHERE t.cancelled_at > c.closed_at;
+--
+-- Wycofanie: DROP TRIGGER a0_year_freeze ON event_tasks; i ponowne
+-- CREATE TRIGGER a0_year_freeze BEFORE INSERT ON event_tasks FOR EACH ROW
+-- EXECUTE FUNCTION year_freeze_via_parent(); (stan z 0076). Nic nie zmienia
+-- w danych.
+
+DROP TRIGGER a0_year_freeze ON event_tasks;
+CREATE TRIGGER a0_year_freeze BEFORE INSERT OR UPDATE ON event_tasks
+  FOR EACH ROW EXECUTE FUNCTION year_freeze_via_parent();

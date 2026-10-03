@@ -3,6 +3,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
+import { cancelTask, createDraft, createTask } from '../src/pg/events.js';
 import { createMemoryStorage } from '../src/storage.js';
 import { createTestDb, request, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
 
@@ -41,6 +42,13 @@ async function closeYear(db) {
   `);
 }
 
+// Zdarzenia triggera a0_year_freeze wymagane dla tabel, w których rok zamyka
+// także zmianę istniejącego wiersza (sprawdzane w teście przeglądowym niżej).
+const UPDATE_FROZEN = {
+  event_tasks: ['INSERT', 'UPDATE'],
+  event_task_signups: ['INSERT', 'UPDATE'],
+};
+
 // #80, kryterium akceptacji: test przeglądowy WYLICZA z katalogu bazy wszystkie
 // tabele z kolumną school_year_id lub class_id (oraz samą school_years) i
 // wymaga triggera a0_year_freeze albo wpisu w FREEZE_EXCEPTIONS. Dodanie
@@ -72,6 +80,18 @@ test('#80: każda tabela z school_year_id/class_id (i school_years) ma trigger z
       assert.ok(names.includes(name), `wyjątek ${name} nie odpowiada tabeli z rokiem/klasą`);
       assert.ok(!withTrigger.has(name), `wyjątek ${name} ma trigger — usuń wpis z FREEZE_EXCEPTIONS`);
       assert.ok(FREEZE_EXCEPTIONS[name].length > 10);
+    }
+    // Tabele, w których zmiana istniejącego wiersza (UPDATE) też musi być zamrożona —
+    // event_tasks od 0186 (odwołanie zadania), wcześniej tylko INSERT (luka z 0076).
+    const { rows: events } = await db.query(
+      `SELECT event_object_table AS table_name, event_manipulation AS op FROM information_schema.triggers
+        WHERE trigger_schema = 'public' AND trigger_name = 'a0_year_freeze' AND action_timing = 'BEFORE'
+          AND event_object_table = ANY($1::text[])`,
+      [Object.keys(UPDATE_FROZEN)],
+    );
+    for (const [table, ops] of Object.entries(UPDATE_FROZEN)) {
+      const actual = events.filter((r) => r.table_name === table).map((r) => r.op).sort();
+      assert.deepEqual(actual, ops, `a0_year_freeze na ${table}`);
     }
   } finally {
     await db.close();
@@ -174,6 +194,52 @@ describe('#80 (0130): pozostałe tabele z rokiem i granice roku', () => {
       }), { db });
       assert.equal(res.status, 409);
       assert.equal((await res.json()).error, 'school_year_closed');
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe('#80 (0186): zadania wolontariuszy wydarzenia zamkniętego roku', () => {
+  const board = { userId: 'u-a', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
+  const draftWithTask = async (db, schoolYearId, day) => {
+    const { event } = await createDraft(db, board, {
+      schoolYearId, classId: null, title: 'Kiermasz (syntetyczny)', audience: 'internal',
+      startsAt: `${day}T10:00`, endsAt: `${day}T14:00`, idempotencyKey: `evt-${schoolYearId}-synthetic`,
+    });
+    const { task } = await createTask(db, board, {
+      eventId: event.id, title: 'Stoisko z ciastami', slotsNeeded: 2, idempotencyKey: `task-${schoolYearId}-synthetic`,
+    });
+    return { event, task };
+  };
+
+  test('bezpośredni UPDATE event_tasks zamkniętego roku → school_year_closed; w otwartym roku odwołanie działa jak dotąd', async () => {
+    const db = await createTestDb();
+    try {
+      await seedSchoolYear(db, OLD, { startsOn: '2026-09-01', endsOn: '2027-08-31' });
+      await seedSchoolYear(db, NEW, { startsOn: '2027-09-01', endsOn: '2028-08-31' });
+      await seedUser(db, { userId: 'u-a' });
+      const closed = await draftWithTask(db, OLD, '2026-11-12');
+      const open = await draftWithTask(db, NEW, '2027-11-12');
+      await closeYear(db);
+
+      const cancelSql = 'UPDATE event_tasks SET cancelled_at = now(), cancelled_by = $2, cancellation_reason = $3 WHERE id = $1';
+      await assert.rejects(db.query(cancelSql, [closed.task.id, 'u-a', 'Odwołanie w bazie']), /school_year_closed/);
+      await assert.rejects(
+        cancelTask(db, board, { eventId: closed.event.id, taskId: closed.task.id, reason: 'Odwołanie przez API' }),
+        (error) => error.code === 'school_year_closed' && error.status === 409,
+      );
+      const { rows } = await db.query('SELECT cancelled_at FROM event_tasks WHERE id = $1', [closed.task.id]);
+      assert.equal(rows[0].cancelled_at, null, 'zadanie zamkniętego roku nieodwołane');
+
+      // Rok otwarty: odwołanie (jedyny UPDATE zadania) i jego ponowienie bez zmian.
+      const cancelled = await cancelTask(db, board, { eventId: open.event.id, taskId: open.task.id, reason: 'Brak chętnych' });
+      assert.deepEqual([Boolean(cancelled.task.cancelledAt), Boolean(cancelled.replayed)], [true, false]);
+      assert.equal((await cancelTask(db, board, { eventId: open.event.id, taskId: open.task.id, reason: 'Inny powód' })).replayed, true);
+      const { rows: audits } = await db.query(
+        "SELECT entity_id FROM audit_events WHERE action = 'event.task_cancelled' ORDER BY entity_id",
+      );
+      assert.deepEqual(audits.map((r) => r.entity_id), [open.task.id], 'audyt tylko dla odwołania w otwartym roku');
     } finally {
       await db.close();
     }

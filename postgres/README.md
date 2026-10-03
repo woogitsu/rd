@@ -1571,3 +1571,15 @@ tabelach rodzin zmienia dopiero uruchomiony ręcznie skrypt, tą samą furtką
 `rd.anonymization_run` co przebieg z trasy; kwot, dat ani księgi nie rusza. Wycofanie:
 na bazie bez wierszy `restore_reapply` — DROP obu CHECK, DROP COLUMN `source_run`,
 przywrócenie CHECK z 0174; z takimi wierszami — tylko po kopii zapasowej.
+
+`0186_event_tasks_year_freeze_update.sql` (#80, luka po #142) rozszerza trigger
+`a0_year_freeze` na `event_tasks` z `BEFORE INSERT` (0076) do `BEFORE INSERT OR
+UPDATE` — tak jak na `event_task_signups`. Jedyną zmianą istniejącego zadania jest
+odwołanie (`POST /api/events/{eventId}/tasks/{taskId}/cancel`), które dotąd w
+zamkniętym roku przechodziło (`200`); teraz daje `409 school_year_closed`, jak nowe
+zadanie, zapis i wycofanie zapisu. Funkcja `year_freeze_via_parent()` bez zmian
+(gałąź `event_tasks` jest w jej najnowszej wersji, 0106); nazwa triggera i kolejność
+odpalania bez zmian. Skutki dla danych: żaden wiersz nie jest zmieniany; zadania
+odwołane w zamkniętym roku przed tą migracją zostają (zapytanie kontrolne w
+nagłówku pliku). Wycofanie: `DROP TRIGGER a0_year_freeze ON event_tasks` i ponowne
+`CREATE TRIGGER … BEFORE INSERT ON event_tasks` (stan z 0076); dane bez zmian.
