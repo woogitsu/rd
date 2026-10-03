@@ -6,7 +6,10 @@ import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { buildClassRoster } from '../src/pg/export.js';
 import { computeSnapshot } from '../src/pg/routes/email.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
+import { perTestDb, request, seedClass, seedPublishedPrivacyNotice, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+
+// #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście.
+const createDb = perTestDb();
 
 const Y1 = 'y-2026';
 
@@ -30,7 +33,7 @@ async function seed(db) {
 }
 
 async function setup() {
-  const db = await createTestDb();
+  const db = await createDb();
   await seedPublishedPrivacyNotice(db); // #145: kampanie i kartki wymagają opublikowanej informacji
   await seed(db);
   const env = { db };

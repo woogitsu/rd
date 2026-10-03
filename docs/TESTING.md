@@ -348,13 +348,86 @@ Shard 1/6 to 55 plików, 723 testów (711 zielonych, 12 pominiętych, m.in. test
 PostgreSQL bez `RD_TEST_PG_URL`), w obu wariantach te same liczby. Szczytowy RSS procesu dla `tests/pg-promotions.test.js` (5,6 GB; baza na każdy test, nigdy niezamykana,
 po ok. 270 MB) i `tests/pg-anonymization-reapply.test.js` (4,0 GB; baza źródłowa i 15 docelowych zamykanych dopiero w
 `after()`) to ryzyko pamięci, niezależne od szablonu (bez niego: 5,9 i 4,4 GB): na runnerze GitHub z 7 GB dwa takie procesy
-naraz (`--test-concurrency=2`) dają górne oszacowanie ponad 9 GB. Nie ma jeszcze danych z GitHub; krok z podsumowaniem pamięci
-w jobie `test` pokaże, czy któryś shard łączy te pliki. Zamykanie baz po każdym teście w obu plikach zmniejszyłoby szczyt
-kilkukrotnie (zakres osobnego PR).
+naraz (`--test-concurrency=2`) dają górne oszacowanie ponad 9 GB. Oba pliki zamykają już bazę po każdym teście (niżej,
+„Podział na shardy według czasu”: 1124 i 1239 MiB).
 
-`pg-authz-matrix` (330 testów, ~6,5 min) praktycznie się nie zmienia: dominuje w nim praca testów, nie migracje.
+`pg-authz-matrix` (330 testów, ~6,5 min) praktycznie się nie zmienia: dominuje w nim praca testów, nie migracje
+(od podziału na trzy pliki — niżej — ok. 2 min na część).
 Czas przebiegów PR na GitHub (kryterium „co najmniej o połowę krótszy, zmierzone na 3 kolejnych przebiegach”) trzeba
 zmierzyć po scaleniu: metoda w `docs/RAILWAY_OPERATIONS.md`, „Pomiar czasu i pamięci testów w CI”.
+
+## Podział na shardy według czasu (#111)
+
+Job `test` w CI ma 6 shardów. `node --test --test-shard=i/N` przydzielał pliki według pozycji na posortowanej liście
+(indeks modulo N), a nie według czasu: shard 6/6 dostał `pg-authz-matrix` (ok. 400 s w jednym procesie) i inne dłuższe
+pliki, więc na GitHub trwał 467 s wobec 152–218 s pozostałych (przebieg po #717). Zmiany:
+
+- **Podział według wag.** `node scripts/ci-shard-files.js i N` wypisuje pliki shardu i/N. Wagi to zmierzone sekundy
+  każdego pliku w `scripts/ci-shard-weights.json` (liczą się proporcje). Metoda zachłanna: pliki od najcięższego, każdy do
+  shardu, którego szacowany czas po dołożeniu pliku jest najmniejszy; szacunek symuluje `--test-concurrency=2` (node
+  sortuje pliki alfabetycznie, każdy startuje w pierwszym wolnym z dwóch slotów). Plik spoza wag (np. nowy test) dostaje
+  `defaultWeight` (mediana plików `tests/pg-*`, dziś 8 s) i nadal trafia do dokładnie jednego shardu. Podgląd planu:
+  `node scripts/ci-shard-files.js --plan 6`. W `ci.yml` lista trafia najpierw do zmiennej (`files=$(…)`, krok przerywa
+  błąd skryptu) i `test -n "$files"` pilnuje, że shard nie jest pusty: `node --test` bez plików uruchomiłby domyślny wzorzec,
+  czyli cały katalog. Krok z `RD_TEST_RSS_LOG` i `scripts/summarize-test-memory.js` jest bez zmian.
+- **Strażnik.** `tests/ci-shard-coverage.test.js` sprawdza, że każdy plik `tests/*.test.js` jest w dokładnie jednym
+  shardzie (także z dodatkowym plikiem spoza wag), że wynik nie zależy od kolejności wejścia, że CLI dla i = 1..6 daje
+  rozłączne listy o sumie równej katalogowi i odrzuca zły numer shardu, że `ci.yml` bierze listę ze skryptu z N równym
+  macierzy (bez `--test-shard`) i zachowuje pomiar pamięci, oraz że najdłuższy szacowany shard mieści się w 125% dolnej
+  granicy (najcięższy plik albo suma wag / 2N).
+- **Macierz uprawnień w trzech plikach.** Fixture, wykonanie przypadku i rejestracja testów tras są w
+  `tests/helpers/authz-matrix.js`; `tests/pg-authz-matrix.test.js` uruchamia część 1, testy uzupełniające i meta-testy,
+  `pg-authz-matrix-2.test.js` i `pg-authz-matrix-3.test.js` — części 2 i 3. Części to ciągłe fragmenty macierzy z granicą na
+  początku modułu (`MATRIX_PART_STARTS`: `ledger`, `audit-reviews`): trasy jednego modułu korzystają ze stanu poprzednich
+  (np. `yearClose.close` wymaga pozycji listy kontrolnej, `lift-restriction` — ograniczenia z `restrict`), co pierwsza próba
+  z podziałem „co trzecia trasa” pokazała dwoma czerwonymi testami. Meta-test sprawdza, że sklejenie części daje całą macierz
+  w tej samej kolejności i że żaden moduł ani grupa z własną bazą nie są rozcięte. Asercje i przypadki bez zmian
+  (110 + 147 + 74 testy = 330 dawnych i jeden nowy meta-test). `ALLOWED_TODO` nadal obejmuje wszystkie trasy; test `todo`
+  rejestruje teraz helper, którego `tests/test-quality-lint.test.js` nie przegląda (lint obejmuje `tests/*.test.js`).
+- **Baza zamykana po teście.** `perTestDb()` z `tests/helpers/pg.js` (wołane raz na poziomie modułu) tworzy bazy zamykane w
+  `afterEach`, dla plików, w których każdy test zakłada własną bazę: `pg-promotions`, `pg-audit-history`,
+  `pg-audit-history-board`, `pg-invitation-batch`, `pg-enrollment-end`, `pg-data-subject-requests`. W
+  `pg-anonymization-reapply` bazy docelowe zamyka `afterEach` w `describe` (baza źródłowa zostaje do `after()`). Zamknięta
+  baza wypada też ze zbioru śledzonego przez helper; wcześniej zbiór trzymał referencję do instancji (z pamięcią WASM) do
+  końca pliku, więc samo `close()` w teście niczego nie zwalniało.
+
+Pomiar lokalny (kontener: 4 rdzenie, 16 GB, Node 22; shard uruchamiany pojedynczo, jak w CI `--test-concurrency=2` z
+`RD_TEST_RSS_LOG`; „przed” to kod z `main` po #717, w kopii bez katalogu `.github`, przez co jeden statyczny test w 6/6 był
+czerwony):
+
+| Shard | Czas | Pliki | Testy (zielone / pominięte) | Największy proces (RSS) | Dwa największe naraz |
+|---|---|---|---|---|---|
+| 6/6 przed (`--test-shard`) | 443,5 s | 54 | 867 (838 / 28) | 3275 MiB `pg-audit-history` | 4963 MiB |
+| 1/6 po | 185,1 s | 53 | 591 (567 / 24) | 1005 MiB `pg-payment-references` | 1991 MiB |
+| 2/6 po | 174,1 s | 58 | 627 (616 / 11) | 1671 MiB `pg-reconciliation` | 3011 MiB |
+| 3/6 po | 181,2 s | 59 | 757 (743 / 14) | 1130 MiB `pg-class-coverage` | 2196 MiB |
+| 4/6 po | 183,7 s | 53 | 560 (538 / 22) | 1297 MiB `pg-authz-matrix-3` | 2526 MiB |
+| 5/6 po | 183,1 s | 53 | 646 (619 / 27) | 1469 MiB `pg-export-stream-file` | 2679 MiB |
+| 6/6 po | 175,0 s | 54 | 655 (599 / 56) | 1138 MiB `audit-write-coverage` | 2255 MiB |
+
+Najdłuższy shard: 443,5 s → 185,1 s (−58%); szacunek z wag dla każdego shardu to 196 s. Po zmianie wszystkie 330 plików
+w sześciu shardach: 3836 testów, 0 czerwonych, 154 pominięte (testy na prawdziwym PostgreSQL bez `RD_TEST_PG_URL`).
+Pojedyncze pliki (szczytowy RSS procesu, czas `node --test <plik>` po dwa naraz):
+
+| Plik | RSS przed | RSS po | Czas przed | Czas po |
+|---|---|---|---|---|
+| `pg-promotions` | 5572 MiB | 1124 MiB | 19,9 s | 17,0 s |
+| `pg-anonymization-reapply` | 4079 MiB | 1239 MiB | 23,8 s | 23,8 s |
+| `pg-audit-history` | 3297 MiB | 939 MiB | 11,1 s | 12,2 s |
+| `pg-audit-history-board` | 2056 MiB | 926 MiB | 7,3 s | 9,4 s |
+| `pg-invitation-batch` | 2057 MiB | 890 MiB | 7,6 s | 7,7 s |
+| `pg-enrollment-end` | 1660 MiB | 940 MiB | 6,3 s | 6,1 s |
+| `pg-data-subject-requests` | 1563 MiB | 974 MiB | 6,1 s | 6,1 s |
+| `pg-authz-matrix` (przed: jeden plik; po: części 1 / 2 / 3) | 1691 MiB | 833 / 1063 / 1258 MiB | 398,6 s | 124,7 / 115,4 / 93,4 s |
+
+GitHub runner ma 2 rdzenie i 7 GB, więc czasy tam będą inne; wynik z trzech przebiegów wpisać w
+`docs/RAILWAY_OPERATIONS.md`, „Pomiar czasu i pamięci testów w CI”.
+
+**Aktualizacja wag.** Wagi nie muszą być dokładne: nowy plik bez wagi działa (waga domyślna), a nieaktualna waga psuje
+tylko równowagę, nie pokrycie. Po dodaniu pliku dłuższego niż ok. 30 s albo gdy podsumowania jobów pokażą shard wyraźnie
+dłuższy od innych, zmierz pliki (`node --test --test-concurrency=1 --import ./tests/setup.js <plik>`, po dwa naraz, jak w
+CI) i popraw `scripts/ci-shard-weights.json`; plan sprawdź `node scripts/ci-shard-files.js --plan 6`. Plik dłuższy niż
+średni shard (dziś ok. 200 s) wyznacza czas swojego shardu niezależnie od wag — taki plik dzielimy jak macierz uprawnień.
 
 ## Testy na prawdziwym PostgreSQL (#208)
 
@@ -903,9 +976,9 @@ przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
 `tests/ci-supply-chain.test.js` (dla wszystkich plików w `.github/workflows`);
 przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
-z 6 shardów). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27). Inwentaryzacja blokad dodała 15 mutantów
-(razem 57) i trzy pliki z barierą, a domknięcie jej luk — 6 mutantów (razem 63) i kolejne trzy pliki; limitu nie zmieniono (`ci.yml` zmienia równolegle inny PR) — do sprawdzenia w
-pierwszym przebiegu.
+z 6 shardów wyznaczonych przez `scripts/ci-shard-files.js`; „Podział na shardy według czasu”). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27). Inwentaryzacja blokad dodała 15 mutantów
+(razem 57) i trzy pliki z barierą, a domknięcie jej luk — 6 mutantów (razem 63) i kolejne trzy pliki; pierwszy przebieg po
+inwentaryzacji (#720) trwał ok. 9 min, więc limit zostaje.
 
 ## Pokrycie dziennikiem zdarzeń (#184)
 

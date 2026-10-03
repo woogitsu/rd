@@ -19,10 +19,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Testy bez potrzeby prawdziwego PostgreSQL, shardowane na 6 równoległych
-  # joby (node --test --test-shard=i/N). Każdy shard uruchamia cały zestaw
-  # tests/*.test.js z --test-concurrency=2, żeby ograniczyć liczbę
-  # równoległych instancji PGlite (każda ~550 MB, #111). Runner hostowany ma
+  # Testy bez potrzeby prawdziwego PostgreSQL, podzielone na 6 równoległych
+  # jobów. Listę plików shardu i/N wybiera scripts/ci-shard-files.js według
+  # zmierzonych czasów (scripts/ci-shard-weights.json), a nie według pozycji
+  # na liście jak `--test-shard` (#111: jeden shard zbierał najdłuższe pliki).
+  # Każdy plik tests/*.test.js trafia do dokładnie jednego shardu (pilnuje
+  # tests/ci-shard-coverage.test.js). --test-concurrency=2 ogranicza liczbę
+  # równoległych instancji PGlite (każda ~550 MB, #111); runner hostowany ma
   # 2 rdzenie, więc zestaw dzielimy na 6 shardów zamiast podnosić limit czasu.
   test:
     runs-on: ubuntu-latest
@@ -43,7 +46,12 @@ jobs:
       - run: npm ci --ignore-scripts
       # #111: tests/setup.js dopisuje do RD_TEST_RSS_LOG szczytowy RSS każdego procesu testowego;
       # krok niżej zamienia to na tabelę w podsumowaniu joba (docs/RAILWAY_OPERATIONS.md, „CI i runnery”).
-      - run: node --test --test-concurrency=2 --test-shard=${{ matrix.shard }}/6 --import ./tests/setup.js tests/*.test.js
+      # Przypisanie do zmiennej przerywa krok (bash -e), gdy skrypt podziału zawiedzie;
+      # bez tego `node --test` bez plików uruchomiłby domyślny wzorzec (cały katalog).
+      - run: |
+          files=$(node scripts/ci-shard-files.js ${{ matrix.shard }} 6)
+          test -n "$files"
+          node --test --test-concurrency=2 --import ./tests/setup.js $files
         env:
           RD_TEST_RSS_LOG: ${{ runner.temp }}/test-rss.log
       - if: always()
