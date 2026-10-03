@@ -401,6 +401,8 @@ export const MESSAGES = Object.freeze({
   // --- Zamknięcie roku ----------------------------------------------------------------------
   year_close_not_started: "Zamknięcie roku nie zostało rozpoczęte.",
   year_close_already_started: "Zamknięcie roku zostało już rozpoczęte.",
+  year_close_not_in_progress: "Zamknięcie roku nie jest w toku (zostało już zakończone albo nie rozpoczęte).",
+  next_school_year_not_open: "Następny rok szkolny nie jest otwarty. Wybierz rok, który jeszcze nie został zamknięty.",
   checklist_incomplete: "Lista kontrolna nie jest ukończona.",
   invalid_checklist_item: "Niepoprawny punkt listy kontrolnej.",
   year_end_balance_mismatch: "Bilans zamknięcia nie zgadza się z saldem księgi na koniec roku. Potwierdź rozbieżność z powodem albo popraw wpisy.",
@@ -553,6 +555,12 @@ export const MESSAGES = Object.freeze({
   invalid_license_text: "Niepoprawna treść licencji.",
   invalid_rights_note: "Niepoprawna notatka o prawach.",
   public_copy_requires_license: "Publiczna kopia wymaga zapisanej licencji lub zgody.",
+  invalid_license_document_ref: "Niepoprawne odwołanie do dokumentu licencji.",
+  invalid_identifiable_children: "Niepoprawna liczba rozpoznawalnych dzieci na zdjęciu.",
+  invalid_identifiable_adults: "Niepoprawna liczba rozpoznawalnych dorosłych na zdjęciu.",
+  child_consent_required: "Zdjęcie z dziećmi wymaga co najmniej jednej zapisanej zgody dotyczącej dziecka.",
+  consent_missing: "Zapisane zgody nie obejmują wszystkich rozpoznawalnych osób na zdjęciu.",
+  photo_rights_unverified: "Wpis zawiera zdjęcie bez zweryfikowanych praw do publikacji.",
   photos_require_school_wide_role: "Zdjęcia może dodawać tylko osoba z uprawnieniami dla całej szkoły.",
   // --- Kopie zapasowe (#90) ---------------------------------------------------------
   backup_failed: "Kopia zapasowa bazy nie powiodła się. Sprawdź dziennik operacyjny.",

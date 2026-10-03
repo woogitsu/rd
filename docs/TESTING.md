@@ -254,13 +254,13 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-9)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-10)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
 etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
-etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; etap 9 — `events`; razem 172 operacje)
+etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; etap 9 — `events`; etap 10 — `news`; razem 193 operacje)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
@@ -270,7 +270,7 @@ mają schematy ciał żądań i odpowiedzi
 - kody błędów w schematach należą do katalogu `docs/API_ERRORS.md` i występują w źródle trasy (dla `reconciliation`
   także w parserach wyciągów `src/pg/bank/*.js`, dla `meetings` w module domenowym `src/pg/meetings.js`, dla `documents`
   w kontroli struktury pliku `src/documents.js` i kursorze list, dla `events` w module domenowym `src/pg/events.js`,
-  `ROUTE_HELPER_SOURCES`);
+  dla `news` w module domenowym `src/pg/news.js` i kursorze list, `ROUTE_HELPER_SOURCES`);
 - **prawdziwe odpowiedzi** (PGlite, dane syntetyczne) przez `tests/helpers/contract-client.js` i walidator
   `tests/helpers/json-schema.js` (bez nowej zależności; nieznane słowo kluczowe schematu rzuca wyjątek, więc nie
   przepuszcza po cichu): utworzenie, ponowienie z tym samym kluczem (`Idempotency-Replayed`), korekta częściowa,
@@ -534,14 +534,65 @@ wydarzenia, a zadanie i zapis sygnalizują ponowienie polem `replayed` (`const` 
   zadania przechodzi — rozbieżność opisana w `docs/API.md`, „Cechy modułu etapu 9”);
 - pominięcie każdego wymaganego pola ciała → `400` i każda odpowiedź sukcesu ze schematu zwalidowana na prawdziwej odpowiedzi.
 
+Prawdziwe odpowiedzi etapu 10 (moduł `news`, 21 operacji) sprawdza `tests/openapi-contract-news.test.js` (ten sam
+`createContractClient`, PGlite, dane syntetyczne `@example.invalid`, imiona opiekunów syntetyczne). **Zdjęcia są wyłącznie
+syntetyczne**: bajty PNG/JPEG generuje `sharp` z jednolitego koloru (bez wizerunków i EXIF), odwołania do zgód i dokumentów
+to fikcyjne identyfikatory; magazyn plików w pamięci (`createMemoryStorage`), pułapka sieci kończy się zerem. Osobny test
+sprawdza w specyfikacji, że klucz i nagłówek `Idempotency-Replayed` mają tylko szkic, rejestracja zdjęcia i plik, odwołanie do
+zgody sygnalizuje ponowienie polem `replayed` (`const` w 201/200), trasy publiczne nie mają `security`, a schemat rejestracji
+wymaga `altText` albo `decorative: true`. Scenariusz:
+
+- **rejestr zdjęć**: utworzenie z ponowieniem (`Idempotency-Replayed`), `idempotency_conflict`, `invalid_idempotency_key`,
+  **`alt_text` wymagany** (`422 alt_text_required` bez opisu, z `decorative: false` i z `altText: null`), zdjęcie dekoracyjne
+  (`altText: null`, publicznie `""`), `public_copy_requires_license`, błędy pól (`invalid_source`, `invalid_taken_on`,
+  `invalid_depicts_children`, `invalid_explicit_license`, `invalid_decorative`, `invalid_document_id`, `invalid_author`,
+  `invalid_source_detail`, `invalid_license_text`, `invalid_license_document_ref`, `invalid_rights_note`, `invalid_alt_text`,
+  `invalid_identifiable_children`, `invalid_identifiable_adults`, `invalid_consent`, `invalid_consent_scope`,
+  `invalid_consent_valid_until`), bramka danych osobowych (`422` i potwierdzenie);
+- **zgody i weryfikacja**: rodzeństwo na jednej zgodzie (dwa numery osoby, ten sam dokument), `consent_missing` przed
+  dopisaniem drugiej zgody, ponowienie (`200 { replayed: true }`), `consent_conflict`, błędy zgody, odczyt zdjęcia z
+  odwołaniami; **cztery oczy** (`four_eyes_required`), admin techniczny nie weryfikuje (`403`), `child_consent_required`,
+  `consents_locked` po weryfikacji;
+- **plik zdjęcia**: PNG i JPEG (warianty `web`/`thumb`, JPEG bez EXIF), ponowienie tym samym kluczem, `photo_file_exists`,
+  `415` (typ niezgodny z sygnaturą, PDF, uszkodzony PNG `photo_file_malformed`), `400 empty_photo_file`, `413
+  photo_file_too_large`, `404`, `400 invalid_photo_id`/`invalid_idempotency_key`, `503 upload_busy` (sloty zajęte po kolei)
+  i `503 storage_unavailable`;
+- **wpisy**: szkic przedstawiciela z ponowieniem, odmowa dla klasy spoza przydziału, wpisu ogólnoszkolnego i zdjęć
+  (`photos_require_school_wide_role`), błędy treści, `duplicate_photo`, `422 photo_not_found`, klasa z innego roku albo
+  nieistniejąca (`invalid_reference`), bramka (`personal_data_forbidden`, `possible_personal_data` z `known_name`); **zmiana z
+  wersją** (podwójne kliknięcie, `revision_conflict`, `invalid_revision`), zgłoszenie z ponowieniem, zatwierdzenie
+  (`invalid_transition` dla szkicu, **cztery oczy**, `403` dla admina i przedstawiciela), **publikacja** z ponowieniem;
+- **widok publiczny tylko z zatwierdzonymi danymi**: zatwierdzony, ale nieopublikowany wpis `404`; opublikowany bez autorów,
+  zgód, dokumentów, klas i roku; **zdjęcie ze zgodą tylko na druk** (bez `rada_website`) zweryfikowane, ale poza `photos[]` i
+  bez publicznego pliku; **zdjęcie niezweryfikowane** blokuje zatwierdzenie (`photo_rights_unverified`); nowa wersja czeka, a
+  publicznie zostaje opublikowana; **wycofanie zgody** (rodzeństwo) i **cofnięcie praw** (`photo_revoked`) ukrywają zdjęcie
+  z listy i z publicznego pliku przy następnym żądaniu; po cofnięciu: weryfikacja, plik, zmiana i nowy wpis z tym zdjęciem
+  `409 photo_revoked`; stały adres wpisu (`404` dla szkicu, nieznanego, złego i niepoprawnie zakodowanego identyfikatora);
+  publiczny plik z naruszoną integralnością (`409 photo_file_integrity_mismatch`) i bez magazynu (`503`); lata z treściami;
+- **wycofanie wpisu**: przedstawiciel nie wycofuje opublikowanego (`403`), `invalid_reason`, `422`, `revision_conflict`,
+  ponowienie, wpis znika publicznie, `post_withdrawn` przy zmianie i zgłoszeniu; przedstawiciel wycofuje własny szkic;
+- **listy z kursorem**: publiczna (strony po 2 aż do `nextCursor: null`, kursor innego filtru, `invalid_limit`,
+  `invalid_cursor`, `invalid_school_year`) i rejestr zdjęć (strony po 2, filtr `status`, kursor innego filtru,
+  `invalid_status`, `invalid_limit`, `invalid_cursor`);
+- granice ról: brak sesji `401` na każdej operacji; przedstawiciel 1A — wpis ogólnoszkolny i klasy 1B jak nieistniejące
+  (`404 post_not_found`), rejestr zdjęć `403`; zarząd z przydziałem klasy, Komisja Rewizyjna, dyrekcja i skarbnik — lista
+  `403`, wpis i jego kroki `404`, szkic, rejestr zdjęć, zgody, weryfikacja, cofnięcie, plik i wycofanie zgody `403`; zarząd
+  bez MFA `403 mfa_enrollment_required`, a przy pustym `MFA_REQUIRED_ROLES` szkic i zgłoszenie działają, zatwierdzenie i
+  publikacja — `403 mfa_required` modułu; obcy `Origin` `403 invalid_origin` na każdym zapisie (także pliku);
+- błędy `400` (`invalid_post_id`, `invalid_photo_id`, `invalid_json` — także puste ciało weryfikacji), `404`, `413`, `415`
+  oraz **zamknięty rok** przez trasy `year-close` (nowy wpis → `409 school_year_closed`; zmiana i wycofanie istniejącego
+  wpisu przechodzą, archiwum publiczne działa, zdjęcia nie należą do roku);
+- pominięcie każdego wymaganego pola ciała → `400` i każda odpowiedź sukcesu ze schematu (także plik `image/jpeg`)
+  zwalidowana na prawdziwej odpowiedzi.
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
 `tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`, jak
 `tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js`,
 `tests/openapi-contract-reconciliation.test.js`, `tests/openapi-contract-email.test.js`,
-`tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js` i
-`tests/openapi-contract-events.test.js`).
+`tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
+`tests/openapi-contract-events.test.js` i `tests/openapi-contract-news.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 

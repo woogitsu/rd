@@ -59,6 +59,10 @@ Przedstawiciel nie widzi wpisów innych klas (404 bez ujawniania istnienia). Ska
 - `POST /api/news-photos/:id/consents` — `{ subjectNo, subjectKind, consentDocumentRef }`; ten sam wpis ponownie = powtórka, inny pod tym samym numerem = `409 consent_conflict`.
 - `POST /api/news-photos/:id/verify` (body `{}`), `POST /api/news-photos/:id/revoke` (`{ reason, confirmPersonalData? }`).
 
+Kształty żądań i odpowiedzi wszystkich 21 operacji modułu (także tras publicznych i pliku zdjęcia) opisuje
+`src/pg/schemas/news.js` (`docs/openapi.json`, #160 etap 10; cechy modułu w docs/API.md, „Schematy żądań i odpowiedzi”), a
+prawdziwe odpowiedzi na syntetycznych zdjęciach sprawdza `tests/openapi-contract-news.test.js`.
+
 Źródła: `own_work`, `school_provided`, `parent_provided`, `licensed_third_party`, `public_website_copy`. Zmiany wymagają nagłówka `Origin` tej samej domeny (inaczej `403 invalid_origin`), `Content-Type: application/json` i body do 64 KiB.
 
 ## Dziennik
