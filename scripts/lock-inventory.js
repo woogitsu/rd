@@ -356,7 +356,7 @@ export function coverage(locks, mutants, exceptions = LOCK_EXCEPTIONS) {
 export const TABLE_START = '<!-- lock-inventory:start (generuje: node scripts/lock-inventory.js --markdown) -->';
 export const TABLE_END = '<!-- lock-inventory:end -->';
 export function coverageTable(rows) {
-  const cell = (text) => String(text).replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+  const cell = (text) => String(text).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
   const lines = [
     '| Plik i funkcja | Tabela | Blokada | Dowód |',
     '| --- | --- | --- | --- |',
