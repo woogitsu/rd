@@ -1,4 +1,4 @@
-import { uploadableKinds } from "./core.js";
+import { AUDIT_DOCUMENT_KIND, AUDIT_READABLE_CATEGORIES, AUDIT_REMOVED_ELEMENT_IDS, isDocumentsAuditView, uploadableKinds } from "./core.js";
 import {
   DEFAULT_MAX_BYTES,
   ERROR_MESSAGES,
@@ -44,7 +44,10 @@ import "../shared/shell.css";
 import { fillClassSelect } from "../shared/class-choice.js";
 import { fillYearSelect } from "../shared/school-year.js";
 
-mountShell();
+const shellReady = mountShell();
+// D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej — rozstrzygany raz, po sesji (capabilities
+// z GET /api/session) i uprawnieniach. Skrót interfejsu; zapisy i tak odrzuca serwer.
+const auditViewReady = shellReady.then((result) => isDocumentsAuditView(result?.grants, result?.capabilities), () => false);
 
 // Tekst błędu (#99): słownik dokumentów, potem wspólny (np. mfa_required), potem
 // komunikaty dokumentów według statusu; pozostałe statusy — wspólny tekst.
@@ -57,7 +60,7 @@ function apiErrorText(status, body) {
 }
 
 const byId = (id) => document.getElementById(id);
-const state = { documents: [], query: null, cursor: "", pending: null, uploading: false, detailsRequest: null, grants: [], statusAction: null, statusPending: null };
+const state = { auditView: false, documents: [], query: null, cursor: "", pending: null, uploading: false, detailsRequest: null, grants: [], statusAction: null, statusPending: null };
 
 const filtersForm = byId("filters-form");
 const yearInput = byId("filter-year");
@@ -346,6 +349,9 @@ function versionItem({ doc: raw, current }) {
 }
 
 async function renderStatusPanel(result, request) {
+  // Widok Komisji Rewizyjnej nie ma bloku wersji i zmiany stanu (usunięty z DOM); łańcuch zastąpień
+  // nie jest też czytany sąsiednimi odczytami metadanych.
+  if (state.auditView) return;
   const doc = normalizeDocument(result.document);
   const chain = await loadChain({ document: result.document, supersedes: result.supersedes ?? null });
   if (state.detailsRequest !== request) return;
@@ -611,6 +617,7 @@ details.addEventListener("keydown", (event) => {
 // identyfikatora (#128). Błąd 403 (rola bez dostępu do klas) daje pustą listę.
 const classApi = (url) => api(url);
 function syncFilterClassChoice() {
+  if (state.auditView) return Promise.resolve();
   return fillClassSelect(byId("filter-class"), classApi, yearInput.value, {
     optional: true, emptyLabel: "Wszystkie klasy", selected: byId("filter-class").value,
   });
@@ -760,6 +767,20 @@ fileInput.addEventListener("change", () => {
 kindSelect.addEventListener("change", syncKindFields);
 syncKindFields();
 
+// D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej. Usuwa z DOM formularz przesyłania, opis, wersje
+// i zmianę stanu oraz filtry spoza zakresu audit; zawęża rodzaj do dowodów finansowych, a kategorie do
+// czytelnych dla audit. Zostaje lista, metadane, podgląd i pobranie. Idempotentna.
+function applyAuditView() {
+  state.auditView = true;
+  for (const id of AUDIT_REMOVED_ELEMENT_IDS) byId(id)?.remove();
+  const kind = byId("filter-kind");
+  for (const option of [...kind.options]) if (option.value !== AUDIT_DOCUMENT_KIND) option.remove();
+  kind.value = AUDIT_DOCUMENT_KIND;
+  const category = byId("filter-category");
+  for (const option of [...category.options]) if (option.value && !AUDIT_READABLE_CATEGORIES.includes(option.value)) option.remove();
+  byId("audit-notice").hidden = false;
+}
+
 // #225: rodzaje dokumentów w formularzu według ról konta (/api/access). Sesja przed MFA
 // dostaje puste grants — wtedy formularz przesyłania jest ukryty.
 async function applyAccess() {
@@ -773,6 +794,12 @@ async function applyAccess() {
     // dostają rok z heurystyki daty, żeby panel nie został z pustym wyborem.
     fillYearSelect(yearInput, []);
     fillYearSelect(byId("upload-year"), []);
+    return;
+  }
+  if (await auditViewReady) {
+    applyAuditView();
+    fillYearSelect(yearInput, grants);
+    if (yearInput.value) await loadList();
     return;
   }
   // Rok domyślny (puste ekrany bez klikania „Pokaż”): najnowszy z przydziałów,

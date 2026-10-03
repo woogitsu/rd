@@ -48,6 +48,8 @@ Dostęp dla dyrekcji i Komisji Rewizyjnej pozostaje wyłączony do zatwierdzenia
 
 Interfejs w `ledger/` pokazuje podsumowanie roku, bieżący preliminarz i filtrowane wpisy. Pozwala tworzyć przychody lub wydatki i dopisywać korekty, korzystając wyłącznie z chronionego API. Formularz wymusza referencję uchwały dla wydatku powyżej 3000 EUR i zachowuje klucz idempotencji przy ponowieniu tego samego żądania.
 
+**Widok tylko do odczytu dla Komisji Rewizyjnej (D-09, #137).** Gdy serwer ma flagę `AUDIT_LEDGER_READ=1`, a `GET /api/session` zwraca `capabilities.auditLedgerRead: true` (tylko konto z rolą `audit`), panel pokazuje roli `audit` listę wpisów, kategorie, podsumowanie roku i linki „Pobierz CSV” / „Pobierz XLSX” (`GET /api/ledger/export.csv|xlsx`). Z DOM usuwane są wszystkie formularze i przyciski zapisu (dodanie wpisu, korekta, kategorie, kopiowanie kategorii, bilans otwarcia, linie i przyjęcie preliminarza) oraz sekcje preliminarza, historii preliminarza i wyniku wydarzeń, bo odpowiadające im trasy zwracają `audit` 403 i nie są wołane. Wpis z `paymentLinked: true` ma stały opis „Wpłata rodziny (opis i źródło zredagowane)” i znacznik „wpłata rodziny”; opisu, źródła i uchwały z odpowiedzi panel w ogóle nie wyświetla. Konto z rolą finansową zachowuje widok pełny nawet przy dodatkowej roli `audit`. To skrót interfejsu: kontrolę wykonuje serwer (zapisy `audit` → 403). Zakres i testy: sekcja „Zakres roli audit” w [AUTHORIZATION.md](AUTHORIZATION.md).
+
 ## Dalsze etapy
 
 Uzgadnianie księgi z wyciągiem bankowym już istnieje — patrz [RECONCILIATION.md](RECONCILIATION.md) (`src/pg/routes/reconciliation.js`), nie jest to już przyszły etap tego modułu. Pozostałe punkty:

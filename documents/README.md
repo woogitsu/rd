@@ -26,6 +26,8 @@ Po zbudowaniu serwer Node udostępnia panel pod `/documents/` z tego samego orig
 - wersja reguł kontroli pliku (issue #89, migracja 0161): wiersz „Kontrola struktury” w szczegółach (bieżące reguły / starsze reguły / wersja nieznana dla plików sprzed zapisu wersji) i filtr „Tylko sprawdzone starszymi regułami kontroli pliku” (`validation=outdated`) — tylko zawężenie listy w granicach uprawnień, bez nowych danych,
 - przesłanie pliku PDF, PNG lub JPEG z metadanymi: rodzaj, rok szkolny, klasa (tylko materiały klasy), powiązanie z wpisem księgi lub wpłatą (tylko dowody finansowe).
 
+- widok tylko do odczytu dla Komisji Rewizyjnej (D-09, #137): przy fladze `AUDIT_LEDGER_READ=1` konto z rolą `audit` (pole `capabilities.auditLedgerRead` w `GET /api/session`) widzi listę dowodów finansowych z dozwolonych kategorii, metadane bez opisu, podgląd i pobranie; formularz przesyłania, opis, wersje, zastąpienie i unieważnienie są usuwane z DOM. Serwer i tak odrzuca zapisy `audit`.
+
 ## Zasady
 
 - Kontrola typu (sygnatura pliku) i rozmiaru w przeglądarce służy tylko wygodzie. Serwer ponownie sprawdza typ, rozmiar i uprawnienia i jest rozstrzygający. Przeglądarka zna jedynie domyślny limit 10 MiB; inny `DOCUMENT_MAX_BYTES` ujawni się dopiero odpowiedzią 413.

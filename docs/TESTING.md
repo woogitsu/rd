@@ -65,6 +65,16 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
   inny rok, przydział klasowy, brak MFA, brak zapisów i ślad odczytu; liczby tras per moduł
   pilnuje `tests/audit-role-route-inventory.test.js` (tabela „Zakres roli audit” w docs/AUTHORIZATION.md).
   To założenie prototypu do formalnego potwierdzenia przez zarząd, nie decyzja.
+- Widok tylko do odczytu `audit` w panelach `ledger/` i `documents/` (D-09, ciąg dalszy #137):
+  pole `capabilities.auditLedgerRead` w `GET /api/session` pokrywa `tests/pg-audit-ledger-read.test.js`
+  (tylko `audit` z MFA i przydziałem bez klasy, flaga wyłączona = brak pola, kontrakt sesji bez zmian);
+  nawigację i parytet ról z serwerem — `tests/shell-core.test.js` i `tests/shell-panels-authz.test.js`
+  (`capabilityRoles`); brak akcji zapisu w panelu — `tests/ledger-panel-core.test.js` i
+  `tests/documents-core.test.js` (każdy `<dialog>`, formularz i przycisk z HTML musi być na liście
+  elementów usuwanych albo na jawnej liście przycisków odczytu, widok audit woła tylko trasy odczytu,
+  redakcja wpisu `paymentLinked`); przeglądarka — `tests/e2e/audit-readonly.spec.js` (serwer E2E ma
+  `AUDIT_LEDGER_READ=1`, rok `e2e-y-auditro`; kontrast ze skarbnikiem tego samego roku). Ukrycie
+  przycisku nie jest kontrolą dostępu — odmowy zapisów po stronie serwera pilnuje `pg-audit-ledger-read`.
 - Dyrekcja bez roku (przydział i zaproszenie `principal` sprzed wymogu roku, wskazanie 2026-10-02):
   `tests/pg-access-review.test.js` (aktywny przydział bez roku oznaczony `revoke` / `year_scope_required`
   w przeglądzie każdego roku; z rokiem, cofnięty, wygasły i `audit` bez roku — nie; przegląd nie zmienia

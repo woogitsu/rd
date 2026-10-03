@@ -1,4 +1,4 @@
-import { describeApiError, hasFinancialAccess } from "./core.js";
+import { AUDIT_REMOVED_ELEMENT_IDS, buildLedgerExportUrl, describeApiError, entryTexts, hasFinancialAccess, isLedgerAuditView } from "./core.js";
 import { canRecordOpeningBalance, categoryCopyConfirm, categoryCopyRequestBody, openEntryState, openingBalanceRequestBody } from "./core.js";
 import {
   DIRECTION_LABELS,
@@ -45,9 +45,12 @@ import { mountEntityHistory } from "../shared/entity-history-dom.js";
 let printedBy = null;
 const shellReady = mountShell();
 shellReady.then((result) => { printedBy = sessionDisplayName(result?.session); });
+// D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej — rozstrzygany raz, po sesji (capabilities
+// z GET /api/session) i uprawnieniach. Skrót interfejsu; zapisy i tak odrzuca serwer.
+const auditViewReady = shellReady.then((result) => isLedgerAuditView(result?.grants, result?.capabilities), () => false);
 
 const FILTER_KEYS = ["schoolYearId", "direction", "category", "dateFrom", "dateTo"];
-const state = { entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, opening: null, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
+const state = { auditView: false, entries: [], categories: [], resolutions: [], resolutionsError: "", grants: [], history: { rows: [], adoptionRows: [], currentLines: [] }, opening: null, nextCursor: null, query: null, loading: false, requestKey: null, printing: false };
 const byId = (id) => document.getElementById(id);
 const filtersForm = byId("filters-form");
 const yearInput = byId("school-year-id");
@@ -101,14 +104,22 @@ function textCell(value, className = "") {
 
 function entryRow(raw) {
   const entry = normalizeEntry(raw);
+  const texts = entryTexts(entry);
   const row = document.createElement("tr");
   // Data w zapisie polskim dd.mm.rrrr — ekran i wydruk (#151, decyzja 30.09 z #563).
   row.append(textCell(formatPrintDate(entry.occurredOn), "date"));
-  const description = textCell(entry.description || "Bez opisu", "entry-description");
+  const description = textCell(texts.description, "entry-description");
+  // D-09: wpis powiązany z wpłatą rodziny — stały opis i znacznik, bez wolnego tekstu z odpowiedzi.
+  if (texts.badge) {
+    const marker = document.createElement("span");
+    marker.className = "badge payment-linked";
+    marker.textContent = texts.badge;
+    description.append(" ", marker);
+  }
   const evidence = entry.attachmentCount === null ? "" : `Dowody: ${entry.attachmentCount}${attachmentStatusLabel(entry.attachmentStatus)}`;
-  if (entry.source || entry.resolutionReference || evidence) {
+  if (texts.source || texts.resolutionReference || evidence) {
     const details = document.createElement("small");
-    details.textContent = [entry.source && `Źródło: ${entry.source}`, entry.resolutionReference && `Uchwała: ${entry.resolutionReference}`, evidence].filter(Boolean).join(" · ");
+    details.textContent = [texts.source && `Źródło: ${texts.source}`, texts.resolutionReference && `Uchwała: ${texts.resolutionReference}`, evidence].filter(Boolean).join(" · ");
     description.append(details);
   }
   // #144: łańcuch przeksięgowań (storno + wpis zastępczy) — historia pozostaje widoczna.
@@ -126,6 +137,8 @@ function entryRow(raw) {
   badge.textContent = DIRECTION_LABELS[entry.direction];
   type.append(badge);
   row.append(type, textCell(formatCents(entry.netCents), "amount"));
+  // Widok Komisji Rewizyjnej: bez kolumny akcji (korekta to zapis).
+  if (state.auditView) return row;
   const actions = document.createElement("td");
   const button = document.createElement("button");
   button.type = "button";
@@ -268,11 +281,14 @@ function updateControls() {
   const changed = filterChanged();
   const openEntry = byId("open-entry");
   const hint = byId("open-entry-hint");
-  // #207: rok bez kategorii — przycisk wyłączony z wyjaśnieniem zamiast błędu invalid_category po zapisie.
-  const entryState = openEntryState({ loading: state.loading, query: state.query, changed, categoryCount: state.categories.length });
-  openEntry.disabled = entryState.disabled;
-  hint.textContent = entryState.hint;
-  hint.hidden = !openEntry.disabled || state.loading;
+  // Widok Komisji Rewizyjnej nie ma przycisku zapisu (element usunięty z DOM).
+  if (openEntry && hint) {
+    // #207: rok bez kategorii — przycisk wyłączony z wyjaśnieniem zamiast błędu invalid_category po zapisie.
+    const entryState = openEntryState({ loading: state.loading, query: state.query, changed, categoryCount: state.categories.length });
+    openEntry.disabled = entryState.disabled;
+    hint.textContent = entryState.hint;
+    hint.hidden = !openEntry.disabled || state.loading;
+  }
   loadMore.disabled = state.loading || changed;
   byId("load-more-hint").hidden = !changed || !state.nextCursor;
   printButton.disabled = state.loading || state.printing || !state.query || changed || state.entries.length === 0;
@@ -305,6 +321,33 @@ async function loadEntries({ append = false, query = state.query } = {}) {
   renderEntries();
 }
 
+// D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej. Usuwa z DOM wszystkie formularze i przyciski zapisu
+// oraz sekcje z tras, których audit nie ma (preliminarz, wynik wydarzeń); zostaje lista, kategorie,
+// podsumowanie i eksport CSV/XLSX. Idempotentna. To skrót interfejsu — zapisy odrzuca serwer.
+function applyAuditView() {
+  state.auditView = true;
+  for (const id of AUDIT_REMOVED_ELEMENT_IDS) byId(id)?.remove();
+  byId("audit-notice").hidden = false;
+  byId("audit-export").hidden = false;
+}
+
+// Widok audit woła wyłącznie trasy odczytu dostępne roli: podsumowanie, kategorie i listę.
+async function loadAuditOverview(query) {
+  const year = query.schoolYearId;
+  const [summaryData, categoriesData] = await Promise.all([
+    api(buildOverviewUrl("summary", year)),
+    api(buildOverviewUrl("categories", year)),
+    loadEntries({ query }),
+  ]);
+  state.query = query;
+  state.categories = Array.isArray(categoriesData.categories) ? categoriesData.categories : [];
+  setCategoryOptions(state.categories, query.category);
+  renderSummary(summaryData.summary ?? {});
+  byId("export-csv").href = buildLedgerExportUrl("csv", year);
+  byId("export-xlsx").href = buildLedgerExportUrl("xlsx", year);
+  overview.hidden = false;
+}
+
 async function loadOverview({ reload = false } = {}) {
   if (state.loading) return;
   let query;
@@ -325,6 +368,10 @@ async function loadOverview({ reload = false } = {}) {
   state.opening = null;
   setBusy(true);
   try {
+    if (state.auditView) {
+      await loadAuditOverview(query);
+      return;
+    }
     const year = query.schoolYearId;
     const [summaryData, budgetData, categoriesData, costCentersData, resolutionsData, historyData, openingData] = await Promise.all([
       api(buildOverviewUrl("summary", year)),
@@ -388,6 +435,8 @@ filtersForm.addEventListener("submit", (event) => {
     years = [];
   }
   yearInput.innerHTML = yearOptionsHtml(years, year);
+  // Widok audit musi być znany przed pierwszym wczytaniem roku (inne trasy niż dla ról finansowych).
+  if (await auditViewReady) applyAuditView();
   if (restored.direction && [...directionInput.options].some((o) => o.value === restored.direction)) {
     directionInput.value = restored.direction;
   }
@@ -444,6 +493,8 @@ async function applyAccess() {
   }
   const grants = Array.isArray(access.grants) ? access.grants : [];
   state.grants = grants;
+  // Komisja Rewizyjna (flaga AUDIT_LEDGER_READ): widok tylko do odczytu zamiast komunikatu o braku dostępu.
+  if (await auditViewReady) { applyAuditView(); return; }
   updateBudgetActions();
   if (hasFinancialAccess(grants)) return;
   byId("open-entry").hidden = true;

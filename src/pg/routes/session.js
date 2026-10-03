@@ -2,12 +2,25 @@
 
 import { clearSessionCookies } from '../../auth.js';
 import { loadSession, revokeSession } from '../auth.js';
-import { hasActiveRole, loadAuthorizationContext } from '../authorization.js';
+import { hasActiveRole, isAuthorizedScoped, loadActiveGrants, loadAuthorizationContext } from '../authorization.js';
+import { AUDIT_LEDGER_READ_ROLES, auditLedgerReadEnabled } from '../audit-ledger-read.js';
 import { mfaGate } from '../mfa-policy.js';
 import { buildHeaders } from '../http.js';
 import { isReadOnly } from '../../write-mode.js';
 
 export const name = 'session';
+
+// D-09 (#137): panele księgi i dokumentów muszą wiedzieć, czy pokazać Komisji Rewizyjnej widok tylko do
+// odczytu. Pole `capabilities.auditLedgerRead: true` dostaje WYŁĄCZNIE konto z rolą `audit` (przydział bez
+// klasy, potwierdzone MFA — jak trasy odczytu), gdy flaga AUDIT_LEDGER_READ jest włączona. Dla wszystkich
+// pozostałych (także `audit` przy wyłączonej fladze) pola `capabilities` nie ma w ogóle, więc odpowiedź nie
+// zdradza konfiguracji serwera. To wskazówka dla interfejsu — trasy odczytu i tak autoryzuje serwer.
+async function sessionCapabilities(env, session) {
+  if (!auditLedgerReadEnabled(env)) return null;
+  const grants = await loadActiveGrants(env, session.user.id);
+  if (!isAuthorizedScoped({ session, grants }, { roles: AUDIT_LEDGER_READ_ROLES, requireMfa: true })) return null;
+  return { auditLedgerRead: true };
+}
 
 export async function handle(request, env, url, json) {
   if (url.pathname === '/api/session' && request.method === 'GET') {
@@ -20,7 +33,8 @@ export async function handle(request, env, url, json) {
     // okna serwisowego i wyłączyć przyciski zapisu (kontrola dostępu jest zawsze
     // na serwerze — patrz src/pg/app.js).
     const { mfaVerifiedAt, ...publicSession } = session;
-    return json({ ...publicSession, writeMode: isReadOnly(env) ? 'read_only' : 'normal' });
+    const capabilities = await sessionCapabilities(env, session);
+    return json({ ...publicSession, writeMode: isReadOnly(env) ? 'read_only' : 'normal', ...(capabilities ? { capabilities } : {}) });
   }
   if (url.pathname === '/api/access' && request.method === 'GET') {
     const context = await loadAuthorizationContext(request, env);

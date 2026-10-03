@@ -7,10 +7,16 @@ import { api as apiRequest, checkSession } from "./api.js";
 import { forgetSession } from "./session-hint.js";
 import { applySchoolName } from "./school.js";
 import { defaultYear, formatSchoolYear, yearsFromGrants } from "./school-year.js";
+import { AUDIT_LEDGER_READ, AUDIT_READ_ROLES, sessionCapabilities } from "./audit-view.js";
+
+export { sessionCapabilities };
 
 // Kolejność stała dla wszystkich paneli (patrz issue #85, propozycja p.3; rozszerzone
 // o #226 — uzgodnienia, kampanie e-mail i zamknięcie roku miały wcześniej własne,
 // niepełne paski nawigacji zamiast tej listy).
+// `capabilityRoles` (opcjonalne) dodaje panel tylko dla konta z daną rolą, gdy serwer zgłosił
+// możliwość w GET /api/session (`capabilities`, shared/audit-view.js) — dziś wyłącznie widok
+// tylko do odczytu Komisji Rewizyjnej przy fladze AUDIT_LEDGER_READ (D-09, #137).
 // `roles` to WYŁĄCZNIE wskazówka UI — ukrycie linku nie jest kontrolą dostępu;
 // każde API sprawdza uprawnienia niezależnie (docs/AUTHORIZATION.md). Lista ról każdego
 // panelu odwzorowuje stałe modułu tras odpowiedzialnego za dane API (patrz komentarz
@@ -24,7 +30,8 @@ export const PANELS = Object.freeze([
   // src/pg/routes/payments.js FINANCIAL_ROLES.
   { id: "panel", href: "/panel/", label: "Wpłaty", roles: ["admin", "board", "treasurer"] },
   // src/pg/routes/ledger.js FINANCIAL_ROLES.
-  { id: "ledger", href: "/ledger/", label: "Księga", roles: ["admin", "board", "treasurer"] },
+  // Komisja Rewizyjna (audit) ma odczyt księgi tylko przy fladze AUDIT_LEDGER_READ (capabilityRoles).
+  { id: "ledger", href: "/ledger/", label: "Księga", roles: ["admin", "board", "treasurer"], capabilityRoles: { [AUDIT_LEDGER_READ]: AUDIT_READ_ROLES } },
   // src/pg/routes/email.js EDITOR_ROLES (admin nie ma dostępu do kampanii e-mail).
   { id: "email", href: "/email/", label: "Kampanie", roles: ["board", "treasurer"] },
   // src/pg/routes/reconciliation.js WRITE_ROLES (widok tylko-do-odczytu Komisji
@@ -38,7 +45,8 @@ export const PANELS = Object.freeze([
   // udostępnione protokoły (meetings/core.js dostosowuje widok do zakresu).
   { id: "meetings", href: "/meetings/", label: "Zebrania", roles: ["admin", "board", "audit", "principal", "representative"] },
   // src/pg/routes/documents.js DOCUMENT_POLICIES (suma ról wszystkich rodzajów dokumentów).
-  { id: "documents", href: "/documents/", label: "Dokumenty", roles: ["admin", "board", "treasurer", "representative"] },
+  // Komisja Rewizyjna (audit) czyta dowody finansowe tylko przy fladze AUDIT_LEDGER_READ (capabilityRoles).
+  { id: "documents", href: "/documents/", label: "Dokumenty", roles: ["admin", "board", "treasurer", "representative"], capabilityRoles: { [AUDIT_LEDGER_READ]: AUDIT_READ_ROLES } },
   // src/pg/routes/import.js IMPORT_ROLES.
   { id: "import", href: "/import/", label: "Import", roles: ["admin", "board"] },
   // src/pg/routes/year-close.js READ_ROLES (admin i Komisja Rewizyjna bez dostępu).
@@ -71,11 +79,15 @@ export function roleLabel(role) {
 }
 
 // Zwraca podzbiór PANELS w stałej kolejności, widoczny dla podanych przydziałów
-// (jak z GET /api/access → grants). Czysta funkcja — bez DOM, bez sieci.
-export function visiblePanels(grants) {
+// (jak z GET /api/access → grants) i możliwości sesji (GET /api/session → capabilities,
+// por. sessionCapabilities). Bez możliwości lista zależy wyłącznie od ról. Czysta funkcja —
+// bez DOM, bez sieci.
+export function visiblePanels(grants, capabilities = {}) {
   const roles = new Set((Array.isArray(grants) ? grants : []).map((g) => g && g.role).filter(Boolean));
   if (roles.size === 0) return [];
-  return PANELS.filter((panel) => panel.roles.some((role) => roles.has(role)));
+  const byCapability = (panel) => Object.entries(panel.capabilityRoles || {})
+    .some(([capability, capabilityRoles]) => capabilities?.[capability] === true && capabilityRoles.some((role) => roles.has(role)));
+  return PANELS.filter((panel) => panel.roles.some((role) => roles.has(role)) || byCapability(panel));
 }
 
 // Krótki opis zakresu do bloku konta, np. "Przedstawiciel klasy, Skarbnik".
@@ -195,12 +207,13 @@ export async function mountShell({ document: doc = document, location: loc = win
   } catch {
     grants = [];
   }
-  if (navList) navList.innerHTML = navItemsHtml(visiblePanels(grants), loc.pathname);
+  const capabilities = sessionCapabilities(session);
+  if (navList) navList.innerHTML = navItemsHtml(visiblePanels(grants, capabilities), loc.pathname);
   syncWriteModeBanner(doc, session);
   if (account) {
     if (!session) {
       account.innerHTML = "";
-      return { grants, session };
+      return { grants, session, capabilities };
     }
     const name = escapeHtml(sessionDisplayName(session) || "Konto");
     const yearLabel = activeYearLabel(grants);
@@ -213,5 +226,5 @@ export async function mountShell({ document: doc = document, location: loc = win
     const btn = doc.getElementById("shell-logout");
     if (btn) btn.addEventListener("click", () => { btn.disabled = true; logout(); });
   }
-  return { grants, session };
+  return { grants, session, capabilities };
 }

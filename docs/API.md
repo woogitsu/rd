@@ -175,3 +175,20 @@ lista „do sprawdzenia” kampanii, odbiorcy kampanii i rejestr żądań osób)
 #543 kursor keyset — są w tabeli wyżej (testy
 `tests/pg-list-cursor-email-requests.test.js`). Lista, której tabela nie
 wymienia, nie jest objęta tym kontraktem — zakres sprawdzać w module trasy.
+
+## Pole `capabilities` w `GET /api/session` (D-09, #137)
+
+Odpowiedź sesji ma dodatkowe, opcjonalne pole `capabilities`, którego panele używają
+wyłącznie do pokazania interfejsu (nawigacja i widok tylko do odczytu):
+
+| Pole | Kiedy `true` | Gdy brak |
+| --- | --- | --- |
+| `capabilities.auditLedgerRead` | konto z rolą `audit` (przydział bez klasy, potwierdzone MFA) i włączona flaga `AUDIT_LEDGER_READ` | cały obiekt `capabilities` jest pominięty |
+
+Dla pozostałych kont (także `audit` przy fladze wyłączonej) pole nie występuje, więc
+odpowiedź nie zdradza konfiguracji serwera, a kształt sesji pozostaje jak dotąd
+(`sessionId`, `user`, `expiresAt`, `mfaVerified`, `writeMode`). Pole niczego nie
+odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądaniu
+(`docs/AUTHORIZATION.md`, „Zakres roli audit”). Opis w `docs/openapi.json` nie ma
+schematu odpowiedzi sesji (generator opisuje trasy i role, nie treść odpowiedzi),
+więc `npm run openapi:build` nie zmienia pliku.

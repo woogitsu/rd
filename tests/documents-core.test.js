@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  AUDIT_DOCUMENT_KIND,
+  AUDIT_READABLE_CATEGORIES,
+  AUDIT_REMOVED_ELEMENT_IDS,
+  DOCUMENT_PANEL_ROLES,
+  isDocumentsAuditView,
   CATEGORY_LABELS,
   DEFAULT_MAX_BYTES,
   TYPES,
@@ -35,6 +40,9 @@ import {
 } from "../documents/core.js";
 import { ALLOWED_TYPES, DEFAULT_MAX_UPLOAD_BYTES } from "../src/documents.js";
 import { DOCUMENT_CATEGORIES } from "../src/pg/routes/documents.js";
+import { AUDIT_READABLE_DOCUMENT_CATEGORIES } from "../src/pg/audit-ledger-read.js";
+import { readFileSync } from "node:fs";
+import { assertEvery } from "./helpers/assertions.js";
 
 const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -378,4 +386,84 @@ test("normalizeDocument i metadataRows: wersja reguł kontroli struktury", () =>
   assert.equal(normalizeDocument({ ...base, validationVersion: "1", validationCurrent: "true" }).validationVersion, null);
   assert.equal(normalizeDocument({ ...base, validationVersion: 0 }).validationVersion, null);
   assert.equal(normalizeDocument({ ...base, validationCurrent: "true" }).validationCurrent, false);
+});
+
+// --- D-09 (#137): widok tylko do odczytu Komisji Rewizyjnej w panelu dokumentów -----------------------
+// Ukrycie przycisku NIE jest kontrolą dostępu (przesyłanie, opis, zastąpienie i unieważnienie odrzuca serwer:
+// tests/pg-audit-ledger-read.test.js); te testy pilnują, że panel w widoku audit nie renderuje akcji zapisu.
+
+const documentsHtml = readFileSync(new URL("../documents/index.html", import.meta.url), "utf8");
+const documentsMain = readFileSync(new URL("../documents/main.js", import.meta.url), "utf8");
+const AUDIT_ON = { auditLedgerRead: true };
+const AUDIT_GRANT = [{ role: "audit", classId: null, schoolYearId: "2026-2027" }];
+
+function sourceOf(source, header) {
+  const start = source.indexOf(header);
+  assert.notEqual(start, -1, `brak ${header}`);
+  return source.slice(start, source.indexOf("\n}\n", start) + 3);
+}
+
+test("D-09: widok audit tylko dla konta audit bez klasy, z możliwością z sesji i bez roli panelu dokumentów", () => {
+  assert.equal(isDocumentsAuditView(AUDIT_GRANT, AUDIT_ON), true);
+  assert.equal(isDocumentsAuditView(AUDIT_GRANT, { auditLedgerRead: false }), false, "flaga serwera wyłączona");
+  assert.equal(isDocumentsAuditView(AUDIT_GRANT, undefined), false);
+  assert.equal(isDocumentsAuditView([{ role: "audit", classId: "1A" }], AUDIT_ON), false, "przydział klasowy");
+  assert.equal(isDocumentsAuditView([{ role: "principal" }], AUDIT_ON), false, "możliwość bez roli audit");
+  for (const role of DOCUMENT_PANEL_ROLES) assert.equal(isDocumentsAuditView([...AUDIT_GRANT, { role, classId: role === "representative" ? "1A" : null }], AUDIT_ON), false, role);
+});
+
+test("D-09: kategorie i rodzaj czytelne dla audit są zgodne z serwerem i z listą kategorii panelu", () => {
+  assert.deepEqual([...AUDIT_READABLE_CATEGORIES].sort(), [...AUDIT_READABLE_DOCUMENT_CATEGORIES].sort());
+  assertEvery(AUDIT_READABLE_CATEGORIES, (category) => Object.hasOwn(CATEGORY_LABELS, category) && DOCUMENT_CATEGORIES.includes(category),
+    "kategorie audit są kategoriami dokumentów", { exact: 5 });
+  // Kategorie z danymi płatników są poza zakresem audit (potwierdzenia przelewów, wyciągi, „inne”).
+  for (const hidden of ["potwierdzenie_przelewu", "wyciag", "inne", "regulamin"]) assert.ok(!AUDIT_READABLE_CATEGORIES.includes(hidden), hidden);
+  assert.equal(AUDIT_DOCUMENT_KIND, "financial");
+});
+
+test("D-09: lista usuwanych elementów wskazuje istniejące bloki i obejmuje każdy formularz oraz przycisk zapisu poza filtrami", () => {
+  assertEvery(AUDIT_REMOVED_ELEMENT_IDS, (id) => documentsHtml.includes(`id="${id}"`), "elementy z AUDIT_REMOVED_ELEMENT_IDS istnieją w documents/index.html");
+  // Formularze: filtry (odczyt) oraz trzy formularze zapisu — każdy leży w usuwanym bloku.
+  const forms = [...documentsHtml.matchAll(/<form id="([^"]+)"/g)].map((match) => match[1]).sort();
+  assert.deepEqual(forms, ["description-form", "filters-form", "status-form", "upload-form"]);
+  const at = (needle) => documentsHtml.indexOf(needle);
+  const statusBlock = at('id="status-block"');
+  const descriptionBlock = at('id="description-block"');
+  const uploadSection = at('id="upload-section"');
+  assert.ok(statusBlock > 0 && statusBlock < at('id="status-supersede"') && at('id="status-void"') < at('id="status-form"') && at('id="status-form"') < descriptionBlock,
+    "akcje zastąpienia i unieważnienia oraz formularz stanu są w status-block");
+  assert.ok(descriptionBlock < at('id="description-form"') && at('id="description-form"') < uploadSection, "formularz opisu jest w description-block");
+  assert.ok(uploadSection < at('id="upload-form"'), "formularz przesyłania jest w upload-section");
+  // Przyciski z identyfikatorem poza usuwanymi blokami: wyłącznie odczyt (lista, podgląd, zamknięcie szczegółów).
+  const blocks = [[statusBlock, descriptionBlock], [descriptionBlock, uploadSection], [uploadSection, documentsHtml.indexOf("</main>")]];
+  const uncovered = [...documentsHtml.matchAll(/<button[^>]*\bid="([^"]+)"/g)]
+    .filter((match) => !blocks.some(([from, to]) => match.index > from && match.index < to))
+    .map((match) => match[1]);
+  assert.deepEqual(uncovered.sort(), ["close-details", "details-preview", "load-more"]);
+});
+
+test("D-09: filtry spoza zakresu audit (klasa, wyszukiwanie w opisie) leżą w usuwanych elementach, a widok pokazuje komunikat o zakresie", () => {
+  assert.match(documentsHtml, /<label id="filter-class-field">/);
+  assert.match(documentsHtml, /<label id="filter-search-field">/);
+  assert.match(documentsHtml, /id="audit-notice"[^>]* hidden/);
+  assert.match(documentsHtml, /Widok tylko do odczytu dla Komisji Rewizyjnej/);
+});
+
+test("D-09: kod panelu — widok audit rozstrzygany przed formularzem przesyłania, bez łańcucha wersji i bez zapisów", () => {
+  const access = sourceOf(documentsMain, "async function applyAccess()");
+  const auditBranch = access.indexOf("await auditViewReady");
+  assert.ok(auditBranch !== -1 && auditBranch < access.indexOf("uploadableKinds(grants)") && auditBranch < access.indexOf("syncUploadClassChoice"),
+    "gałąź audit kończy applyAccess przed konfiguracją przesyłania");
+  const branch = access.slice(auditBranch, access.indexOf("return;", auditBranch));
+  assert.match(branch, /applyAuditView\(\)/);
+  assert.match(branch, /loadList\(\)/);
+  assert.doesNotMatch(branch, /upload|Upload|classApi|status/);
+  const apply = sourceOf(documentsMain, "function applyAuditView()");
+  assert.match(apply, /\.remove\(\)/, "elementy zapisu są usuwane z DOM, nie tylko ukrywane");
+  assert.match(apply, /AUDIT_READABLE_CATEGORIES/);
+  assert.match(apply, /AUDIT_DOCUMENT_KIND/);
+  // Szczegóły: bez sąsiednich odczytów metadanych (łańcuch wersji) i bez panelu stanu.
+  const status = sourceOf(documentsMain, "async function renderStatusPanel(result, request)");
+  assert.ok(status.indexOf("if (state.auditView) return;") !== -1 && status.indexOf("if (state.auditView) return;") < status.indexOf("loadChain("));
+  assert.match(sourceOf(documentsMain, "function syncFilterClassChoice()"), /if \(state\.auditView\) return Promise\.resolve\(\);/, "audit nie pobiera listy klas");
 });
