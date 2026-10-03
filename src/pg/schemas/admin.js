@@ -487,7 +487,8 @@ const representativesApplied = strictObject({
   planDigest: ref('Sha256Hex'),
   created: COUNT,
   alreadyGranted: COUNT,
-  skipped: { ...COUNT, description: 'Konta wyłączone (bez przydziału).' },
+  skipped: { ...COUNT, description: 'Pominięte wiersze bez przydziału: konta wyłączone i własne konto admina (#745).' },
+  skippedSelf: { ...COUNT, description: 'Wiersze własnego konta admina — zasada drugiej osoby (#146, #745); rolę nada inny administrator.' },
   replayed: { type: 'boolean', description: 'true, gdy nic nie powstało (powtórzenie zapisu).' },
 });
 const restrictionRoute = (description) => ({
@@ -920,10 +921,10 @@ export const routes = {
         schema: strictObject({
           fromSchoolYearId: ref('EntityId'),
           toSchoolYearId: ref('EntityId'),
-          counts: countsObject(['propose', 'already_granted', 'user_disabled']),
+          counts: countsObject(['propose', 'already_granted', 'user_disabled', 'cannot_grant_self']),
           proposals: arrayOf(strictObject({
             userId: ref('EntityId'), fromClassId: ref('EntityId'), toClassId: ref('EntityId'),
-            status: { type: 'string', enum: ['propose', 'already_granted', 'user_disabled'] },
+            status: { type: 'string', enum: ['propose', 'already_granted', 'user_disabled', 'cannot_grant_self'] },
           })),
           withoutRepresentative: arrayOf(strictObject({ classId: ref('EntityId'), name: STRING })),
           planDigest: ref('Sha256Hex'),

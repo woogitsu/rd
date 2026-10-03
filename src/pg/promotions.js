@@ -36,6 +36,10 @@
 //   docelowego; to nowe wiersze `role_grants` (bez zmiany starych), bez daty
 //   wygaśnięcia (wygasną z rokiem docelowym). Konto wyłączone nie jest
 //   proponowane (`user_disabled`), istniejący aktywny przydział to `already_granted`.
+//   Własny wiersz wykonującego admina to `cannot_grant_self` (#745, zasada z #146:
+//   rolę nadaje druga osoba) — pomijany przy zapisie, liczony w `skipped`; przydział
+//   nadaje mu inny administrator przez POST /api/admin/grants. Plan zależy więc od
+//   aktora: skrót z podglądu innego admina daje przy zapisie 409 plan_stale.
 //   Powtórzenie zapisu nie tworzy nowych wierszy (`created: 0`). Audyt: `role_grant.created`
 //   (z `source: 'promotion'`) i jedno `promotion.representatives_extended` — same identyfikatory.
 
@@ -345,10 +349,17 @@ async function applyRoute(env, actorId, request, json) {
 // --- Przedłużenie przydziałów przedstawicieli ---------------------------------
 
 const MAX_PROPOSALS = 2000;
+// Wiersze planu, których zapis nie przedłuża (liczone w `skipped`).
+const SKIPPED = new Set(['user_disabled', 'cannot_grant_self']);
 
 // Statusy `propose` i `already_granted` są w skrócie planu tym samym zamiarem
 // (`eligible`): po własnym zapisie plan nie staje się przez to nieaktualny.
-async function buildRepresentativePlan(q, input) {
+// `user_disabled` i `cannot_grant_self` mają w skrócie własne znaczniki.
+// actorId: wykonujący admin — jego wiersz to `cannot_grant_self` (#745) także wtedy,
+// gdy ma już aktywny przydział w klasie docelowej (zapis nigdy nie nadaje mu roli;
+// istniejący przydział i tak liczy się do obsady klasy).
+async function buildRepresentativePlan(q, input, actorId) {
+  if (!actorId) throw new Error('actor_required');
   await loadYears(q, input);
   const fromClasses = await loadClasses(q, input.fromSchoolYearId);
   const toClasses = await loadClasses(q, input.toSchoolYearId);
@@ -379,10 +390,11 @@ async function buildRepresentativePlan(q, input) {
     const toClassId = input.classMap[row.class_id];
     let status = 'propose';
     if (row.disabled) status = 'user_disabled';
+    else if (row.user_id === actorId) status = 'cannot_grant_self';
     else if (activeKeys.has(`${row.user_id}\u0000${toClassId}`)) status = 'already_granted';
     return { userId: row.user_id, fromClassId: row.class_id, toClassId, status };
   });
-  const counts = { propose: 0, already_granted: 0, user_disabled: 0 };
+  const counts = { propose: 0, already_granted: 0, user_disabled: 0, cannot_grant_self: 0 };
   for (const item of proposals) counts[item.status] += 1;
   const covered = new Set([...active.rows.map((row) => row.class_id), ...proposals.filter((item) => item.status === 'propose').map((item) => item.toClassId)]);
   const nameById = new Map(toClasses.map((row) => [row.id, row.name]));
@@ -390,7 +402,7 @@ async function buildRepresentativePlan(q, input) {
 
   const planDigest = sha256(JSON.stringify({
     kind: 'representatives', from: input.fromSchoolYearId, to: input.toSchoolYearId,
-    items: proposals.map((item) => [item.userId, item.fromClassId, item.toClassId, item.status === 'user_disabled' ? 'user_disabled' : 'eligible']),
+    items: proposals.map((item) => [item.userId, item.fromClassId, item.toClassId, SKIPPED.has(item.status) ? item.status : 'eligible']),
   }));
   return {
     fromSchoolYearId: input.fromSchoolYearId, toSchoolYearId: input.toSchoolYearId,
@@ -398,9 +410,9 @@ async function buildRepresentativePlan(q, input) {
   };
 }
 
-async function representativesPreviewRoute(env, request, json) {
+async function representativesPreviewRoute(env, actorId, request, json) {
   const input = readCommon(await readJsonObject(request, { maxBytes: MAX_BODY_BYTES }));
-  return json(await buildRepresentativePlan(env.db, input));
+  return json(await buildRepresentativePlan(env.db, input, actorId));
 }
 
 async function representativesApplyRoute(env, actorId, request, json, grants) {
@@ -414,12 +426,12 @@ async function representativesApplyRoute(env, actorId, request, json, grants) {
     await grants.lockChanges(tx);
     const { to } = await loadYears(tx, input);
     if (to.status === 'closed') throw new ApiError('school_year_closed', 409);
-    const plan = await buildRepresentativePlan(tx, input);
+    const plan = await buildRepresentativePlan(tx, input, actorId);
     if (plan.planDigest !== data.planDigest) throw new ApiError('plan_stale', 409);
     if (!plan.counts.propose && !plan.counts.already_granted) throw new ApiError('nothing_to_extend', 422);
     let created = 0;
-    for (const item of plan.proposals) {
-      if (item.status === 'user_disabled') continue;
+    const eligible = plan.proposals.filter((item) => !SKIPPED.has(item.status));
+    for (const item of eligible) {
       await grants.lockTarget(tx, item.userId);
       const result = await grants.insert(tx, actorId, {
         userId: item.userId, role: 'representative', classId: item.toClassId, schoolYearId: input.toSchoolYearId,
@@ -427,19 +439,20 @@ async function representativesApplyRoute(env, actorId, request, json, grants) {
       });
       if (result.created) created += 1;
     }
-    const alreadyGranted = plan.proposals.filter((item) => item.status !== 'user_disabled').length - created;
-    const skipped = plan.counts.user_disabled;
+    const alreadyGranted = eligible.length - created;
+    const skippedSelf = plan.counts.cannot_grant_self;
+    const skipped = plan.counts.user_disabled + skippedSelf;
     if (created) {
       await insertAuditEvent(tx, {
         actorId, action: 'promotion.representatives_extended', entityType: 'school_year', entityId: input.toSchoolYearId,
-        metadata: { schoolYearId: input.toSchoolYearId, fromSchoolYearId: input.fromSchoolYearId, created, alreadyGranted, skipped },
+        metadata: { schoolYearId: input.toSchoolYearId, fromSchoolYearId: input.fromSchoolYearId, created, alreadyGranted, skipped, skippedSelf },
       });
     }
     return {
       status: created ? 201 : 200,
       body: {
         fromSchoolYearId: input.fromSchoolYearId, toSchoolYearId: input.toSchoolYearId, planDigest: plan.planDigest,
-        created, alreadyGranted, skipped, replayed: created === 0,
+        created, alreadyGranted, skipped, skippedSelf, replayed: created === 0,
       },
     };
   });
@@ -455,7 +468,7 @@ export function routePromotions(env, actorId, request, segments, json, grants) {
   if (segments.length === 2 && first === 'apply' && method === 'POST') return applyRoute(env, actorId, request, json);
   if (segments.length === 3 && first === 'classes' && second === 'preview' && method === 'POST') return copyClassesPreview(env, request, json);
   if (segments.length === 3 && first === 'classes' && second === 'apply' && method === 'POST') return copyClassesApply(env, actorId, request, json);
-  if (segments.length === 3 && first === 'representatives' && second === 'preview' && method === 'POST') return representativesPreviewRoute(env, request, json);
+  if (segments.length === 3 && first === 'representatives' && second === 'preview' && method === 'POST') return representativesPreviewRoute(env, actorId, request, json);
   if (segments.length === 3 && first === 'representatives' && second === 'apply' && method === 'POST') return representativesApplyRoute(env, actorId, request, json, grants);
   return undefined;
 }
