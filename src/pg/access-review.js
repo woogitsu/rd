@@ -5,14 +5,18 @@
 // audytu, blokada ostatniego admina). Bez imion i e-maili — konto to
 // identyfikator, przydział to rola i zakres. Wariant zachowawczy do D-04/D-08/
 // D-09: dziennik odczytu czyta tylko admin.
-import { isoTimestamp } from './auth.js';
+import { isoTimestamp, YEAR_SCOPE_REQUIRED_ROLES } from './auth.js';
 
 export const ACCESS_REVIEW_MAX_ROWS = 500;
 
 const SCOPE = `(g.school_year_id = $1 OR g.class_id IN (SELECT c.id FROM classes c WHERE c.school_year_id = $1))`;
+// Aktywny przydział roli wymagającej roku, bez roku (sprzed wymogu): ważny w każdym roku.
+const LEGACY_NO_YEAR = `(g.role = ANY($2::text[]) AND g.school_year_id IS NULL AND g.revoked_at IS NULL
+                         AND (g.expires_at IS NULL OR g.expires_at > now()))`;
 const LOG_SCOPE = `(l.school_year_id = $1 OR l.class_id IN (SELECT c.id FROM classes c WHERE c.school_year_id = $1))`;
 
-export function proposalFor({ status, yearEnded, readsWithoutValidGrant }) {
+export function proposalFor({ status, yearEnded, readsWithoutValidGrant, yearScopeMissing = false }) {
+  if (status === 'active' && yearScopeMissing) return { proposal: 'revoke', reason: 'year_scope_required' };
   if (status === 'active' && yearEnded) return { proposal: 'revoke', reason: 'school_year_ended' };
   if (readsWithoutValidGrant > 0) return { proposal: 'review', reason: 'reads_without_valid_grant' };
   return { proposal: 'keep', reason: null };
@@ -43,11 +47,11 @@ export async function accessReview(executor, schoolYearId) {
                      AND (v.revoked_at IS NULL OR v.revoked_at > l.occurred_at)
                      AND (v.expires_at IS NULL OR v.expires_at > l.occurred_at))) AS reads_without_valid_grant
        FROM role_grants g
-      WHERE ${SCOPE}
+      WHERE ${SCOPE} OR ${LEGACY_NO_YEAR}
       ORDER BY (CASE WHEN g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now()) THEN 0 ELSE 1 END),
                g.user_id, g.role, g.id
       LIMIT ${ACCESS_REVIEW_MAX_ROWS + 1}`,
-    [schoolYearId],
+    [schoolYearId, YEAR_SCOPE_REQUIRED_ROLES],
   );
   const yearEnded = Boolean(year.ended) || year.closure_status === 'closed';
   const visible = rows.slice(0, ACCESS_REVIEW_MAX_ROWS).map((row) => {
@@ -65,7 +69,10 @@ export async function accessReview(executor, schoolYearId) {
       lastReadAt: row.last_read_at ? isoTimestamp(row.last_read_at) : null,
       readsInScope: Number(row.reads_in_scope),
       readsWithoutValidGrant,
-      ...proposalFor({ status: row.status, yearEnded, readsWithoutValidGrant }),
+      ...proposalFor({
+        status: row.status, yearEnded, readsWithoutValidGrant,
+        yearScopeMissing: YEAR_SCOPE_REQUIRED_ROLES.includes(row.role) && !row.school_year_id,
+      }),
     };
   });
   const count = (proposal) => visible.filter((g) => g.proposal === proposal).length;

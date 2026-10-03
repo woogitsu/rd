@@ -439,6 +439,12 @@ export async function lockInvitation(tx, tokenHash, now = null) {
   if (invitation.revoked_at) return deny('revoked');
   if (invitation.accepted_at) return deny('already_used');
   if (invitation.expired) return deny('expired');
+  // Zaproszenie dyrekcji sprzed wymogu roku (wskazanie 2026-10-02) nie nadaje przydziału
+  // ważnego we wszystkich latach: przyjęcie jest blokowane, zaproszenie zostaje oczekujące
+  // do jawnego wycofania (POST /api/admin/invitations/{id}/revoke) i wydania nowego z rokiem.
+  if (YEAR_SCOPE_REQUIRED_ROLES.includes(invitation.role) && !invitation.school_year_id) {
+    return { deny: { ok: false, error: 'school_year_required', reason: 'school_year_required' } };
+  }
   return { invitation };
 }
 

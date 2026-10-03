@@ -30,6 +30,13 @@ Wygenerowane z listy kodów w `src/pg/**` (te same reguły wykrywania co
 każdy kod z kodu źródłowego jest w tej tabeli (i odwrotnie — brak martwych
 wpisów).
 
+`school_year_required` wraca z `422` także przy `POST /api/invitations/accept`, gdy
+zaproszenie `principal` powstało przed wymogiem roku (bez roku szkolnego): zaproszenie
+nie zostaje zużyte, konto ani przydział nie powstają; administrator wycofuje je i
+wystawia nowe z rokiem (`docs/AUTHORIZATION.md`). W przeglądzie dostępu
+(`GET /api/admin/access-review`) ten sam stan to pole `reason: year_scope_required`
+przy przydziale, nie błąd.
+
 ## Kody
 
 | Kod | Znaczenie (po polsku, `shared/messages.js`) | Czy ponawiać |

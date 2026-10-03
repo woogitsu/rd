@@ -130,6 +130,12 @@ niepełna; panel wtedy pokazuje komunikat o obcięciu:
 | Trasa | Pokazane | Pole |
 | --- | --- | --- |
 | `GET /api/meetings/shared-minutes` | 200 najnowszych | `truncated` |
+| `GET /api/admin/access-review?schoolYearId=` | 500 przydziałów | `truncated` |
+
+Przegląd dostępu zwraca przydziały roku oraz aktywne przydziały `principal` bez roku
+szkolnego (sprzed wymogu roku, 2026-10-02) — te ostatnie w przeglądzie każdego roku, z
+`schoolYearId: null`, `proposal: revoke` i `reason: year_scope_required`. Odpowiedź ma ten
+sam kształt co dotąd (bez nowych pól); nic nie jest odbierane automatycznie.
 
 Kanał `GET /api/public/events.ics` nie ma kursora (format iCal nie niesie sygnału
 obcięcia): zwraca najwyżej `limit` (domyślnie 200) najbliższych wydarzeń. Pełną
