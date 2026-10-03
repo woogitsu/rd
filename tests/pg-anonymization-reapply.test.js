@@ -6,7 +6,7 @@
 // Wyłącznie dane syntetyczne (.invalid); znaczniki MRK-* mają zniknąć z danych
 // zanonimizowanych gospodarstw i zostać w pozostałych. Każdy test buduje własny stan
 // z niezmiennego wzorca (paczka, dziennik), więc nie zależy od innych testów.
-import test, { after, before, describe } from 'node:test';
+import test, { after, afterEach, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -153,6 +153,12 @@ describe('ponowne zastosowanie przebiegów anonimizacji po odtworzeniu (#91)', (
     fixture.log = await readAnonymizationLog(source);
     logPath = join(dir, 'anonymization-log.json');
     await writeFile(logPath, serializeAnonymizationLog(fixture.log));
+  });
+
+  // #111: baza docelowa żyje tylko w swoim teście — zamykamy ją zaraz po nim, a nie w after()
+  // (15 baz docelowych naraz dawało ok. 4 GB RSS procesu). Baza źródłowa zostaje do końca pliku.
+  afterEach(async () => {
+    for (const target of targets.splice(0)) await target.close();
   });
 
   after(async () => {

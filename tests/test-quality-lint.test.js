@@ -78,7 +78,8 @@ const SHORT_DIGITS_NEGATIVE = [
 ];
 
 // Pliki, w których wolno używać opcji `todo` testu (pilnowane osobnym meta-testem
-// ALLOWED_TODO w pg-authz-matrix.test.js). Bezwarunkowy `skip` jest zakazany
+// ALLOWED_TODO w pg-authz-matrix.test.js; od #111 test `todo` macierzy rejestruje
+// tests/helpers/authz-matrix.js, a meta-test obejmuje wszystkie jej części). Bezwarunkowy `skip` jest zakazany
 // wszędzie; dozwolony jest tylko skip warunkowy ze zmiennej (np. brak
 // RD_TEST_PG_URL), bo wtedy test nie znika po cichu przy pełnej konfiguracji.
 const TODO_ALLOWED = new Set(['pg-authz-matrix.test.js']);

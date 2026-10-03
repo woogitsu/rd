@@ -4,9 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { perTestDb, request, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
 import { AUDIT_ACTION_CATALOG, AUDIT_DOMAINS, auditActionDomain } from '../shared/audit-actions.js';
 import { assertEvery } from './helpers/assertions.js';
+
+// #111: każdy test zakłada własną bazę w setup(); perTestDb() zamyka ją zaraz po teście.
+const createDb = perTestDb();
 
 async function call(env, path, { cookie, method = 'GET', body, key } = {}) {
   const headers = key ? { 'Idempotency-Key': key } : undefined;
@@ -16,7 +19,7 @@ async function call(env, path, { cookie, method = 'GET', body, key } = {}) {
 }
 
 async function setup() {
-  const db = await createTestDb();
+  const db = await createDb();
   await seedSchoolYear(db, 'y-1', { startsOn: '2026-09-01', endsOn: '2027-08-31' });
   await seedEnrolledHousehold(db, 'h-1', ['y-1']);
   const admin = await seedUserSession(db, { userId: 'u-admin', roles: [{ role: 'admin' }], mfa: true });
