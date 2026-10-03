@@ -106,6 +106,8 @@ export function resolveRuntime(processEnv = process.env, { createDatabase = crea
         BACKUP_MAX_AGE_HOURS: processEnv.BACKUP_MAX_AGE_HOURS,
         EMAIL_WORKER_MAX_AGE_HOURS: processEnv.EMAIL_WORKER_MAX_AGE_HOURS,
         EMAIL_QUEUE_MAX_AGE_HOURS: processEnv.EMAIL_QUEUE_MAX_AGE_HOURS,
+        // #140 pkt 5: próg „stary kod weryfikacyjny w kolejce” (/health/jobs, ops-status, worker-status).
+        GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS: processEnv.GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS,
         // #130: próg alarmu „brak przebiegów” w GET /api/email/worker-status (zarząd/skarbnik).
         EMAIL_WORKER_ALARM_HOURS: processEnv.EMAIL_WORKER_ALARM_HOURS,
         // #145: adres bazowy do odnośnika do informacji o przetwarzaniu danych

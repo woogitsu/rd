@@ -18,7 +18,7 @@ i decyzje.
 |---|---|---|
 | `GET /health` | publiczny | proces żyje (liveness Railway) |
 | `GET /health/ready` | publiczny, bez szczegółów zadań | baza i migracje; 503 = brak ruchu |
-| `GET /health/jobs` | `Authorization: Bearer <HEALTH_JOBS_TOKEN>` | 401 bez tokenu; 503 z nazwą progu (`backup_too_old`, `email_worker_stale`, `email_queue_too_old`); progi: `BACKUP_MAX_AGE_HOURS`, `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS` |
+| `GET /health/jobs` | `Authorization: Bearer <HEALTH_JOBS_TOKEN>` | 401 bez tokenu; 503 z nazwą progu (`backup_too_old`, `email_worker_stale`, `email_queue_too_old`, `guardian_verify_queue_too_old`); progi: `BACKUP_MAX_AGE_HOURS`, `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS`, `GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS` |
 | `GET /api/admin/ops-status` | tylko rola `admin`; panel `admin/`, sekcja „Stan systemu” | liczby, znaczniki czasu, kody, bez danych osobowych; brak dziennika kopii = „brak danych”, nie „w normie” |
 
 Karty opisują **docelowe** środowisko Railway (Node.js + PostgreSQL + prywatny
@@ -174,8 +174,11 @@ danych/IOD (karta 9; założenie, nie przepis).
   **niepewny**, `delivery_unknown`), `provider_account_rejected`
   (401/402/403 — klucz, kredyty, nadawca), `provider_account_paused`
   (pauza po takiej odmowie, bez połączenia z Brevo). Monitor zewnętrzny widzi to jako
-  `503` z `GET /health/jobs` (`email_worker_stale`, `email_queue_too_old`),
-  jeśli został skonfigurowany (decyzja zarządu).
+  `503` z `GET /health/jobs` (`email_worker_stale`, `email_queue_too_old`,
+  `guardian_verify_queue_too_old` — kod weryfikacyjny nowego adresu czeka
+  w kolejce; ten sam worker, te same przyczyny), jeśli został skonfigurowany
+  (decyzja zarządu). Kolejka kodów: `guardianVerifyQueue` w `ops-status`
+  (liczby, bez adresów i kodów).
 - **Działanie:** nie ponawiać na ślepo. Wiadomości `delivery_unknown`
   sprawdzić w panelu Brevo (nagłówki `X-Mailin-custom` = id wiersza,
   `X-RD-Idempotency-Key`) zanim ktokolwiek zdecyduje o ponowieniu; klucz
@@ -305,6 +308,6 @@ Wnioski / co zmienić w procedurze:
   dla administratora.
 - [`/health/jobs`](RAILWAY_OPERATIONS.md#stan-systemu-149) — heartbeat dla
   monitora zewnętrznego (chroniony tokenem), progi w zmiennych środowiskowych
-  (`BACKUP_MAX_AGE_HOURS`, `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS`).
+  (`BACKUP_MAX_AGE_HOURS`, `EMAIL_WORKER_MAX_AGE_HOURS`, `EMAIL_QUEUE_MAX_AGE_HOURS`, `GUARDIAN_VERIFY_QUEUE_MAX_AGE_HOURS`).
 - Narzędzie monitora zewnętrznego i dyżur/zastępstwa — do decyzji zarządu
   (nierozstrzygnięte tutaj).

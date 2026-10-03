@@ -29,6 +29,7 @@ Dostępne ścieżki (pełna lista `STATIC_PREFIXES` w `src/node-app.js`):
 - `/data-export/` — eksport roczny i lista klasy (pobranie, weryfikacja),
 - `/news/` — aktualności: szkic, zatwierdzenie, publikacja, wycofanie (rejestr zdjęć tylko do odczytu),
 - `/audit/` — raport roczny dla Komisji Rewizyjnej (tylko odczyt),
+- `/kontakt/` — publiczna strona rodzica z jednorazowym linkiem (`/kontakt/#token=…`): wniosek o zmianę kontaktu i kod weryfikacyjny nowego adresu (#140),
 - `/health` — liveness: wyłącznie techniczny status procesu (`{"status":"ok"}`), bez danych użytkowników i bez zapytań do bazy,
 - `/health/ready` — readiness: stan bazy i migracji (opis niżej); `200` gdy gotowy, `503` gdy nie.
 
