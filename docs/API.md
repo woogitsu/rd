@@ -205,8 +205,10 @@ Plik nie jest edytowany ręcznie; role w `x-rd-roles` pozostają założeniami D
 Schemat modułu eksportuje `name`, `components` (schematy współdzielone) i `routes`:
 `{ 'POST /api/payments': { body, idempotencyKey, query, responses, errors } }`. Generator dołącza do
 operacji `requestBody`, parametry (zapytanie, `Idempotency-Key`), odpowiedzi sukcesu z kształtem
-(200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; zapis bez klucza, który wysyła nagłówek
-`true` tylko przy ponowieniu, ma w specyfikacji nagłówek z `required: false` — helper `replayedOnRetry`, etap 6; eksporty CSV/XLSX z typem pliku;
+(200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; `replayed` może być listą `['false', 'true']`,
+gdy ten sam status zwraca obie wartości — od etapu 5 zatwierdzenie, porzucenie i cofnięcia uzgodnień; zapis bez klucza,
+który wysyła nagłówek `true` tylko przy ponowieniu, ma w specyfikacji nagłówek z `required: false` — helper
+`replayedOnRetry`, etap 6; eksporty CSV/XLSX z typem pliku;
 trasa z kilkoma formatami wybieranymi parametrem `format` ma mapę `content` typ treści → schemat, helper
 `formatsResponse` w `src/pg/schemas/common.js`; wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
 per status, wyłącznie z katalogu. Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
@@ -216,17 +218,19 @@ elementy (`Id`, kwoty w eurocentach, daty) są w `src/pg/schemas/common.js`. Sch
 schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
-`tests/openapi-contract-ledger-extra.test.js` i `tests/openapi-contract-email.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js` i
+`tests/openapi-contract-email.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
-i przypisania do centrów kosztów, bilans otwarcia z poprawkami, zamknięty rok, odmowy i błędy) przechodzą
+i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
+dopasowania z cofnięciem, raport Komisji Rewizyjnej, zamknięty rok, odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (93 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 6 (30): `email` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `reconciliation`, `representative`, `year-close` |
+| Pokryte (107 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email` |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -255,6 +259,37 @@ Cechy modułów etapu 4 (preliminarz, kasa, centra kosztów — opis stanu, nie 
   zwraca `openingBalance: null`, `adjustments: []`, `current: null`; bilans przeniesiony zamknięciem roku ma
   `carriedFromSchoolYearId`. Kwota kasy w bilansie (`cashCents`) jest w schemacie liczbą ze znakiem, bo bilans
   przeniesiony z zamknięcia roku kopiuje stan kasy; ręczny bilans przyjmuje tylko `cashCents ≥ 0`.
+
+Cechy modułu etapu 5 (uzgodnienia wyciągów i raport Komisji Rewizyjnej — opis stanu, nie zmiana tras):
+
+- Moduł `reconciliation` w macierzy tras obejmuje też `GET /api/reports/audit` (`format` = `json`, `xlsx`, `html`;
+  w specyfikacji schemat na każdy typ treści). Raport ma ścisły schemat `AuditReport` ze wszystkimi sekcjami
+  (bilans, kategorie, preliminarz `LedgerBudgetExecution`, wydatki ponad próg, wyniki wydarzeń, uchwały, weryfikacje,
+  korekty, przeksięgowania, poprawki bilansu, uzgodnienia, pięć kontroli krzyżowych, dowody, operacje na kontach,
+  ścieżka kontroli KR). Nazwy komponentów raportu mają przedrostek `AuditReport`, żeby nie zderzyć się z przyszłym
+  schematem modułu `audit-reviews`.
+- Zapisy z kluczem (`POST /api/reconciliations`, `…/lines`, `…/lines/{lineId}/payment`, `…/matches`,
+  `…/matches/batch`, `…/group-matches`): `201` z `Idempotency-Replayed: false`, ponowienie `200` z `true`.
+  Zatwierdzenie, porzucenie i oba cofnięcia nie mają klucza: zwracają `200` z `Idempotency-Replayed: false` przy
+  pierwszym wykonaniu i `200` z `true` przy ponowieniu tej samej osoby z tą samą treścią (stąd lista w `replayed`).
+- Import (`…/lines`) ma różne kształty: lista JSON i CSV — `{ import, possibleDuplicateCount }`; plik CODA/CAMT.053 —
+  `{ import, skippedDuplicateCount, skippedDuplicates, warnings, fileBalances }`. Ponowienie po kluczu zwraca węższy
+  kształt (`{ import }`, a przy pliku `{ import, skippedDuplicateCount }`). Plik, którego wszystkie ruchy są już
+  zaimportowane, daje `200` z `Idempotency-Replayed: false`, `import: null` i `lineCount: 0` (bez nowej paczki).
+  Brak konfiguracji importu z pliku to `503 bank_import_not_configured`; kody błędów parserów (`src/pg/bank/*.js`)
+  są w schemacie tej trasy, a test kontraktu szuka ich także w tych plikach.
+- `GET /api/reconciliations/{id}` stronicuje `lines` kursorem (`limit` 1-500, `nextCursor` ważny tylko dla tego
+  uzgodnienia), a `unmatchedLedgerEntries` obcina do 1000 z `unmatchedLedgerEntriesTruncated: true`. Lista uzgodnień
+  roku nie jest stronicowana. Odpowiedzi nie zawierają tytułów przelewów (tylko `hasReference`).
+- Pole `paymentRefundId` powiązania (i `match` pozycji) występuje wyłącznie przy dopasowaniu zwrotu (#138), w
+  schemacie jest opcjonalne. Kandydat propozycji to `oneOf`: wpis księgi lub wpłata albo `household` (nowa wpłata
+  dla gospodarstwa z komunikacji strukturalnej; `date` i `dayDistance` = null).
+- Kilka odpowiedzi błędu niesie pola ponad `error` (schemat `Error` je dopuszcza): `match_batch_rejected` z
+  `failures`, `inconsistent_matches` z `matches` i `groupMatches`, `group_match_sum_mismatch` z kwotami,
+  `matched_in_other_reconciliation` i `statement_already_imported` z identyfikatorami (tylko dla osoby z dostępem
+  do roku), `reconciliation_has_active_matches` z `activeMatchCount`, błędy pozycji z `line` albo `record`.
+- Brak MFA: zarząd i skarbnik zatrzymuje bramka routera (`mfa_enrollment_required`/`mfa_required`); trasy
+  uzgodnień dla pozostałych ról zwracają ogólne `forbidden`, a raport KR rozróżnia kody MFA także dla roli `audit`.
 
 Cechy modułu etapu 6 (`email`, kampanie e-mail — opis stanu, nie zmiana tras):
 

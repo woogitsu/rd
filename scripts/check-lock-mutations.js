@@ -114,9 +114,8 @@ export const MUTANTS = [
   // Dawne luki inwentaryzacji (#208): kod weryfikacyjny wniosku rodzica, MFA i webhook dostawcy.
   { id: 'guardian-verify-confirm', file: 'src/pg/routes/guardian-updates.js', fn: 'confirmCode', kind: 'for-update', test: GUARDIAN_VERIFY_LOCKS },
   { id: 'mfa-lock-user', file: 'src/pg/mfa.js', fn: 'lockUser', kind: 'for-update', test: MFA_LOCKS },
-  { id: 'mfa-active-factors', file: 'src/pg/mfa.js', fn: 'activeFactors', kind: 'for-update', test: MFA_LOCKS },
-  { id: 'mfa-key-rotation', file: 'src/pg/mfa-key-rotation.js', fn: 'rotateOneAccount', kind: 'for-update', test: MFA_LOCKS },
   { id: 'mfa-admin-reset', file: 'src/pg/login.js', fn: 'adminResetMfaInTx', kind: 'for-update', test: MFA_LOCKS },
+  { id: 'mfa-key-rotation-account', file: 'src/pg/mfa-key-rotation.js', fn: 'lockAccount', kind: 'for-update', test: MFA_LOCKS },
   { id: 'email-webhook-outbox', file: 'src/pg/routes/email.js', fn: 'recordWebhookEvent', kind: 'for-update', test: WEBHOOK_LOCKS },
 ];
 

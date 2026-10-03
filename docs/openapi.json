@@ -105,6 +105,7 @@
       "payment-instructions",
       "payment-references",
       "payments",
+      "reconciliation",
       "session"
     ],
     "uncovered": [
@@ -124,13 +125,12 @@
       "news",
       "print",
       "privacy-notice",
-      "reconciliation",
       "representative",
       "year-close"
     ],
     "operations": {
       "total": 297,
-      "withSchema": 93
+      "withSchema": 107
     }
   },
   "paths": {
@@ -25891,15 +25891,47 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Uzgodnienia roku od najnowszego dnia wyciągu (bez kursora: pełna lista).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reconciliations": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Reconciliation"
+                      }
+                    }
+                  },
+                  "required": [
+                    "reconciliations"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -25912,7 +25944,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -25955,9 +25992,105 @@
       },
       "post": {
         "operationId": "reconciliation_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reconciliation": {
+                      "$ref": "#/components/schemas/Reconciliation"
+                    }
+                  },
+                  "required": [
+                    "reconciliation"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Szkic uzgodnienia z saldem księgi policzonym przez bazę.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reconciliation": {
+                      "$ref": "#/components/schemas/Reconciliation"
+                    }
+                  },
+                  "required": [
+                    "reconciliation"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_notes",
+              "invalid_reference",
+              "invalid_request",
+              "statement_date_outside_school_year"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -25970,7 +26103,80 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -26021,13 +26227,58 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "description": "`nextCursor` z poprzedniej strony tego samego uzgodnienia."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 500
+            },
+            "description": "Liczba pozycji wyciągu na stronie."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Uzgodnienie z jedną stroną pozycji wyciągu.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_id",
+              "invalid_limit"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26040,7 +26291,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
           }
         },
         "security": [
@@ -26091,13 +26360,66 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationAbandonRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Porzucony szkic (`false`) albo ponowienie tej samej osoby z tym samym powodem (`true`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reconciliation": {
+                      "$ref": "#/components/schemas/Reconciliation"
+                    }
+                  },
+                  "required": [
+                    "reconciliation"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz; true: ponowienie rozpoznane po osobie i treści, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false",
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26110,7 +26432,82 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "reconciliation_has_active_matches",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -26161,13 +26558,67 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationConfirmRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zatwierdzone uzgodnienie z utrwalonym saldem księgi (`false`) albo ponowienie przez tę samą osobę (`true`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reconciliation": {
+                      "$ref": "#/components/schemas/Reconciliation"
+                    }
+                  },
+                  "required": [
+                    "reconciliation"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz; true: ponowienie rozpoznane po osobie i treści, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false",
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "difference_requires_note",
+              "invalid_confirmation_note",
+              "invalid_id",
+              "invalid_json"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26180,7 +26631,83 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "four_eyes_required",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "inconsistent_matches",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -26227,17 +26754,110 @@
         "operationId": "reconciliation_groupMatch",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "reconciliationId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationGroupMatchRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "groupMatch": {
+                      "$ref": "#/components/schemas/ReconciliationGroupMatch"
+                    }
+                  },
+                  "required": [
+                    "groupMatch"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Dopasowanie zbiorcze (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "groupMatch": {
+                      "$ref": "#/components/schemas/ReconciliationGroupMatch"
+                    }
+                  },
+                  "required": [
+                    "groupMatch"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_match_target",
+              "invalid_request",
+              "invalid_statement_line"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26250,7 +26870,75 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "already_matched",
+              "already_matched_via_ledger",
+              "already_matched_via_payment",
+              "group_match_direction_mismatch",
+              "group_match_sum_mismatch",
+              "idempotency_conflict",
+              "match_method_mismatch",
+              "matched_in_other_reconciliation",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -26301,7 +26989,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -26309,13 +26997,66 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationRevocationRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Cofnięte dopasowanie zbiorcze (nowy zapis cofnięcia) albo ponowienie (`true`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "groupMatch": {
+                      "$ref": "#/components/schemas/ReconciliationGroupMatch"
+                    }
+                  },
+                  "required": [
+                    "groupMatch"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz; true: ponowienie rozpoznane po osobie i treści, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false",
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26328,7 +27069,83 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "match_not_found",
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "match_already_revoked",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -26375,17 +27192,224 @@
         "operationId": "reconciliation_lines",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "reconciliationId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankStatementLinesRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu (`true`: `import`, przy pliku też `skippedDuplicateCount`) albo plik, którego wszystkie ruchy były już zaimportowane (`false`: `import: null`, `lineCount: 0`, bez nowej paczki).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "import": {
+                          "$ref": "#/components/schemas/BankStatementImport"
+                        }
+                      },
+                      "required": [
+                        "import"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "import": {
+                          "$ref": "#/components/schemas/BankStatementImport"
+                        },
+                        "skippedDuplicateCount": {
+                          "$ref": "#/components/schemas/Count"
+                        }
+                      },
+                      "required": [
+                        "import",
+                        "skippedDuplicateCount"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "import": {
+                          "type": "null"
+                        },
+                        "lineCount": {
+                          "const": 0
+                        },
+                        "skippedDuplicateCount": {
+                          "$ref": "#/components/schemas/Count"
+                        },
+                        "skippedDuplicates": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/BankStatementSkippedDuplicate"
+                          }
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/BankStatementImportWarning"
+                          }
+                        },
+                        "fileBalances": {
+                          "$ref": "#/components/schemas/BankStatementFileBalances"
+                        }
+                      },
+                      "required": [
+                        "import",
+                        "lineCount",
+                        "skippedDuplicateCount",
+                        "skippedDuplicates",
+                        "warnings",
+                        "fileBalances"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz; true: ponowienie rozpoznane po osobie i treści, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false",
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Nowa paczka pozycji: lista/CSV z liczbą możliwych duplikatów albo plik banku z pominiętymi ruchami, ostrzeżeniami i saldami.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "import": {
+                          "$ref": "#/components/schemas/BankStatementImport"
+                        },
+                        "possibleDuplicateCount": {
+                          "$ref": "#/components/schemas/Count",
+                          "description": "Pozycje o tej samej dacie, kwocie i skrócie tytułu co w innym imporcie (tylko informacja)."
+                        }
+                      },
+                      "required": [
+                        "import",
+                        "possibleDuplicateCount"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "import": {
+                          "$ref": "#/components/schemas/BankStatementImport"
+                        },
+                        "skippedDuplicateCount": {
+                          "$ref": "#/components/schemas/Count"
+                        },
+                        "skippedDuplicates": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/BankStatementSkippedDuplicate"
+                          }
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/BankStatementImportWarning"
+                          }
+                        },
+                        "fileBalances": {
+                          "$ref": "#/components/schemas/BankStatementFileBalances"
+                        }
+                      },
+                      "required": [
+                        "import",
+                        "skippedDuplicateCount",
+                        "skippedDuplicates",
+                        "warnings",
+                        "fileBalances"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "ambiguous_csv_delimiter",
+              "invalid_csv",
+              "invalid_csv_encoding",
+              "invalid_csv_header",
+              "invalid_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_line_count",
+              "invalid_request",
+              "invalid_statement_file",
+              "invalid_statement_line",
+              "statement_account_mismatch",
+              "statement_account_unsupported",
+              "statement_amount_out_of_range",
+              "statement_currency_unsupported",
+              "statement_line_after_statement_date",
+              "statement_multiple_not_supported",
+              "statement_transaction_id_missing"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26398,7 +27422,82 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed",
+              "statement_already_imported"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "503": {
+            "description": "Usługa chwilowo niedostępna (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "bank_import_not_configured"
+            ]
           }
         },
         "security": [
@@ -26445,11 +27544,19 @@
         "operationId": "reconciliation_linePayment",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "lineId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -26457,13 +27564,80 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationLinePaymentRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationLinePayment"
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wpłata z pozycji wyciągu i jej powiązanie (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationLinePayment"
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_reference",
+              "invalid_request",
+              "statement_line_not_income"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26476,7 +27650,83 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found",
+              "statement_line_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "already_matched",
+              "idempotency_conflict",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "date_outside_school_year"
+            ]
           }
         },
         "security": [
@@ -26523,17 +27773,111 @@
         "operationId": "reconciliation_match",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "reconciliationId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationMatchRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "match": {
+                      "$ref": "#/components/schemas/ReconciliationMatch"
+                    }
+                  },
+                  "required": [
+                    "match"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Powiązanie pozycji z wpisem księgi, wpłatą albo zwrotem (nowy zapis).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "match": {
+                      "$ref": "#/components/schemas/ReconciliationMatch"
+                    }
+                  },
+                  "required": [
+                    "match"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_match_target",
+              "invalid_reference",
+              "invalid_request",
+              "invalid_statement_line"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26546,7 +27890,74 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "already_matched",
+              "already_matched_via_ledger",
+              "already_matched_via_payment",
+              "idempotency_conflict",
+              "match_amount_mismatch",
+              "match_method_mismatch",
+              "matched_in_other_reconciliation",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -26593,17 +28004,121 @@
         "operationId": "reconciliation_matchBatch",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "reconciliationId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationMatchBatchRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "matches": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 50,
+                      "items": {
+                        "$ref": "#/components/schemas/ReconciliationMatch"
+                      }
+                    }
+                  },
+                  "required": [
+                    "matches"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Wszystkie pary zapisane naraz (kolejność jak posortowane pozycje).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "matches": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 50,
+                      "items": {
+                        "$ref": "#/components/schemas/ReconciliationMatch"
+                      }
+                    }
+                  },
+                  "required": [
+                    "matches"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_request",
+              "match_batch_duplicate",
+              "match_batch_empty",
+              "match_batch_too_large"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26616,7 +28131,70 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "already_matched",
+              "idempotency_conflict",
+              "match_batch_rejected",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -26667,7 +28245,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -26675,13 +28253,66 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationRevocationRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Cofnięte powiązanie (`false`) albo ponowienie tej samej osoby z tym samym powodem (`true`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "match": {
+                      "$ref": "#/components/schemas/ReconciliationMatch"
+                    }
+                  },
+                  "required": [
+                    "match"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz; true: ponowienie rozpoznane po osobie i treści, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false",
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26694,7 +28325,83 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "match_not_found",
+              "reconciliation_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "match_already_revoked",
+              "reconciliation_abandoned",
+              "reconciliation_confirmed",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -26745,13 +28452,47 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "windowDays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 31,
+              "default": 7
+            },
+            "description": "Okno dni wokół daty pozycji."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Propozycje dopasowań otwartych pozycji (do 5 kandydatów na pozycję).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationSuggestions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id",
+              "invalid_reference_text",
+              "invalid_window"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -26764,7 +28505,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "reconciliation_not_found"
+            ]
           }
         },
         "security": [
@@ -27150,21 +28909,68 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "enum": [
+                "json",
+                "html",
+                "xlsx"
+              ],
+              "default": "json"
+            },
+            "description": "Każdy format zapisuje zdarzenie `report.audit.generated` ze skrótem treści."
           },
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Raport Komisji Rewizyjnej: JSON (domyślnie), arkusz XLSX (arkusz na sekcję, #141) albo HTML do wydruku.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "report": {
+                      "$ref": "#/components/schemas/AuditReport"
+                    }
+                  },
+                  "required": [
+                    "report"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/html; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -27177,7 +28983,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -29041,6 +30865,1640 @@
         "minimum": 1,
         "maximum": 100000000,
         "description": "Kwota dodatnia w eurocentach (EUR); do 1 000 000,00 EUR."
+      },
+      "AuditReport": {
+        "type": "object",
+        "properties": {
+          "schoolYear": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "label": {
+                "type": "string"
+              },
+              "startsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              "endsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "startsOn",
+              "endsOn"
+            ],
+            "additionalProperties": false
+          },
+          "asOf": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Chwila migawki, z której pochodzą wszystkie liczby raportu."
+          },
+          "generatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Zgodność wsteczna; ta sama wartość co `asOf`."
+          },
+          "balance": {
+            "type": "object",
+            "properties": {
+              "openingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "incomeCents": {
+                "$ref": "#/components/schemas/NonNegativeCents"
+              },
+              "expenseCents": {
+                "$ref": "#/components/schemas/NonNegativeCents"
+              },
+              "closingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "openingCashCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingCashCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "openingBankCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingBankCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              }
+            },
+            "required": [
+              "openingBalanceCents",
+              "incomeCents",
+              "expenseCents",
+              "closingBalanceCents",
+              "openingCashCents",
+              "closingCashCents",
+              "openingBankCents",
+              "closingBankCents"
+            ],
+            "additionalProperties": false,
+            "description": "Bilans roku z podziałem rachunek/kasa (#199)."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "direction": {
+                  "$ref": "#/components/schemas/LedgerDirection"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "entryCount": {
+                  "$ref": "#/components/schemas/Count"
+                },
+                "grossCents": {
+                  "$ref": "#/components/schemas/NonNegativeCents"
+                },
+                "correctedCents": {
+                  "$ref": "#/components/schemas/NonNegativeCents"
+                },
+                "netCents": {
+                  "$ref": "#/components/schemas/NonNegativeCents"
+                }
+              },
+              "required": [
+                "id",
+                "direction",
+                "name",
+                "entryCount",
+                "grossCents",
+                "correctedCents",
+                "netCents"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "budgetExecution": {
+            "$ref": "#/components/schemas/LedgerBudgetExecution"
+          },
+          "largeExpenseThresholdCents": {
+            "$ref": "#/components/schemas/AmountCents"
+          },
+          "largeExpenses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "occurredOn": {
+                  "$ref": "#/components/schemas/IsoDate"
+                },
+                "amountCents": {
+                  "$ref": "#/components/schemas/AmountCents"
+                },
+                "netAmountCents": {
+                  "$ref": "#/components/schemas/NonNegativeCents"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "resolutionReference": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "resolutionId": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "resolutionLink": {
+                  "type": "string",
+                  "enum": [
+                    "explicit",
+                    "text"
+                  ],
+                  "description": "explicit = uchwała wskazana przy zapisie, text = dopasowanie po numerze."
+                },
+                "matchesAdoptedResolution": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "flagged": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "occurredOn",
+                "amountCents",
+                "netAmountCents",
+                "description",
+                "category",
+                "resolutionReference",
+                "resolutionId",
+                "resolutionLink",
+                "matchesAdoptedResolution",
+                "flagged"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Wydatki powyżej progu z powiązaniem z uchwałą (#93)."
+          },
+          "eventResults": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "$ref": "#/components/schemas/EventStatus"
+                    },
+                    "entryCount": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "incomeCents": {
+                      "$ref": "#/components/schemas/NonNegativeCents"
+                    },
+                    "expenseCents": {
+                      "$ref": "#/components/schemas/NonNegativeCents"
+                    },
+                    "resultCents": {
+                      "$ref": "#/components/schemas/SignedCents"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "status",
+                    "entryCount",
+                    "incomeCents",
+                    "expenseCents",
+                    "resultCents"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "unallocated": {
+                "type": "object",
+                "properties": {
+                  "incomeCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  },
+                  "expenseCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  },
+                  "resultCents": {
+                    "$ref": "#/components/schemas/SignedCents"
+                  }
+                },
+                "required": [
+                  "incomeCents",
+                  "expenseCents",
+                  "resultCents"
+                ],
+                "additionalProperties": false
+              },
+              "totals": {
+                "type": "object",
+                "properties": {
+                  "incomeCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  },
+                  "expenseCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  },
+                  "resultCents": {
+                    "$ref": "#/components/schemas/SignedCents"
+                  }
+                },
+                "required": [
+                  "incomeCents",
+                  "expenseCents",
+                  "resultCents"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "events",
+              "unallocated",
+              "totals"
+            ],
+            "additionalProperties": false,
+            "description": "Wynik wydarzeń z centrów kosztów (#117); bez danych osobowych."
+          },
+          "resolutionExecution": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "resolutionId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "schoolYearId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "number": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "draft",
+                    "adopted",
+                    "rejected",
+                    "withdrawn"
+                  ]
+                },
+                "authorizedAmountCents": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NonNegativeCents"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "validUntil": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/IsoDate"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "spentNetCents": {
+                  "$ref": "#/components/schemas/NonNegativeCents"
+                },
+                "remainingCents": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SignedCents"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "entryCount": {
+                  "$ref": "#/components/schemas/Count"
+                },
+                "flagged": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "resolutionId",
+                "schoolYearId",
+                "number",
+                "title",
+                "status",
+                "authorizedAmountCents",
+                "validUntil",
+                "spentNetCents",
+                "remainingCents",
+                "entryCount",
+                "flagged"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expenseReviews": {
+            "type": "object",
+            "properties": {
+              "unverified": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents"
+                ],
+                "additionalProperties": false
+              },
+              "verified": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents"
+                ],
+                "additionalProperties": false
+              },
+              "questioned": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents"
+                ],
+                "additionalProperties": false
+              },
+              "questionedEntryIds": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EntityId"
+                }
+              },
+              "splitWindowDays": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "possibleSplits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "type": "string"
+                    },
+                    "fromDate": {
+                      "$ref": "#/components/schemas/IsoDate"
+                    },
+                    "toDate": {
+                      "$ref": "#/components/schemas/IsoDate"
+                    },
+                    "entryCount": {
+                      "type": "integer",
+                      "minimum": 2
+                    },
+                    "netCents": {
+                      "$ref": "#/components/schemas/NonNegativeCents"
+                    },
+                    "ledgerEntryIds": {
+                      "type": "array",
+                      "minItems": 2,
+                      "items": {
+                        "$ref": "#/components/schemas/EntityId"
+                      }
+                    }
+                  },
+                  "required": [
+                    "category",
+                    "fromDate",
+                    "toDate",
+                    "entryCount",
+                    "netCents",
+                    "ledgerEntryIds"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Możliwy podział wydatku — informacja do sprawdzenia, nie zarzut (#97)."
+              }
+            },
+            "required": [
+              "unverified",
+              "verified",
+              "questioned",
+              "questionedEntryIds",
+              "splitWindowDays",
+              "possibleSplits"
+            ],
+            "additionalProperties": false
+          },
+          "corrections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "ledgerEntryId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "entryOccurredOn": {
+                  "$ref": "#/components/schemas/IsoDate"
+                },
+                "direction": {
+                  "$ref": "#/components/schemas/LedgerDirection"
+                },
+                "amountCents": {
+                  "$ref": "#/components/schemas/AmountCents"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "createdBy": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "createdAt": {
+                  "$ref": "#/components/schemas/IsoDateTime"
+                }
+              },
+              "required": [
+                "id",
+                "ledgerEntryId",
+                "entryOccurredOn",
+                "direction",
+                "amountCents",
+                "reason",
+                "createdBy",
+                "createdAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "reclassifications": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "replacesEntryId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "createdAt": {
+                  "$ref": "#/components/schemas/IsoDateTime"
+                },
+                "createdBy": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "oldOccurredOn": {
+                  "$ref": "#/components/schemas/IsoDate"
+                },
+                "occurredOn": {
+                  "$ref": "#/components/schemas/IsoDate"
+                },
+                "oldDirection": {
+                  "$ref": "#/components/schemas/LedgerDirection"
+                },
+                "direction": {
+                  "$ref": "#/components/schemas/LedgerDirection"
+                },
+                "oldMethod": {
+                  "$ref": "#/components/schemas/LedgerMethod"
+                },
+                "method": {
+                  "$ref": "#/components/schemas/LedgerMethod"
+                },
+                "oldCategory": {
+                  "type": "string"
+                },
+                "newCategory": {
+                  "type": "string"
+                },
+                "stornoCents": {
+                  "$ref": "#/components/schemas/NonNegativeCents"
+                },
+                "amountCents": {
+                  "$ref": "#/components/schemas/AmountCents"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "paymentLinked": {
+                  "type": "boolean"
+                },
+                "inConfirmedReconciliation": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "replacesEntryId",
+                "createdAt",
+                "createdBy",
+                "oldOccurredOn",
+                "occurredOn",
+                "oldDirection",
+                "direction",
+                "oldMethod",
+                "method",
+                "oldCategory",
+                "newCategory",
+                "stornoCents",
+                "amountCents",
+                "reason",
+                "paymentLinked",
+                "inConfirmedReconciliation"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Przeksięgowania (storno + wpis zastępczy, #144)."
+          },
+          "openingAdjustments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "amountCents": {
+                  "$ref": "#/components/schemas/SignedCents"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "createdBy": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "createdAt": {
+                  "$ref": "#/components/schemas/IsoDateTime"
+                }
+              },
+              "required": [
+                "id",
+                "amountCents",
+                "reason",
+                "createdBy",
+                "createdAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "reconciliations": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AuditReportReconciliationItem"
+                }
+              },
+              "confirmedCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "draftCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "abandonedCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "latestConfirmed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AuditReportReconciliationItem"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "items",
+              "confirmedCount",
+              "draftCount",
+              "abandonedCount",
+              "latestConfirmed"
+            ],
+            "additionalProperties": false
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "minItems": 5,
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/components/schemas/AuditReportCheck"
+                }
+              },
+              "largeExpensesWithoutAdoptedResolution": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "items",
+              "largeExpensesWithoutAdoptedResolution"
+            ],
+            "additionalProperties": false
+          },
+          "evidence": {
+            "type": "object",
+            "properties": {
+              "expensesWithoutEvidence": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/NonNegativeCents"
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        "occurredOn": {
+                          "$ref": "#/components/schemas/IsoDate"
+                        },
+                        "category": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "netAmountCents": {
+                          "$ref": "#/components/schemas/AmountCents"
+                        },
+                        "evidenceStatus": {
+                          "const": "voided",
+                          "description": "Tylko gdy wszystkie dokumenty wydatku są unieważnione (#594)."
+                        },
+                        "voidedDocumentIds": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "$ref": "#/components/schemas/EntityId"
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "occurredOn",
+                        "category",
+                        "description",
+                        "netAmountCents"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents",
+                  "items"
+                ],
+                "additionalProperties": false
+              },
+              "possibleDuplicateEvidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "documentIds": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "$ref": "#/components/schemas/EntityId"
+                      }
+                    },
+                    "ledgerEntryIds": {
+                      "type": "array",
+                      "minItems": 2,
+                      "items": {
+                        "$ref": "#/components/schemas/EntityId"
+                      }
+                    }
+                  },
+                  "required": [
+                    "documentIds",
+                    "ledgerEntryIds"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "expensesWithoutEvidence",
+              "possibleDuplicateEvidence"
+            ],
+            "additionalProperties": false,
+            "description": "Dowody wydatków (#87): wydatki bez dowodu z aktualną wersją i możliwe duplikaty plików."
+          },
+          "accountOperations": {
+            "type": "object",
+            "properties": {
+              "protectedGrants": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "protectedGrantsApproved": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "fourEyesWaived": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "grantsRevoked": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "grantRequests": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "grantRequestsClosed": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "adminPasswordResets": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "mfaResets": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "recoveryRequests": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "recoveryRequestsClosed": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "loginsAfterAdminReset": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "protectedGrants",
+              "protectedGrantsApproved",
+              "fourEyesWaived",
+              "grantsRevoked",
+              "grantRequests",
+              "grantRequestsClosed",
+              "adminPasswordResets",
+              "mfaResets",
+              "recoveryRequests",
+              "recoveryRequestsClosed",
+              "loginsAfterAdminReset"
+            ],
+            "additionalProperties": false,
+            "description": "Operacje administracyjne na kontach w roku (#146) — wyłącznie liczby."
+          },
+          "reviewNotes": {
+            "type": "object",
+            "properties": {
+              "threads": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "question",
+                        "finding"
+                      ]
+                    },
+                    "targetType": {
+                      "type": "string",
+                      "enum": [
+                        "ledger_entry",
+                        "reconciliation",
+                        "year"
+                      ]
+                    },
+                    "targetId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "parentId": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/EntityId"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdBy": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "createdAt": {
+                      "$ref": "#/components/schemas/IsoDateTime"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "answered",
+                        "closed"
+                      ]
+                    },
+                    "answers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditReportReviewNote"
+                      }
+                    },
+                    "closed": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/AuditReportReviewNote"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "targetType",
+                    "targetId",
+                    "parentId",
+                    "body",
+                    "createdBy",
+                    "createdAt",
+                    "status",
+                    "answers",
+                    "closed"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Wątek: pytanie albo ustalenie z odpowiedziami i zamknięciem."
+                }
+              },
+              "conclusions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AuditReportReviewNote"
+                }
+              },
+              "currentConclusion": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AuditReportReviewNote"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "counts": {
+                "type": "object",
+                "properties": {
+                  "open": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "answered": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "closed": {
+                    "$ref": "#/components/schemas/Count"
+                  }
+                },
+                "required": [
+                  "open",
+                  "answered",
+                  "closed"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "threads",
+              "conclusions",
+              "currentConclusion",
+              "counts"
+            ],
+            "additionalProperties": false,
+            "description": "Ścieżka kontroli Komisji Rewizyjnej (#137) z tej samej migawki co reszta raportu."
+          }
+        },
+        "required": [
+          "schoolYear",
+          "asOf",
+          "generatedAt",
+          "balance",
+          "categories",
+          "budgetExecution",
+          "largeExpenseThresholdCents",
+          "largeExpenses",
+          "eventResults",
+          "resolutionExecution",
+          "expenseReviews",
+          "corrections",
+          "reclassifications",
+          "openingAdjustments",
+          "reconciliations",
+          "checks",
+          "evidence",
+          "accountOperations",
+          "reviewNotes"
+        ],
+        "additionalProperties": false,
+        "description": "Raport roku dla Komisji Rewizyjnej (#15, #169); bez danych osobowych rodzin."
+      },
+      "AuditReportCheck": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "const": "year_end_balance"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "closingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "balanceAtYearEndCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "differenceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              }
+            },
+            "required": [
+              "id",
+              "ok",
+              "closingBalanceCents",
+              "balanceAtYearEndCents",
+              "differenceCents"
+            ],
+            "additionalProperties": false,
+            "description": "Saldo z wpisów do końca roku vs bilans zamknięcia."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "const": "dates_within_school_year"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "ledgerEntryCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "paymentCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "items": {
+                "type": "array",
+                "maxItems": 50,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "ledger_entry",
+                        "payment_entry"
+                      ]
+                    },
+                    "id": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "date": {
+                      "$ref": "#/components/schemas/IsoDate"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "date"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Pierwsze 50 wpisów z datą spoza roku szkolnego."
+              }
+            },
+            "required": [
+              "id",
+              "ok",
+              "ledgerEntryCount",
+              "paymentCount",
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "const": "payments_in_ledger"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "paymentsNetCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "ledgerLinkedNetCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "differenceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "paymentsWithoutLedgerEntry": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "id",
+              "ok",
+              "paymentsNetCents",
+              "ledgerLinkedNetCents",
+              "differenceCents",
+              "paymentsWithoutLedgerEntry"
+            ],
+            "additionalProperties": false,
+            "description": "Wpłaty (moduł wpłat) vs ujęcie wpłat w księdze; brak wpisu księgi to nie status dłużnika."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "const": "reconciliation_matches"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "amountMismatchCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "doubleCountedCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "amountMismatchConfirmedCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "groupAmountMismatchCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "groupAmountMismatchConfirmedCount": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "id",
+              "ok",
+              "amountMismatchCount",
+              "doubleCountedCount",
+              "amountMismatchConfirmedCount",
+              "groupAmountMismatchCount",
+              "groupAmountMismatchConfirmedCount"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "const": "latest_confirmed_reconciliation"
+              },
+              "ok": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "statementDate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IsoDate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "differenceCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "bankEntriesAfterStatement": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "ok",
+              "statementDate",
+              "differenceCents",
+              "bankEntriesAfterStatement"
+            ],
+            "additionalProperties": false,
+            "description": "Ostatnie zatwierdzone uzgodnienie; bez niego wszystkie pola poza `id` = null."
+          }
+        ],
+        "description": "Kontrola krzyżowa raportu (#169): wskaźnik z liczbami, nic nie blokuje zapisu."
+      },
+      "AuditReportReconciliationItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "statementDate": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReconciliationStatus"
+          },
+          "statementBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "ledgerBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "ledgerNonBankCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "differenceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "unmatchedLineCount": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "confirmedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmationNote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "abandonedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "abandonReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "statementDate",
+          "status",
+          "statementBalanceCents",
+          "ledgerBalanceCents",
+          "ledgerNonBankCents",
+          "differenceCents",
+          "unmatchedLineCount",
+          "createdBy",
+          "confirmedBy",
+          "confirmedAt",
+          "confirmationNote",
+          "abandonedAt",
+          "abandonReason"
+        ],
+        "additionalProperties": false
+      },
+      "AuditReportReviewNote": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "question",
+              "finding",
+              "answer",
+              "closed",
+              "conclusion"
+            ]
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "ledger_entry",
+              "reconciliation",
+              "year"
+            ]
+          },
+          "targetId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "targetType",
+          "targetId",
+          "parentId",
+          "body",
+          "createdBy",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Zapis ścieżki kontroli Komisji Rewizyjnej (#137; niezmienny)."
+      },
+      "BankStatementFileBalances": {
+        "type": "object",
+        "properties": {
+          "statementNumber": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "openingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "openingDate": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "closingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "closingDate": {
+            "$ref": "#/components/schemas/IsoDate"
+          }
+        },
+        "required": [
+          "statementNumber",
+          "openingBalanceCents",
+          "openingDate",
+          "closingBalanceCents",
+          "closingDate"
+        ],
+        "additionalProperties": false,
+        "description": "Salda i numer wyciągu odczytane z pliku CODA/CAMT.053."
+      },
+      "BankStatementImport": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reconciliationId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "source": {
+            "$ref": "#/components/schemas/BankStatementSource"
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [
+          "id",
+          "reconciliationId",
+          "source",
+          "lineCount"
+        ],
+        "additionalProperties": false,
+        "description": "Paczka pozycji wyciągu (import); pozycje są niezmienne."
+      },
+      "BankStatementImportWarning": {
+        "type": "string",
+        "enum": [
+          "closing_balance_mismatch",
+          "opening_balance_discontinuity",
+          "statement_date_differs",
+          "statement_balance_differs"
+        ],
+        "description": "Ostrzeżenie kontroli ciągłości pliku — nic nie blokuje importu."
+      },
+      "BankStatementLinesRequest": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "properties": {
+                "bookedOn": {
+                  "$ref": "#/components/schemas/IsoDate"
+                },
+                "amountCents": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100000000
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": -100000000,
+                      "maximum": -1
+                    }
+                  ],
+                  "description": "Kwota pozycji w eurocentach ze znakiem (wpływ > 0, wypływ < 0, nigdy 0); |kwota| ≤ 1 000 000,00 EUR."
+                },
+                "reference": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Tytuł przelewu (do 300 znaków po normalizacji); zapisywany wyłącznie jako solony skrót SHA-256."
+                }
+              },
+              "required": [
+                "bookedOn",
+                "amountCents"
+              ]
+            },
+            "description": "Pozycje podane wprost (źródło `manual`)."
+          },
+          "csv": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Ogólny CSV z nagłówkiem (data, kwota, opcjonalnie tytuł); 1-500 pozycji; separator wykrywany, przy remisie 400 `ambiguous_csv_delimiter`."
+          },
+          "delimiter": {
+            "type": "string",
+            "enum": [
+              ";",
+              ",",
+              "\t"
+            ],
+            "description": "Ręcznie wybrany separator; tylko razem z `csv`."
+          },
+          "coda": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plik CODA (tekst); wymaga konfiguracji klucza skrótów i rachunku Rady (inaczej 503)."
+          },
+          "camt053": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plik CAMT.053 (XML); wymagania jak przy `coda`."
+          }
+        },
+        "required": [],
+        "oneOf": [
+          {
+            "required": [
+              "lines"
+            ]
+          },
+          {
+            "required": [
+              "csv"
+            ]
+          },
+          {
+            "required": [
+              "coda"
+            ]
+          },
+          {
+            "required": [
+              "camt053"
+            ]
+          }
+        ],
+        "description": "Dokładnie jedno z `lines`, `csv`, `coda`, `camt053`; całe ciało do 256 KiB."
+      },
+      "BankStatementSkippedDuplicate": {
+        "type": "object",
+        "properties": {
+          "record": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer rekordu w pliku (nigdy fragment treści)."
+          },
+          "bookedOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "amountCents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              {
+                "type": "integer",
+                "minimum": -100000000,
+                "maximum": -1
+              }
+            ],
+            "description": "Kwota pozycji w eurocentach ze znakiem (wpływ > 0, wypływ < 0, nigdy 0); |kwota| ≤ 1 000 000,00 EUR."
+          },
+          "reconciliationId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Uzgodnienie z wcześniejszym importem ruchu — tylko dla osoby z dostępem do jego roku."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "record",
+          "bookedOn",
+          "amountCents",
+          "reconciliationId"
+        ],
+        "additionalProperties": false,
+        "description": "Ruch pominięty, bo ten sam identyfikator transakcji banku był już zaimportowany (albo powtarza się w pliku)."
+      },
+      "BankStatementSource": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "csv",
+          "coda",
+          "camt053"
+        ],
+        "description": "Źródło paczki pozycji: manual = lista JSON, csv = ogólny CSV, coda / camt053 = plik banku (#105)."
       },
       "Count": {
         "type": "integer",
@@ -35501,6 +38959,1253 @@
           "unmatched"
         ],
         "description": "recorded = przypisana do gospodarstwa, unmatched = nieprzypisana do wyjaśnienia (nie „dłużnik”)."
+      },
+      "Reconciliation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "statementDate": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "statementBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents",
+            "description": "Saldo z wyciągu podane przez osobę uzgadniającą."
+          },
+          "ledgerBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents",
+            "description": "Saldo rachunku z księgi na dzień wyciągu, liczone przez bazę (szkic: bieżące; zatwierdzone: utrwalone)."
+          },
+          "ledgerNonBankCents": {
+            "$ref": "#/components/schemas/SignedCents",
+            "description": "Netto wpisów niebankowych (kasa) do dnia wyciągu — informacyjnie."
+          },
+          "differenceCents": {
+            "$ref": "#/components/schemas/SignedCents",
+            "description": "Saldo wyciągu minus saldo księgi."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReconciliationStatus"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "confirmedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmationNote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "abandonedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "abandonedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "abandonReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "statementDate",
+          "statementBalanceCents",
+          "ledgerBalanceCents",
+          "ledgerNonBankCents",
+          "differenceCents",
+          "status",
+          "notes",
+          "createdBy",
+          "createdAt",
+          "confirmedBy",
+          "confirmedAt",
+          "confirmationNote",
+          "abandonedBy",
+          "abandonedAt",
+          "abandonReason"
+        ],
+        "additionalProperties": false,
+        "description": "Uzgodnienie wyciągu z księgą (bez soli skrótów tytułów i klucza idempotencji)."
+      },
+      "ReconciliationAbandonRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); bramka danych osobowych (#152). Ponowienie tej samej osoby z tym samym powodem odtwarza wynik."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "ReconciliationCandidate": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ledger_entry",
+                  "payment_entry"
+                ]
+              },
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "date": {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "bank"
+                ],
+                "description": "Kandydaci to wyłącznie operacje bankowe."
+              },
+              "amountCents": {
+                "$ref": "#/components/schemas/AmountCents",
+                "description": "Netto wpisu księgi albo wpłaty po korektach."
+              },
+              "dayDistance": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "referenceMatch": {
+                "type": "boolean",
+                "description": "Skrót tytułu wpłaty = skrót tytułu pozycji."
+              },
+              "structuredReferenceMatch": {
+                "type": "boolean",
+                "description": "Gospodarstwo celu wskazane komunikacją strukturalną pozycji (#83)."
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "date",
+              "method",
+              "amountCents",
+              "dayDistance",
+              "referenceMatch",
+              "structuredReferenceMatch"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "household"
+              },
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "householdId": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "date": {
+                "type": "null"
+              },
+              "method": {
+                "const": "bank"
+              },
+              "amountCents": {
+                "$ref": "#/components/schemas/AmountCents"
+              },
+              "dayDistance": {
+                "type": "null"
+              },
+              "referenceMatch": {
+                "const": false
+              },
+              "structuredReferenceMatch": {
+                "const": true
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "householdId",
+              "date",
+              "method",
+              "amountCents",
+              "dayDistance",
+              "referenceMatch",
+              "structuredReferenceMatch"
+            ],
+            "additionalProperties": false,
+            "description": "Propozycja nowej wpłaty z pozycji (POST …/lines/{lineId}/payment) dla gospodarstwa z rejestru referencji."
+          }
+        ],
+        "description": "Kandydat dopasowania — wyłącznie propozycja, nigdy zatwierdzenie."
+      },
+      "ReconciliationConfirmRequest": {
+        "type": "object",
+        "properties": {
+          "confirmationNote": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Wyjaśnienie (3-1000 znaków); wymagane, gdy różnica ≠ 0 (inaczej 400 `difference_requires_note`)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [],
+        "description": "Zatwierdza inna osoba niż autor uzgodnienia (zasada czterech oczu)."
+      },
+      "ReconciliationCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "statementDate": {
+            "$ref": "#/components/schemas/IsoDate",
+            "description": "Dzień wyciągu w granicach roku szkolnego (inaczej 400 `statement_date_outside_school_year`)."
+          },
+          "statementBalanceCents": {
+            "type": "integer",
+            "minimum": -10000000000,
+            "maximum": 10000000000,
+            "description": "Saldo z wyciągu w eurocentach ze znakiem; saldo księgi liczy serwer (pole klienta jest ignorowane)."
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Uwagi (3-1000 znaków po przycięciu spacji; pusty tekst = brak); bramka danych osobowych (#152)."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "statementDate",
+          "statementBalanceCents"
+        ]
+      },
+      "ReconciliationGroupMatch": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reconciliationId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "statementLineId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "ledgerEntryId": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "paymentEntryId": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "amountCents": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100000000
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": -100000000,
+                      "maximum": -1
+                    }
+                  ],
+                  "description": "Netto celu w chwili dopasowania, ze znakiem pozycji wyciągu (wydatek < 0), w eurocentach."
+                }
+              },
+              "required": [
+                "id",
+                "ledgerEntryId",
+                "paymentEntryId",
+                "amountCents"
+              ],
+              "additionalProperties": false,
+              "description": "Cel dopasowania zbiorczego: dokładnie jedno z `ledgerEntryId`, `paymentEntryId`."
+            }
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokeReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "reconciliationId",
+          "statementLineId",
+          "items",
+          "createdBy",
+          "createdAt",
+          "revokedAt",
+          "revokedBy",
+          "revokeReason"
+        ],
+        "additionalProperties": false,
+        "description": "Dopasowanie zbiorcze (#127): jedna pozycja ↔ 2-50 wpłat lub wpisów księgi o łącznej kwocie pozycji."
+      },
+      "ReconciliationGroupMatchRequest": {
+        "type": "object",
+        "properties": {
+          "statementLineId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 50,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "paymentEntryId": {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  },
+                  "required": [
+                    "paymentEntryId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "ledgerEntryId": {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  },
+                  "required": [
+                    "ledgerEntryId"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "Jeden cel na pozycję listy (bez powtórzeń); kwotą jest dzisiejsze netto celu."
+            },
+            "description": "Cele dopasowania zbiorczego (2-50); suma netto musi równać się kwocie pozycji."
+          }
+        },
+        "required": [
+          "statementLineId",
+          "items"
+        ]
+      },
+      "ReconciliationInconsistentGroupMatch": {
+        "type": "object",
+        "properties": {
+          "groupMatchId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "statementLineId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "lineAmountCents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              {
+                "type": "integer",
+                "minimum": -100000000,
+                "maximum": -1
+              }
+            ],
+            "description": "Kwota pozycji w eurocentach ze znakiem (wpływ > 0, wypływ < 0, nigdy 0); |kwota| ≤ 1 000 000,00 EUR."
+          },
+          "matchedTotalCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "targetNetCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "reasons": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "amount_mismatch",
+                "target_changed"
+              ]
+            }
+          }
+        },
+        "required": [
+          "groupMatchId",
+          "statementLineId",
+          "lineAmountCents",
+          "matchedTotalCents",
+          "targetNetCents",
+          "reasons"
+        ],
+        "additionalProperties": false
+      },
+      "ReconciliationInconsistentMatch": {
+        "type": "object",
+        "properties": {
+          "matchId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "statementLineId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "ledgerEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paymentEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paymentRefundId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "lineAmountCents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              {
+                "type": "integer",
+                "minimum": -100000000,
+                "maximum": -1
+              }
+            ],
+            "description": "Kwota pozycji w eurocentach ze znakiem (wpływ > 0, wypływ < 0, nigdy 0); |kwota| ≤ 1 000 000,00 EUR."
+          },
+          "targetNetCents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "amount_mismatch",
+                "double_counted"
+              ]
+            }
+          }
+        },
+        "required": [
+          "matchId",
+          "statementLineId",
+          "ledgerEntryId",
+          "paymentEntryId",
+          "lineAmountCents",
+          "targetNetCents",
+          "reasons"
+        ],
+        "additionalProperties": false,
+        "description": "Aktywne powiązanie niezgodne kwotowo z dzisiejszym netto celu albo liczące tę samą wpłatę dwa razy (#162, #165)."
+      },
+      "ReconciliationLine": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "importId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "source": {
+            "$ref": "#/components/schemas/BankStatementSource"
+          },
+          "lineNo": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer pozycji w paczce importu."
+          },
+          "bookedOn": {
+            "$ref": "#/components/schemas/IsoDate"
+          },
+          "amountCents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              {
+                "type": "integer",
+                "minimum": -100000000,
+                "maximum": -1
+              }
+            ],
+            "description": "Kwota pozycji w eurocentach ze znakiem (wpływ > 0, wypływ < 0, nigdy 0); |kwota| ≤ 1 000 000,00 EUR."
+          },
+          "hasReference": {
+            "type": "boolean",
+            "description": "true = pozycja miała tytuł (zapisany wyłącznie jako solony skrót)."
+          },
+          "match": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "ledgerEntryId": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/EntityId"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "paymentEntryId": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/EntityId"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "paymentRefundId": {
+                    "$ref": "#/components/schemas/EntityId"
+                  }
+                },
+                "required": [
+                  "id",
+                  "ledgerEntryId",
+                  "paymentEntryId"
+                ],
+                "additionalProperties": false,
+                "description": "Aktywne powiązanie 1:1; `paymentRefundId` tylko przy zwrocie."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "groupMatch": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  "itemCount": {
+                    "type": "integer",
+                    "minimum": 2
+                  }
+                },
+                "required": [
+                  "id",
+                  "itemCount"
+                ],
+                "additionalProperties": false,
+                "description": "Aktywne dopasowanie zbiorcze (wtedy `match` = null)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "importId",
+          "source",
+          "lineNo",
+          "bookedOn",
+          "amountCents",
+          "hasReference",
+          "match",
+          "groupMatch"
+        ],
+        "additionalProperties": false
+      },
+      "ReconciliationLinePayment": {
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "householdId": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/EntityId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "schoolYearId": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "amountCents": {
+                "$ref": "#/components/schemas/AmountCents"
+              },
+              "receivedOn": {
+                "$ref": "#/components/schemas/IsoDate",
+                "description": "Data księgowania pozycji wyciągu."
+              },
+              "method": {
+                "const": "bank"
+              },
+              "status": {
+                "$ref": "#/components/schemas/PaymentStatus"
+              }
+            },
+            "required": [
+              "id",
+              "householdId",
+              "schoolYearId",
+              "amountCents",
+              "receivedOn",
+              "method",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "match": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "reconciliationId": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "statementLineId": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "paymentEntryId": {
+                "$ref": "#/components/schemas/EntityId"
+              }
+            },
+            "required": [
+              "id",
+              "reconciliationId",
+              "statementLineId",
+              "paymentEntryId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "payment",
+          "match"
+        ],
+        "additionalProperties": false,
+        "description": "Wpłata utworzona z dodatniej pozycji wyciągu i jej powiązanie (jedna transakcja, jeden klucz)."
+      },
+      "ReconciliationLinePaymentRequest": {
+        "type": "object",
+        "properties": {
+          "householdId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Gospodarstwo wpłaty; null albo brak = wpłata nieprzypisana (`unmatched`), do przypisania później."
+          }
+        },
+        "required": [],
+        "description": "Kwota, data i metoda pochodzą z pozycji wyciągu, nie z klienta."
+      },
+      "ReconciliationMatch": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "reconciliationId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "statementLineId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "ledgerEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paymentEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paymentRefundId": {
+            "$ref": "#/components/schemas/EntityId",
+            "description": "Tylko powiązanie ze zwrotem wpłaty (0152, #138); przy pozostałych pole nie występuje."
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "revokedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revokeReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "reconciliationId",
+          "statementLineId",
+          "ledgerEntryId",
+          "paymentEntryId",
+          "createdBy",
+          "createdAt",
+          "revokedAt",
+          "revokedBy",
+          "revokeReason"
+        ],
+        "additionalProperties": false,
+        "description": "Powiązanie 1:1 pozycji wyciągu z wpisem księgi, wpłatą albo zwrotem; cofnięcie to znacznik, nie usunięcie."
+      },
+      "ReconciliationMatchBatchRequest": {
+        "type": "object",
+        "properties": {
+          "matches": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "properties": {
+                "statementLineId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "paymentEntryId": {
+                  "$ref": "#/components/schemas/Id"
+                }
+              },
+              "required": [
+                "statementLineId",
+                "paymentEntryId"
+              ],
+              "additionalProperties": false,
+              "description": "Para pozycja-wpłata; trasa odrzuca inne pola (400 `invalid_request`)."
+            },
+            "description": "Jawna lista par (1-50, bez powtórzeń pozycji i wpłat); wszystko albo nic."
+          }
+        },
+        "required": [
+          "matches"
+        ]
+      },
+      "ReconciliationMatchRequest": {
+        "type": "object",
+        "properties": {
+          "statementLineId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "ledgerEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Wpis księgi (metoda bankowa) o netto równym kwocie pozycji."
+          },
+          "paymentEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Wpłata bankowa o netto równym kwocie pozycji."
+          },
+          "paymentRefundId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Zwrot wpłaty (bankowy) dopasowany do ujemnej pozycji o tej samej kwocie (#138)."
+          }
+        },
+        "required": [
+          "statementLineId"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "ledgerEntryId"
+            ]
+          },
+          {
+            "required": [
+              "paymentEntryId"
+            ]
+          },
+          {
+            "required": [
+              "paymentRefundId"
+            ]
+          }
+        ],
+        "description": "Dokładnie jeden niepusty cel: `ledgerEntryId`, `paymentEntryId` albo `paymentRefundId`."
+      },
+      "ReconciliationRevocationRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); bramka danych osobowych (#152). Ponowienie tej samej osoby z tym samym powodem odtwarza wynik."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "ReconciliationStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "confirmed",
+          "abandoned"
+        ],
+        "description": "draft = szkic, confirmed = zatwierdzone (niezmienne), abandoned = porzucony szkic (0107; historia zostaje)."
+      },
+      "ReconciliationSuggestions": {
+        "type": "object",
+        "properties": {
+          "reconciliationId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "windowDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "statementLineId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "bookedOn": {
+                  "$ref": "#/components/schemas/IsoDate"
+                },
+                "amountCents": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100000000
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": -100000000,
+                      "maximum": -1
+                    }
+                  ],
+                  "description": "Kwota pozycji w eurocentach ze znakiem (wpływ > 0, wypływ < 0, nigdy 0); |kwota| ≤ 1 000 000,00 EUR."
+                },
+                "candidates": {
+                  "type": "array",
+                  "maxItems": 5,
+                  "items": {
+                    "$ref": "#/components/schemas/ReconciliationCandidate"
+                  }
+                }
+              },
+              "required": [
+                "statementLineId",
+                "bookedOn",
+                "amountCents",
+                "candidates"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Jedna pozycja na każdą otwartą pozycję wyciągu (także bez kandydatów)."
+          }
+        },
+        "required": [
+          "reconciliationId",
+          "windowDays",
+          "suggestions"
+        ],
+        "additionalProperties": false
+      },
+      "ReconciliationView": {
+        "type": "object",
+        "properties": {
+          "reconciliation": {
+            "$ref": "#/components/schemas/Reconciliation"
+          },
+          "lines": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationLine"
+            },
+            "description": "Strona pozycji (data księgowania, id); `limit` 1-500, domyślnie 500."
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Kursor następnej strony pozycji (ważny tylko dla tego uzgodnienia); null = ostatnia strona."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationMatch"
+            },
+            "description": "Wszystkie powiązania 1:1, także cofnięte."
+          },
+          "groupMatches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationGroupMatch"
+            },
+            "description": "Wszystkie dopasowania zbiorcze, także cofnięte."
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "lineCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "matchedLineCount": {
+                "$ref": "#/components/schemas/Count",
+                "description": "Pozycje poprawnie dopasowane (bez niespójnych)."
+              },
+              "unmatchedLineCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "unmatchedLineTotalCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "inconsistentMatchCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "groupMatchedLineCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "inconsistentGroupMatchCount": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "lineCount",
+              "matchedLineCount",
+              "unmatchedLineCount",
+              "unmatchedLineTotalCents",
+              "inconsistentMatchCount",
+              "groupMatchedLineCount",
+              "inconsistentGroupMatchCount"
+            ],
+            "additionalProperties": false,
+            "description": "Liczone ze wszystkich pozycji, niezależnie od strony `lines`."
+          },
+          "inconsistentMatches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationInconsistentMatch"
+            }
+          },
+          "inconsistentGroupMatches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationInconsistentGroupMatch"
+            }
+          },
+          "unmatchedLedgerEntries": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "direction": {
+                  "$ref": "#/components/schemas/LedgerDirection"
+                },
+                "occurredOn": {
+                  "$ref": "#/components/schemas/IsoDate"
+                },
+                "netAmountCents": {
+                  "$ref": "#/components/schemas/AmountCents"
+                },
+                "categoryId": {
+                  "$ref": "#/components/schemas/EntityId"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "direction",
+                "occurredOn",
+                "netAmountCents",
+                "categoryId",
+                "description"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Bankowe wpisy księgi do dnia wyciągu bez powiązania w tym uzgodnieniu (najwyżej 1000)."
+          },
+          "unmatchedLedgerEntriesTruncated": {
+            "type": "boolean",
+            "description": "true = wpisów jest więcej niż 1000 (lista obcięta)."
+          }
+        },
+        "required": [
+          "reconciliation",
+          "lines",
+          "nextCursor",
+          "matches",
+          "groupMatches",
+          "summary",
+          "inconsistentMatches",
+          "inconsistentGroupMatches",
+          "unmatchedLedgerEntries",
+          "unmatchedLedgerEntriesTruncated"
+        ],
+        "additionalProperties": false,
+        "description": "Uzgodnienie z jedną stroną pozycji wyciągu, powiązaniami i podsumowaniem z jednej migawki."
       },
       "RelationContactRequest": {
         "type": "object",

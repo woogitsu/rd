@@ -8,7 +8,7 @@
 //   npm run openapi:build -- --check  # 0 = aktualny, 1 = trzeba regenerować
 //
 // Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga z preliminarzem, kasą i centrami
-// kosztów, rodziny, sesja); pozostałe są
+// kosztów, rodziny, sesja, uzgodnienia wyciągów z raportem KR); pozostałe są
 // jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
 // tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
 // „do zatwierdzenia” przez zarząd/szkołę.
@@ -117,12 +117,18 @@ function schemaResponse(spec) {
     response.content = { [spec.contentType ?? 'application/json']: { schema: spec.schema } };
   }
   if (spec.replayed) {
+    // Jedna wartość albo lista (#160 etap 5): zapis bez klucza idempotencji, np. zatwierdzenie
+    // uzgodnienia, zwraca 200 i przy pierwszym wykonaniu (`false`), i przy ponowieniu (`true`).
+    const values = [spec.replayed].flat();
+    const text = {
+      true: 'true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.',
+      false: 'false: zapis wykonany teraz.',
+    };
     response.headers = {
       'Idempotency-Replayed': {
-        description: spec.replayed === 'true'
-          ? 'true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.'
-          : 'false: zapis wykonany teraz.',
-        schema: { type: 'string', enum: [spec.replayed] },
+        description: values.length === 1 ? text[values[0]]
+          : 'false: zapis wykonany teraz; true: ponowienie rozpoznane po osobie i treści, bez nowego zapisu.',
+        schema: { type: 'string', enum: values },
       },
     };
   }

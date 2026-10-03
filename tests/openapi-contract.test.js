@@ -2,7 +2,8 @@
 // (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
 // (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js;
 // preliminarz, kasa i centra kosztów (ledger-budget, ledger-cash, ledger-cost-centers)
-// w tests/openapi-contract-ledger-extra.test.js; kampanie e-mail (email) w
+// w tests/openapi-contract-ledger-extra.test.js; uzgodnienia wyciągów i raport KR (reconciliation)
+// w tests/openapi-contract-reconciliation.test.js; kampanie e-mail (email) w
 // tests/openapi-contract-email.test.js.
 // Testy rejestru poniżej obejmują wszystkie pokryte moduły.
 //
@@ -33,7 +34,7 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 19;
+const MAX_UNCOVERED_MODULES = 18;
 // Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
 const POST_WITHOUT_BODY = new Set([
   'POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout',
@@ -45,9 +46,12 @@ const POST_WITHOUT_BODY = new Set([
 ]);
 
 // Pliki pomocnicze trasy (ścieżki względem src/pg/), których kody błędów trasa zwraca bez zmiany:
-// parser treści kampanii (ContentError), odmowa adresu wysyłki testowej (previewRecipientRefusal)
-// i kursor list (parseListLimit/decodeListCursor).
-const ROUTE_HELPER_SOURCES = { email: ['../email/content.js', '../email/brevo.js', 'list-cursor.js'] };
+// email — parser treści kampanii (ContentError), odmowa adresu wysyłki testowej (previewRecipientRefusal)
+// i kursor list (parseListLimit/decodeListCursor); reconciliation — parsery wyciągów banku.
+const ROUTE_HELPER_SOURCES = {
+  email: ['../email/content.js', '../email/brevo.js', 'list-cursor.js'],
+  reconciliation: ['bank/common.js', 'bank/coda.js', 'bank/camt053.js'],
+};
 
 const openApiPath = (route) => route.path.split('?')[0].replace(/:([A-Za-z]\w*)/g, '{$1}');
 const routeKey = (route) => `${route.method} ${openApiPath(route)}`;
@@ -161,6 +165,7 @@ test('rejestr: kody błędów w schematach są w katalogu docs/API_ERRORS.md i w
   const problems = [];
   let codesChecked = 0;
   for (const module of SCHEMA_MODULES) {
+    // Moduły z kodami poza plikiem trasy (ROUTE_HELPER_SOURCES: reconciliation — parsery CODA/CAMT.053, email — treść i Brevo).
     const helpers = await Promise.all((ROUTE_HELPER_SOURCES[module.name] ?? [])
       .map((file) => readFile(new URL(`../src/pg/${file}`, import.meta.url), 'utf8')));
     const source = [await readFile(new URL(`../src/pg/routes/${module.name}.js`, import.meta.url), 'utf8'), ...helpers, ...shared].join('\n');
