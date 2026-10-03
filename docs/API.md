@@ -194,6 +194,19 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
+## Przedłużenie przedstawicieli na nowy rok: własne konto admina (#745)
+
+`POST /api/admin/promotions/representatives/preview` i `…/apply` (src/pg/promotions.js) nie nadają roli
+wykonującemu adminowi (zasada drugiej osoby z #146, jak `409 cannot_grant_self` w `POST /api/admin/grants`).
+Jego wiersz w `proposals` ma status `cannot_grant_self` (także gdy ma już przydział w klasie docelowej),
+`counts` ma pole `cannot_grant_self` obok `propose`, `already_granted` i `user_disabled`, a pominięty wiersz
+nie liczy się do obsady klasy (`withoutRepresentative`). Zapis go pomija: odpowiedź i metadane
+`promotion.representatives_extended` mają `skipped` (konta wyłączone + własne konto) i `skippedSelf`.
+Skrót planu ma dla tego wiersza osobny znacznik, więc plan zależy od aktora — skrót z podglądu innego
+admina daje przy zapisie `409 plan_stale`. Przydział adminowi nadaje inny administrator przez
+`POST /api/admin/grants`. Wspólny zapis przydziału (`insertGrantInTx`) odrzuca własne konto
+`409 cannot_grant_self` niezależnie od wywołującego.
+
 ## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-11)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
