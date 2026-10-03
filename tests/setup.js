@@ -5,7 +5,12 @@
 //      uruchomiony przez ten sam proces testowy (inne porty/hosty są blokowane)
 //      (AGENTS.md: żaden test nie może wysłać wiadomości do prawdziwego rodzica);
 //   3. licznik prób sieciowych sprawdzany przy wyjściu — test, który połknął wyjątek
-//      pułapki (try/catch), i tak oblewa przebieg kodem 1.
+//      pułapki (try/catch), i tak oblewa przebieg kodem 1;
+//   4. #111: z RD_TEST_RSS_LOG (ustawia je CI) każdy proces dopisuje przy wyjściu linię
+//      `<szczytowy RSS w KiB>\t<plik testowy>`; scripts/summarize-test-memory.js zamienia log
+//      na tabelę w podsumowaniu joba. Bez zmiennej nic się nie dzieje.
+import { appendFileSync } from 'node:fs';
+import { relative } from 'node:path';
 import { networkGuardCalls } from './helpers/network-guard.js';
 
 process.env.APP_ENV ||= 'test';
@@ -17,3 +22,12 @@ process.on('exit', (code) => {
     process.exitCode = 1;
   }
 });
+
+if (process.env.RD_TEST_RSS_LOG) {
+  process.on('exit', () => {
+    try {
+      const file = process.argv[1] ? relative(process.cwd(), process.argv[1]) : 'unknown';
+      appendFileSync(process.env.RD_TEST_RSS_LOG, `${process.resourceUsage().maxRSS}\t${file}\n`);
+    } catch { /* pomiar jest dodatkiem: błąd zapisu logu nie psuje testów */ }
+  });
+}
