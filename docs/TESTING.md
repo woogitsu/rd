@@ -254,19 +254,21 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-4)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-5)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
-etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; razem 63 operacje)
+etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
+razem 77 operacji)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
 - rejestr pokrycia: każda trasa macierzy pokrytego modułu ma schemat (kontrola pozytywna: detektor wskazuje
   dopisaną trasę bez schematu), każdy schemat ma trasę, moduły macierzy = pokryte + jawnie niepokryte, a lista
   `UNCOVERED_MODULES` nie rośnie (sufit `MAX_UNCOVERED_MODULES`, obniżany w kolejnych PR-ach);
-- kody błędów w schematach należą do katalogu `docs/API_ERRORS.md` i występują w źródle trasy;
+- kody błędów w schematach należą do katalogu `docs/API_ERRORS.md` i występują w źródle trasy (dla `reconciliation`
+  także w parserach wyciągów `src/pg/bank/*.js`, `ROUTE_HELPER_SOURCES`);
 - **prawdziwe odpowiedzi** (PGlite, dane syntetyczne) przez `tests/helpers/contract-client.js` i walidator
   `tests/helpers/json-schema.js` (bez nowej zależności; nieznane słowo kluczowe schematu rzuca wyjątek, więc nie
   przepuszcza po cichu): utworzenie, ponowienie z tym samym kluczem (`Idempotency-Replayed`), korekta częściowa,
@@ -326,11 +328,50 @@ PGlite, dane syntetyczne; rok testowy jest pierwszym rokiem w systemie):
   rzeczywistym `Content-Type` (kontrola pozytywna: nieopisany `Content-Type` jest błędem), a test wymaga walidacji
   każdego formatu.
 
+Prawdziwe odpowiedzi etapu 5 sprawdza `tests/openapi-contract-reconciliation.test.js` (ten sam `createContractClient`,
+PGlite, dane syntetyczne: rachunki to przykładowe IBAN z dokumentacji standardów z `tests/helpers/bank-statements.js`,
+tytuły „syntetyczne”, adresy `@example.invalid`):
+
+- import: lista JSON (z ponowieniem i `idempotency_conflict`), CSV z możliwym duplikatem, CODA z ponowieniem (węższy
+  kształt odtworzenia), drugi plik z pominiętymi ruchami (`skippedDuplicates`), plik w całości już zaimportowany
+  (`200`, `Idempotency-Replayed: false`, `import: null`), ten sam plik w innym szkicu (`409 statement_already_imported`),
+  CAMT.053 z ostrzeżeniem ciągłości; błędy `statement_account_mismatch`, `invalid_statement_file`, `invalid_line_count`,
+  `invalid_statement_line`, `invalid_csv_header`, `ambiguous_csv_delimiter`, `statement_line_after_statement_date`,
+  `413`, `415` i `503 bank_import_not_configured` (serwer bez klucza i rachunku);
+- widok: pozycje stronami po 3 z `nextCursor` aż do `null`, `invalid_cursor` (także kursor innego uzgodnienia),
+  `invalid_limit`, obcięta lista wpisów księgi bez powiązania (`unmatchedLedgerEntriesTruncated`) i brak tytułów
+  przelewów w odpowiedzi;
+- propozycje: wpis księgi, wpłata ze zgodnym tytułem (`referenceMatch`) i kandydat `household` z komunikacji
+  strukturalnej, `invalid_window`;
+- dopasowanie 1:1 z ponowieniem, konfliktem klucza i `already_matched`, cofnięcie z ponowieniem (`200` z
+  `Idempotency-Replayed: false`, potem `true`), `match_already_revoked`, `match_not_found` i ponowne dopasowanie;
+  `match_amount_mismatch`, `match_method_mismatch`; zwrot dopasowany do ujemnej pozycji (`paymentRefundId`);
+  wsadowe (ponowienie, `match_batch_rejected` z `failures`, `match_batch_empty`, `match_batch_duplicate`,
+  `match_batch_too_large`) i zbiorcze z cofnięciem (`group_match_sum_mismatch`, `invalid_match_target`,
+  `invalid_statement_line`); wpłata z pozycji (gospodarstwo i nieprzypisana, ponowienie, `statement_line_not_income`,
+  `statement_line_not_found`, `422 date_outside_school_year` dla pozycji sprzed początku roku);
+- zatwierdzenie (`four_eyes_required`, `difference_requires_note`, ponowienie, `reconciliation_confirmed` przy
+  zapisach po zatwierdzeniu) i porzucenie (ponowienie, `reconciliation_abandoned`, `reconciliation_has_active_matches`);
+- raport KR w trzech formatach z danymi w każdej sekcji (korekta, przeksięgowanie, poprawka bilansu, wydatek ponad
+  próg, wynik wydarzenia, ścieżka kontroli z odpowiedzią i wnioskiem), `invalid_request`, `school_year_not_found`;
+- granice ról na wszystkich 14 trasach: brak sesji `401`, przedstawiciel klasy i Komisja Rewizyjna `403 forbidden`
+  (raport KR: KR z MFA ma dostęp, bez MFA `mfa_enrollment_required`), zarząd bez MFA `403 mfa_enrollment_required`,
+  obcy `Origin` `403 invalid_origin`; pominięcie każdego wymaganego pola ciała → `400`;
+- **zamknięty rok** bez obchodzenia triggerów (trasy `year-close`): utworzenie, import, wpłata z pozycji, dopasowania
+  1:1, wsadowe i zbiorcze, cofnięcie, zatwierdzenie i porzucenie dają `409 school_year_closed`, raport zamkniętego
+  roku nadal działa.
+
+`409 inconsistent_matches` jest w schemacie zatwierdzenia, ale nie w tym teście (pola `inconsistentMatches` i
+`inconsistentGroupMatches` widoku są tu puste): niespójność powstaje po korekcie celu już powiązanego, a tę korektę
+API blokuje, dopóki powiązanie w szkicu jest aktywne (#165); `tests/pg-reconciliation.test.js` osiąga ją obejściem
+triggerów (`TRIGGER_BYPASS_ALLOWED`).
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
 `tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`, jak
-`tests/openapi-contract-families.test.js` i `tests/openapi-contract-ledger-extra.test.js`).
+`tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js` i
+`tests/openapi-contract-reconciliation.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 
