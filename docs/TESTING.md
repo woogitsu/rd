@@ -459,8 +459,9 @@ części, dwa storna tego samego przeniesienia kasa ↔ rachunek oraz dwa przeks
 wpisu księgi i przeksięgowanie kontra korekta tego wpisu. Każdy test sprawdza w
 `pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z kodu trasy. Mutanty:
 `payments-refund`, `payments-reassign`, `payments-allocation`,
-`payments-allocation-reversal`, `ledger-transfer-reversal`, `ledger-replacement`. Test nie ujawnił błędu
-współbieżności — blokady działają. Poza listą zostają m.in. `ledger.js` (kategoria).
+`payments-allocation-reversal`, `ledger-transfer-reversal`, `ledger-replacement` (tylko blokada wpisu
+księgi; blokadę wpłaty w `createReplacement` powtarza wyzwalacz `ledger_entry_insert_guard`, wyjątek w
+inwentaryzacji niżej). Test nie ujawnił błędu współbieżności — blokady działają.
 
 `tests/pg-real-cost-center-locks.test.js` (#208, pomijany bez `RD_TEST_PG_URL`): bariera dla
 przypisania wpisu księgi do centrów kosztów (`ledger-cost-centers.js`) — dwa pierwsze
@@ -477,8 +478,41 @@ samej linii (`409 budget_line_superseded`, jedna rewizja) oraz dwie poprawki kas
 100 € w bilansie otwarcia (`409 cash_below_zero`, jedna poprawka). Test sprawdza w
 `pg_stat_activity`, że drugie żądanie czeka na `FOR UPDATE` z `deactivateCategory`,
 `reviseLine` (`ledger-budget.js`) albo `createAdjustment` (`ledger-cash.js`). Mutanty:
-`budget-category`, `budget-revision`, `opening-adjustment`. `createOpening` używa
+`budget-category`, `budget-revision`, `opening-adjustment`. Ten sam plik ma test starszej trasy
+`POST /api/ledger/categories/{id}/deactivate` (`deactivateCategory` w `ledger.js`): podwójne kliknięcie
+czeka na blokadę kategorii i daje jedno zdarzenie audytu (bez blokady drugi UPDATE wykonuje się
+ponownie i dopisuje drugie) — mutant `ledger-category-deactivate`. `createOpening` używa
 `LOCK TABLE`, nie `FOR UPDATE`, więc zostaje poza listą.
+
+`tests/pg-real-request-locks.test.js` (#208, inwentaryzacja blokad, pomijany bez `RD_TEST_PG_URL`): wnioski
+rodziców o zmianę kontaktu i rejestr żądań osób. Podwójne wysłanie formularza rodzica tym samym linkiem
+(`409 link_used`, jeden wniosek; bez blokady linku drugie żądanie kończy się błędem wyzwalacza 0087),
+podwójne „Zatwierdź” wniosku przez dwie osoby (powtórka `changed: false`, jedno zdarzenie), zatwierdzenie
+wniosku dotyczącego samej zgody w trakcie zmiany adresu opiekuna przez zarząd (bez blokady opiekuna
+zatwierdzenie nadpisuje nowy adres starym — utracona aktualizacja), podwójna zmiana statusu żądania osoby
+(jedno zdarzenie), ograniczenie przetwarzania i sprostowanie imienia z powołaniem na żądanie w trakcie
+zamykania tego żądania (`409 data_request_closed`, bez wpisu; bez blokady zapis powstaje na zamkniętym
+żądaniu, bo klucz obcy tylko czeka, a nie sprawdza stanu). Mutanty: `guardian-update-submit`,
+`guardian-update-decide`, `guardian-update-decide-guardian`, `data-request-status`,
+`processing-restriction-request`, `families-rectification-request` (`FOR SHARE`).
+
+`tests/pg-real-auth-locks.test.js` (#208, inwentaryzacja blokad, pomijany bez `RD_TEST_PG_URL`): dwóch
+administratorów naraz wydaje token resetu hasła (zostaje jeden ważny token; bez blokady konta dwa),
+dwie równoległe próby logowania przy ostatniej wolnej w oknie pary e-mail + IP (druga dostaje 429 bez
+sprawdzania hasła; bez blokady liczy hasło ponad limit) oraz nadanie roli w trakcie wyłączania konta
+(`409 user_disabled`; bez blokady przydział powstaje na wyłączanym koncie). Mutanty:
+`password-reset-issue`, `login-attempt-reserve`, `grant-target-lock`.
+
+`tests/pg-real-email-locks.test.js` (#208, inwentaryzacja blokad, pomijany bez `RD_TEST_PG_URL`): dwa
+rozstrzygnięcia tej samej wiadomości naraz („nie wyszła” i „doszła”; drugie zwraca pierwsze, jeden
+zapis) i dwa zatwierdzenia zdjęcia blokady adresu (`409 request_already_consumed`, jedno zdjęcie). Bez
+blokady w obu przypadkach powstają dwa wiersze — tabele nie mają indeksu unikalnego na rozstrzygany
+wiersz. Kampania źródłowa przechodzi przez worker z atrapą transportu; nic nie wychodzi do sieci.
+Mutanty: `email-outbox-resolution`, `email-suppression-release`.
+
+Każdy z mutantów trzech plików powyżej i `ledger-category-deactivate` pada także na samym skutku
+(sprawdzone jednorazowo z wyłączonymi asercjami miejsca czekania w `tests/helpers/pg-race.js`), a nie
+tylko na tym, gdzie czeka drugie żądanie.
 
 `tests/pg-real-record-locks.test.js` (#208, #111, pomijany bez `RD_TEST_PG_URL`): bariera dla kolejnych blokad
 wiersza, których jedynym punktem serializacji jest zapytanie `FOR UPDATE` z kodu trasy. Rodziny: dwie identyczne
@@ -579,15 +613,135 @@ i bilansu otwarcia (poprawka), a w `tests/pg-real-record-locks.test.js` osiem bl
 `createDescription` (dokumenty), `lockPhoto` (aktualności), `updateMeeting`, `updateResolution` i
 `recordAttendance` (zebrania) oraz `lockInvitation` (przyjęcie zaproszenia), a w
 `tests/pg-real-replay-23505.test.js` blokadę wiersza zamknięcia roku (`loadClosure`).
-Poza listą (#208): `FOR UPDATE` w `events.js` (`cancelTask`, `createSignup`, `withdrawSignup`) oraz w
-`meetings.js` (`withdrawAgendaItem`, `reorderAgendaItems`, `loadNotice`) — te funkcje biorą wcześniej blokadę
-`lockEvent`/`lockMeeting`, więc usunięcie samego drugiego zapytania niczego nie zmienia w wyniku (mutant
-równoważny, nie do zabicia bez usunięcia obu blokad); `FOR UPDATE` w pozostałych modułach (`email.js` poza
-kampanią, `guardian-updates.js`, `payment-references.js`, `login.js`, `mfa.js`, `grant-requests.js`,
-`account-recovery.js`, `privacy-notice.js`, `report-snapshots.js`), blokady doradcze w `promotions.js`,
-`anonymization.js`, `invitation-batch.js`, `processing-restrictions.js` i `reconciliation.js`
-(`bank_statement_file_import`), pozostałe w `payments.js`/`ledger.js` (autoryzacje uchwał), `LOCK TABLE` w
-`createOpening` oraz blokady w triggerach migracji. Kolejny zakres to rozszerzenie listy o te moduły.
+Mutanty z polem `table` usuwają blokadę jednej tabeli w funkcji z kilkoma blokadami (`updateIdentity`:
+`families-identity` i `families-identity-guardian`; `createReplacement`; `decideRequest` w
+`guardian-updates.js`), a rodzaj `for-share` — `FOR SHARE` (`createSession` w `auth.js`, mutant
+`session-create-share` z `tests/pg-disable-session-race.test.js`; `checkRectificationRequest`).
+Inwentaryzacja blokad dodała mutanty z `tests/pg-real-request-locks.test.js`,
+`tests/pg-real-auth-locks.test.js`, `tests/pg-real-email-locks.test.js` i `ledger-category-deactivate`
+(opisy wyżej) oraz blokady z istniejącymi testami z barierą: `lockGrantRequest` (`grant-request-lock`,
+`pg-real-double-click`) i `createSession`. Blokady wierszy spoza listy mają wpis w `LOCK_EXCEPTIONS` — tabela niżej.
+Poza skanem zostają blokady doradcze bez mutanta (`promotions.js`, `anonymization.js`,
+`invitation-batch.js`, `processing-restrictions.js`, `reconciliation.js` — `bank_statement_file_import`,
+`privacy-notice.js`, `email.js` — limit dostawcy), `LOCK TABLE` w `createOpening` i `bootstrap-admin.js`
+oraz blokady w wyzwalaczach migracji.
+
+### Inwentaryzacja blokad wierszy (`tests/lock-inventory.test.js`)
+
+Kryterium #208 „każda blokada wiersza ma dowód”. `scripts/lock-inventory.js` skanuje `src/pg` w
+poszukiwaniu `FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE` i `FOR KEY SHARE` w kodzie (komentarze
+pomija) i przypisuje każde wystąpienie do funkcji najwyższego poziomu (te same granice co mutanty) i
+tabeli blokowanych wierszy (dla `OF alias` — tabela aliasu). Klucz to plik + funkcja + tabela + rodzaj
+blokady, nie numer linii. `tests/lock-inventory.test.js` (bez bazy, zwykłe shardy) wymaga, żeby każde
+wystąpienie miało mutant w `scripts/check-lock-mutations.js` albo wpis w `LOCK_EXCEPTIONS` z kategorią
+i powodem — nowa blokada bez mutanta i bez wyjątku oblewa test. Kategorie wyjątków:
+
+- **zagnieżdżona** — ta sama transakcja wcześniej bierze blokadę nadrzędną z mutantem (`outer`), przez
+  którą przechodzi każdy zapis chronionej tabeli; usunięcie samej wewnętrznej nie zmienia wyniku
+  (mutant równoważny). Test sprawdza, że funkcja (albo każdy, kto woła pomocnika z `{ lock: true }`)
+  woła funkcję mutanta nadrzędnego;
+- **ograniczenie** — serializację zapewnia baza: indeks unikalny (+ odtworzenie 23505), wyzwalacz
+  migracji albo warunkowy UPDATE; bez blokady zmienia się co najwyżej odpowiedź (kod błędu, stan w
+  metadanych audytu), bez podwójnego zapisu i utraconej aktualizacji. Test sprawdza, że
+  wskazany dowód istnieje w `postgres/migrations` albo w ciele funkcji;
+- **luka** — wyścig jest możliwy, a testu z barierą jeszcze nie ma (dalszy zakres #208); powód opisuje
+  skutek.
+
+Funkcja z blokadami kilku tabel wymaga mutanta na konkretną tabelę (`table`), żeby dowód dotyczył
+jednej blokady. Stan: 84 blokady wierszy, 51 z mutantem (57 mutantów, w tym blokady doradcze), 33 wyjątki:
+8 zagnieżdżonych, 19 ograniczeń i 6 luk (`confirmCode` w `guardian-updates.js`, `adminResetMfaInTx`,
+`lockUser`/`activeFactors` w `mfa.js`, `rotateOneAccount`, `recordWebhookEvent`).
+Tabelę poniżej generuje `node scripts/lock-inventory.js --markdown`; test wymaga, żeby była równa
+wygenerowanej (po zmianie listy mutantów albo wyjątków wklej nowy wynik).
+
+<!-- lock-inventory:start (generuje: node scripts/lock-inventory.js --markdown) -->
+| Plik i funkcja | Tabela | Blokada | Dowód |
+| --- | --- | --- | --- |
+| `account-recovery.js` `createRecoveryRequest` | `users` | FOR UPDATE | wyjątek, ograniczenie: Jeden otwarty wniosek danego rodzaju na konto trzyma indeks unikalny account_recovery_requests_open_uidx (0125); bez blokady drugi wniosek kończy się 23505 zamiast zwrócenia istniejącego, bez drugiego wiersza. |
+| `account-recovery.js` `lockRequest` | `account_recovery_requests` | FOR UPDATE | wyjątek, ograniczenie: Wyzwalacz account_recovery_request_guard (0125) odrzuca zmianę wniosku, który nie jest już pending, więc drugie zatwierdzenie/odrzucenie wycofuje całą transakcję (z tokenem resetu, który i tak serializuje blokada konta z mutantem password-reset-issue). Bez blokady: błąd wyzwalacza zamiast 409 recovery_request_closed. |
+| `auth.js` `createSession` | `users` | FOR SHARE | mutant `session-create-share` (`tests/pg-disable-session-race.test.js`) |
+| `auth.js` `revokeOwnSession` | `sessions` | FOR UPDATE | wyjątek, ograniczenie: Cofnięcie sesji to warunkowy UPDATE … AND revoked_at IS NULL (revokeSessionWith): drugi UPDATE czeka na pierwszy, po jego zatwierdzeniu nie zmienia wiersza i nie dopisuje zdarzenia. |
+| `auth.js` `lockInvitation` | `invitations` | FOR UPDATE | mutant `invitation-accept` (`tests/pg-real-record-locks.test.js`) |
+| `events.js` `lockEvent` | `events` | FOR UPDATE | mutant `events-lock` (`tests/pg-real-domain-locks.test.js`) |
+| `events.js` `cancelTask` | `event_tasks` | FOR UPDATE | wyjątek, zagnieżdżona (pod `events-lock`): Funkcja zaczyna od lockEvent (wiersz wydarzenia FOR UPDATE); każdy zapis event_tasks (createTask, cancelTask) robi to samo, więc blokada zadania jest drugą warstwą (mutant równoważny). |
+| `events.js` `createSignup` | `event_task_signups` | FOR UPDATE | wyjątek, zagnieżdżona (pod `events-lock`): Zapis na zadanie i jego wycofanie zaczynają od lockEvent; nowy zapis tej samej osoby chroni dodatkowo indeks unikalny (gałąź 23505 w kodzie). Blokada istniejącego zapisu jest drugą warstwą (mutant równoważny). |
+| `events.js` `withdrawSignup` | `event_task_signups` | FOR UPDATE | wyjątek, zagnieżdżona (pod `events-lock`): Wycofanie zapisu zaczyna od lockEvent, jak każdy zapis event_task_signups; blokada wiersza zapisu jest drugą warstwą (mutant równoważny). |
+| `grant-requests.js` `lockGrantRequest` | `role_grant_requests` | FOR UPDATE | mutant `grant-request-lock` (`tests/pg-real-double-click.test.js`) |
+| `login.js` `reserveAttempt` | `login_rate_limits` | FOR UPDATE | mutant `login-attempt-reserve` (`tests/pg-real-auth-locks.test.js`) |
+| `login.js` `acceptInvitationWithPassword` | `users` | FOR UPDATE | wyjątek, ograniczenie: Zaproszenie blokuje lockInvitation (mutant invitation-accept); nowe konto chroni ON CONFLICT (email) DO NOTHING (409 conflict) i klucz główny user_passwords, a wyłączenie konta w trakcie — FOR SHARE w createSession (mutant session-create-share). Blokada konta ustala tylko porównanie skrótu hasła z chwili sprawdzenia. |
+| `login.js` `resetPasswordWithToken` | `password_reset_tokens` | FOR UPDATE | wyjątek, ograniczenie: Wyzwalacz password_reset_token_guard (0020) odrzuca zmianę tokenu już użytego albo cofniętego, więc drugie użycie tego samego tokenu wycofuje całą transakcję (z nowym hasłem); bez blokady: błąd wyzwalacza zamiast 400 invalid_token. |
+| `login.js` `issuePasswordResetInTx` | `users` | FOR UPDATE | mutant `password-reset-issue` (`tests/pg-real-auth-locks.test.js`) |
+| `login.js` `adminResetMfaInTx` | `users` | FOR UPDATE | wyjątek, luka: Podwójny reset jest bezpieczny (warunkowe UPDATE … AND disabled_at IS NULL: drugi zwraca changed: false), ale bez blokady konta reset nie czeka na równoległe rozpoczęcie zapisu czynnika (lockUser w mfa.js) i nie widzi wstawianego czynnika, który przetrwa reset. Brak testu z barierą — dalszy zakres #208. |
+| `meetings.js` `updateMeeting` | `meetings` | FOR UPDATE | mutant `meetings-update` (`tests/pg-real-record-locks.test.js`) |
+| `meetings.js` `recordAttendance` | `meeting_attendees` | FOR UPDATE | mutant `meetings-attendance` (`tests/pg-real-record-locks.test.js`) |
+| `meetings.js` `updateResolution` | `resolutions` | FOR UPDATE | mutant `meetings-resolution-update` (`tests/pg-real-record-locks.test.js`) |
+| `meetings.js` `lockMeeting` | `meetings` | FOR UPDATE | mutant `meetings-lock` (`tests/pg-real-domain-locks.test.js`) |
+| `meetings.js` `withdrawAgendaItem` | `meeting_agenda_items` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): Wycofanie punktu porządku obrad wywołuje wcześniej lockMeeting; jedyny zapis withdrawn_at jest w tej funkcji, więc blokada punktu jest drugą warstwą (mutant równoważny). |
+| `meetings.js` `reorderAgendaItems` | `meeting_agenda_items` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): Zmiana kolejności wywołuje wcześniej lockMeeting; pozycje zmienia wyłącznie ta funkcja, więc blokada punktów jest drugą warstwą (mutant równoważny). |
+| `meetings.js` `loadNotice` | `meeting_notices` | FOR UPDATE | wyjątek, zagnieżdżona (pod `meetings-lock`): loadNotice(…, { lock: true }) wołają tylko approveMeetingNotice i createNoticeCampaignDraft, obie po lockMeeting; zawiadomienia powstają (createNoticeDraft) też pod lockMeeting. |
+| `mfa-key-rotation.js` `rotateOneAccount` | `user_mfa_factors` | FOR UPDATE | wyjątek, luka: Skrypt operatora (mfa:rotate-key) przepisuje czynnik z last_used_step; bez blokady równoległa weryfikacja kodu w tej samej chwili zapisze krok na starym, właśnie wyłączanym wierszu, a nowy dostanie krok sprzed niej (jednorazowe powtórzenie kodu w tym samym kroku). Brak testu z barierą — dalszy zakres #208. |
+| `mfa.js` `lockUser` | `users` | FOR UPDATE | wyjątek, luka: Para z activeFactors (ta sama transakcja): każda z blokad osobno serializuje weryfikację kodu TOTP (last_used_step) i zapis czynnika, więc mutant jednej przeżyje (mutant równoważny); usunięcie obu pozwala powtórzyć ten sam kod w dwóch równoległych żądaniach. Brak testu z barierą i mutanta dwóch funkcji — dalszy zakres #208. |
+| `mfa.js` `activeFactors` | `user_mfa_factors` | FOR UPDATE | wyjątek, luka: Druga z pary z lockUser (zawsze wołana po niej): sama nie jest jedynym punktem serializacji, a razem z lockUser chroni last_used_step przed powtórzeniem kodu TOTP. Brak testu z barierą — dalszy zakres #208. |
+| `news.js` `lockPost` | `news_posts` | FOR UPDATE | mutant `news-lock` (`tests/pg-real-domain-locks.test.js`) |
+| `news.js` `lockPhoto` | `news_photos` | FOR UPDATE | mutant `news-photo-lock` (`tests/pg-real-record-locks.test.js`) |
+| `processing-restrictions.js` `changeProcessingRestriction` | `data_subject_requests` | FOR UPDATE | mutant `processing-restriction-request` (`tests/pg-real-request-locks.test.js`) |
+| `routes/admin.js` `setUserDisabled` | `users` | FOR UPDATE | wyjątek, ograniczenie: Wyłączenie i włączenie konta to warunkowe UPDATE (… AND disabled_at IS NULL / IS NOT NULL): drugi UPDATE czeka na pierwszy i po jego zatwierdzeniu nie zmienia wiersza (changed: false, bez zdarzenia). Wyścig z tworzeniem sesji (#256) zamyka FOR SHARE w createSession (mutant session-create-share). |
+| `routes/admin.js` `lockGrantTarget` | `users` | FOR UPDATE | mutant `grant-target-lock` (`tests/pg-real-auth-locks.test.js`) |
+| `routes/admin.js` `revokeGrant` | `role_grants` | FOR UPDATE | wyjątek, zagnieżdżona (pod `admin-last`): Wcześniej w tej samej transakcji lockGrantChanges bierze blokadę doradczą rd:role_grants (mutant admin-last), pod którą zmieniają się wszystkie przydziały; UPDATE jest dodatkowo warunkowy (… AND g.revoked_at IS NULL). |
+| `routes/admin.js` `setDataRequestStatus` | `data_subject_requests` | FOR UPDATE | mutant `data-request-status` (`tests/pg-real-request-locks.test.js`) |
+| `routes/documents.js` `changeStatus` | `documents` | FOR UPDATE | mutant `documents-status` (`tests/pg-real-domain-locks.test.js`) |
+| `routes/documents.js` `createDescription` | `documents` | FOR UPDATE | mutant `documents-description` (`tests/pg-real-record-locks.test.js`) |
+| `routes/email.js` `loadCampaign` | `email_campaigns` | FOR UPDATE | mutant `email-campaign-lock` (`tests/pg-real-double-click.test.js`), mutant `email-cancel` (`tests/pg-real-concurrency.test.js`) |
+| `routes/email.js` `providerPauseLift` | `email_provider_pauses` | FOR UPDATE | wyjątek, ograniczenie: Zdjęcie wstrzymania dostawcy to warunkowy UPDATE … AND lifted_at IS NULL: drugi czeka na pierwszy i nie zmienia wiersza, a brak wiersza przerywa transakcję razem z wpisem audytu. Bez blokady: błąd zamiast powtórki, bez podwójnego zapisu. |
+| `routes/email.js` `createResolution` | `email_outbox` | FOR UPDATE | mutant `email-outbox-resolution` (`tests/pg-real-email-locks.test.js`) |
+| `routes/email.js` `approveResolution` | `email_outbox` | FOR UPDATE | wyjątek, ograniczenie: Jedno zatwierdzenie na rozstrzygnięcie: UNIQUE email_outbox_resolution_approvals.resolution_id (0156); bez blokady drugie kliknięcie dostaje 23505 zamiast powtórki, bez drugiego zapisu. |
+| `routes/email.js` `recordWebhookEvent` | `email_outbox` | FOR UPDATE | wyjątek, luka: Zdarzenie dostawcy (bounce, skarga) czyta stan wiersza kolejki i może go zmienić na bounced oraz dopisać blokadę adresu. Powtórzenia tego samego zdarzenia odcina UNIQUE dedupe_key, ale bez blokady dwa RÓŻNE zdarzenia jednego adresu mogą dopisać dwie aktywne blokady, a zdarzenie w trakcie zapisu stanu przez worker — przeoczyć przejście sent → bounced. Brak testu z barierą (wymaga przebiegu workera w trakcie) — dalszy zakres #208. |
+| `routes/email.js` `release` | `email_suppression_release_requests` | FOR UPDATE | mutant `email-suppression-release` (`tests/pg-real-email-locks.test.js`) |
+| `routes/families.js` `updateGuardianContact` | `guardians` | FOR UPDATE | mutant `families-contact` (`tests/pg-real-domain-locks.test.js`) |
+| `routes/families.js` `checkRectificationRequest` | `data_subject_requests` | FOR SHARE | mutant `families-rectification-request` (`tests/pg-real-request-locks.test.js`) |
+| `routes/families.js` `updateIdentity` | `students` | FOR UPDATE | mutant `families-identity` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `updateIdentity` | `guardians` | FOR UPDATE | mutant `families-identity-guardian` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `updateRelationContact` | `student_guardians` | FOR UPDATE | mutant `families-relation-contact` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `changeEnrollment` | `students` | FOR UPDATE | mutant `families-change-enrollment` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `endEnrollment` | `enrollments` | FOR UPDATE | mutant `families-end-enrollment` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `endRelation` | `student_guardians` | FOR UPDATE | mutant `families-end-relation` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `endStudentHousehold` | `student_households` | FOR UPDATE | mutant `families-end-student-household` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `endGuardianHousehold` | `guardian_households` | FOR UPDATE | mutant `families-end-guardian-household` (`tests/pg-real-record-locks.test.js`) |
+| `routes/families.js` `addStudentHousehold` | `students` | FOR UPDATE | mutant `families-add-student-household` (`tests/pg-real-record-locks.test.js`) |
+| `routes/guardian-updates.js` `submitUpdate` | `guardian_update_links` | FOR UPDATE | mutant `guardian-update-submit` (`tests/pg-real-request-locks.test.js`) |
+| `routes/guardian-updates.js` `verificationsByRequest` | `guardian_update_verifications` | FOR UPDATE | wyjątek, ograniczenie: Blokada (tylko z decideRequest, po blokadzie wniosku z mutantem guardian-update-decide) ustala stan weryfikacji zapisany w audycie decyzji. Anulowanie kodu jest warunkowym UPDATE … AND state = 'queued', więc nie nadpisuje wysyłki workera; bez blokady audyt może pokazać stan sprzed równoległego potwierdzenia kodu (bez zmiany danych). |
+| `routes/guardian-updates.js` `decideRequest` | `guardian_update_requests` | FOR UPDATE | mutant `guardian-update-decide` (`tests/pg-real-request-locks.test.js`) |
+| `routes/guardian-updates.js` `decideRequest` | `guardians` | FOR UPDATE | mutant `guardian-update-decide-guardian` (`tests/pg-real-request-locks.test.js`) |
+| `routes/guardian-updates.js` `confirmCode` | `guardian_update_verifications` | FOR UPDATE | wyjątek, luka: Brak testu z barierą: bez blokady równoległe próby kodu czytają ten sam licznik failed_attempts (limit VERIFY_MAX_FAILED_ATTEMPTS można przekroczyć o liczbę równoległych żądań; CHECK ≤ 5 w 0184 przerywa dopiero zapis ponad 5), a dwa poprawne kody dopisują dwa zdarzenia verification_confirmed. Test wymaga zasiania wysłanego kodu — dalszy zakres #208. |
+| `routes/guardian-updates.js` `approveTemplate` | `guardian_verify_templates` | FOR UPDATE | wyjątek, ograniczenie: Wyzwalacz guardian_verify_template_guard (0184) dopuszcza wyłącznie przejście draft → approved, więc drugie zatwierdzenie nie nadpisze approved_by; bez blokady kończy się błędem wyzwalacza zamiast powtórki/409. |
+| `routes/ledger-budget.js` `deactivateCategory` | `ledger_categories` | FOR UPDATE | mutant `budget-category` (`tests/pg-real-budget-locks.test.js`) |
+| `routes/ledger-budget.js` `reviseLine` | `ledger_budget_lines` | FOR UPDATE | mutant `budget-revision` (`tests/pg-real-budget-locks.test.js`) |
+| `routes/ledger-cash.js` `createTransfer` | `ledger_transfers` | FOR UPDATE | mutant `ledger-transfer-reversal` (`tests/pg-real-payment-locks.test.js`) |
+| `routes/ledger-cash.js` `createAdjustment` | `ledger_opening_balances` | FOR UPDATE | mutant `opening-adjustment` (`tests/pg-real-budget-locks.test.js`) |
+| `routes/ledger-cost-centers.js` `loadEntry` | `ledger_entries` | FOR UPDATE | mutant `cost-center-allocation` (`tests/pg-real-cost-center-locks.test.js`) |
+| `routes/ledger.js` `deactivateCategory` | `ledger_categories` | FOR UPDATE | mutant `ledger-category-deactivate` (`tests/pg-real-budget-locks.test.js`) |
+| `routes/ledger.js` `createEntry` | `payment_entries` | FOR UPDATE | mutant `ledger-payment-link` (`tests/pg-real-double-click.test.js`) |
+| `routes/ledger.js` `createCorrection` | `ledger_entries` | FOR UPDATE | mutant `ledger-correction` (`tests/pg-real-double-click.test.js`) |
+| `routes/ledger.js` `createReplacement` | `payment_entries` | FOR UPDATE | wyjątek, ograniczenie: Wyzwalacz ledger_entry_insert_guard (0142) przy wstawieniu wpisu zastępczego sam blokuje wiersz wpłaty FOR UPDATE i porównuje kwotę z jej netto (ledger_payment_amount_mismatch). Blokada w API ustala tylko kolejność „wpłata, potem wpis” jak w korekcie wpłaty; wpis księgi ma osobny mutant ledger-replacement. |
+| `routes/ledger.js` `createReplacement` | `ledger_entries` | FOR UPDATE | mutant `ledger-replacement` (`tests/pg-real-payment-locks.test.js`) |
+| `routes/ledger.js` `createReview` | `ledger_entries` | FOR SHARE | wyjątek, ograniczenie: Przegląd wydatku tylko dopisuje wiersz z unikalnym kluczem idempotencji (odtworzenie 23505). Wpis księgi jest niezmienny (kierunek, autor, rok), a wyzwalacz ledger_review_guard (0072) powtarza te same kontrole w transakcji zapisu, więc żadna reguła nie zależy od stanu, który mógłby zmienić się równolegle. |
+| `routes/ledger.js` `createAuthorization` | `resolutions` | FOR UPDATE | wyjątek, ograniczenie: Dwie kwoty upoważnienia z tej samej podstawy: indeks unikalny resolution_spending_authorizations_root_idx (pierwsza kwota) i UNIQUE supersedes_id (następca) z 0072 — przegrany dostaje 23505 i 409 authorization_superseded. Stan uchwały (przyjęta, bez korekty) sprawdza też wyzwalacz resolution_authorization_guard. |
+| `routes/payment-references.js` `createReference` | `payment_references` | FOR UPDATE | wyjątek, ograniczenie: Przy pierwszej referencji FOR UPDATE nie ma czego blokować (zero wierszy); jedną aktywną referencję na gospodarstwo i rok trzyma indeks unikalny payment_references_active_household_year_idx (0085). Bez blokady drugie żądanie dostaje 23505 → 409 idempotency_conflict zamiast payment_reference_already_active, bez drugiego wiersza. |
+| `routes/payment-references.js` `revokeReference` | `payment_references` | FOR UPDATE | wyjątek, ograniczenie: Jedno unieważnienie na referencję: UNIQUE payment_reference_revocations.payment_reference_id (0085), a wyzwalacz zastosowania blokuje referencję FOR UPDATE. Bez blokady drugie unieważnienie kończy się 23505 (odtworzenie po kluczu albo 409), bez drugiego zapisu. |
+| `routes/payments.js` `createCorrection` | `payment_entries` | FOR UPDATE | mutant `payments-correction` (`tests/pg-real-double-click.test.js`) |
+| `routes/payments.js` `assignPayment` | `payment_entries` | FOR UPDATE | mutant `payments-assign` (`tests/pg-real-double-click.test.js`) |
+| `routes/payments.js` `createRefund` | `payment_entries` | FOR UPDATE | mutant `payments-refund` (`tests/pg-real-payment-locks.test.js`) |
+| `routes/payments.js` `reassignPayment` | `payment_entries` | FOR UPDATE | mutant `payments-reassign` (`tests/pg-real-payment-locks.test.js`) |
+| `routes/payments.js` `createAllocation` | `payment_entries` | FOR UPDATE | mutant `payments-allocation` (`tests/pg-real-payment-locks.test.js`) |
+| `routes/payments.js` `reverseAllocation` | `payment_entries` | FOR UPDATE | mutant `payments-allocation-reversal` (`tests/pg-real-payment-locks.test.js`) |
+| `routes/privacy-notice.js` `approveNotice` | `privacy_notices` | FOR UPDATE | wyjątek, ograniczenie: Wyzwalacz privacy_notice_guard (0075) dopuszcza zmianę approved_by/approved_at tylko przy przejściu draft → approved (privacy_notice_approval_fields_locked), więc drugie zatwierdzenie nie nadpisze pierwszego; bez blokady: błąd wyzwalacza zamiast powtórki. |
+| `routes/privacy-notice.js` `publishNotice` | `privacy_notices` | FOR UPDATE | wyjątek, ograniczenie: Publikację serializuje wcześniej w tej samej transakcji blokada doradcza rd_privacy_notice_publish (każda publikacja ją bierze), a przejścia stanów pilnuje wyzwalacz privacy_notice_guard (0075). Blokada doradcza nie ma osobnego mutanta (poza zakresem skanu blokad wierszy). |
+| `routes/reconciliation.js` `loadReconciliation` | `bank_reconciliations` | FOR UPDATE | mutant `reconciliation-lock` (`tests/pg-real-double-click.test.js`) |
+| `routes/reconciliation.js` `revokeMatch` | `bank_reconciliation_matches` | FOR UPDATE | wyjątek, zagnieżdżona (pod `reconciliation-lock`): Wcześniej w tej samej transakcji loadReconciliation(…, { lock: true }) blokuje wiersz uzgodnienia; każdy zapis bank_reconciliation_matches (dopasowanie, dopasowanie zbiorcze, pozycja z wyciągu, cofnięcie) przechodzi przez tę blokadę. |
+| `routes/reconciliation.js` `confirmGroupMatch` | `ledger_entries` | FOR SHARE | wyjątek, ograniczenie: Wyzwalacz pozycji dopasowania zbiorczego (0105, bank_group_match_items_guard_insert) blokuje cel FOR SHARE i porównuje kwotę z netto po zatwierdzeniu równoległej korekty (bank_match_amount_mismatch), a całe uzgodnienie jest zablokowane przez loadReconciliation. Blokada w API tylko ustala kolejność celów. |
+| `routes/reconciliation.js` `confirmGroupMatch` | `payment_entries` | FOR SHARE | wyjątek, ograniczenie: Jak dla ledger_entries: wyzwalacz bank_group_match_items_guard_insert (0105) blokuje wpłatę FOR SHARE i sprawdza netto przy wstawieniu pozycji; blokada w API ustala tylko kolejność celów. |
+| `routes/year-close.js` `loadClosure` | `school_year_closures` | FOR UPDATE | mutant `year-close-closure-lock` (`tests/pg-real-replay-23505.test.js`) |
+<!-- lock-inventory:end -->
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
 (reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z
@@ -658,7 +812,9 @@ przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
 `tests/ci-supply-chain.test.js` (dla wszystkich plików w `.github/workflows`);
 przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
-z 6 shardów). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27).
+z 6 shardów). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27). Inwentaryzacja blokad dodała 15 mutantów
+(razem 57) i trzy pliki z barierą; limitu nie zmieniono w tym PR (`ci.yml` zmienia równolegle inny PR) — do
+sprawdzenia w pierwszym przebiegu.
 
 ## Pokrycie dziennikiem zdarzeń (#184)
 

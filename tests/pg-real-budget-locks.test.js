@@ -9,7 +9,7 @@
 // z `retries: 0`. Po fakcie liczone są wiersze i zdarzenia audytu.
 //
 // Kontrola mutacyjna: scripts/check-lock-mutations.js (mutanty `budget-category`,
-// `budget-revision`, `opening-adjustment`) usuwa `FOR UPDATE` z odpowiedniej
+// `budget-revision`, `opening-adjustment`, `ledger-category-deactivate`) usuwa `FOR UPDATE` z odpowiedniej
 // funkcji; bez niego drugie żądanie nie czeka na blokadę z API (albo stoi na
 // innym zapytaniu, albo wcale), więc asercja `assertWaitsOn` robi się czerwona.
 // Poza zakresem: `createOpening` używa `LOCK TABLE`, nie `FOR UPDATE`.
@@ -122,5 +122,26 @@ test('#208 (bariera): dwie poprawki kasy -60 € przy 100 € w bilansie otwarci
     assert.deepEqual([b.status, b.body.error], [409, 'cash_below_zero']);
     assert.equal(await count(db, 'SELECT count(*)::int AS n FROM ledger_opening_balance_adjustments'), 1);
     assert.equal(await auditCount(db, 'ledger_opening_balance.adjusted'), 1);
+  });
+});
+
+// Inwentaryzacja blokad (#208, scripts/lock-inventory.js): starsza trasa dezaktywacji
+// kategorii z src/pg/routes/ledger.js (`deactivateCategory`, POST …/deactivate, bez
+// klucza i powodu). Bez blokady drugi UPDATE czeka na pierwszy, wykonuje się jeszcze
+// raz (warunek `WHERE id = $1` nadal prawdziwy) i dopisuje drugie zdarzenie audytu.
+test('#208 (bariera): podwójne kliknięcie „Dezaktywuj” kategorii (trasa księgi) — drugie czeka na blokadę kategorii i nie dubluje zdarzenia', { skip }, async () => {
+  await withReal(async (db) => {
+    const cookie = await setup(db);
+    const path = '/api/ledger/categories/cat-out/deactivate';
+    const { results: [a, b], waits, waitingSql } = await race(db, {
+      pauseAfter: /UPDATE ledger_categories SET active = false/,
+      first: (env) => callApi(env, 'POST', path, cookie, {}),
+      others: [(env) => callApi(env, 'POST', path, cookie, {})],
+    });
+    assertWaitsOn({ waits, waitingSql }, /^SELECT id, school_year_id, direction, name, active FROM ledger_categories WHERE id = \$1 FOR UPDATE/, 'druga dezaktywacja czeka na blokadę kategorii');
+    assert.equal(a.status, 200, JSON.stringify(a.body));
+    assert.equal(b.status, 200, JSON.stringify(b.body));
+    assert.deepEqual([a.body.category.active, b.body.category.active], [false, false]);
+    assert.equal(await auditCount(db, 'ledger_category.deactivated'), 1);
   });
 });
