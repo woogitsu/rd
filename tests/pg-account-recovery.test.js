@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { resetPasswordWithToken } from '../src/pg/login.js';
-import { createTestDb, request, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 // #146: reset hasła/MFA konta chronionego (admin, zarząd, skarbnik) wymaga
 // drugiej osoby. Wyłącznie dane syntetyczne (domeny .invalid).
@@ -217,7 +217,7 @@ test('granice ról i MFA: zarząd, skarbnik i stare MFA nie zatwierdzają; baza 
       db.query("UPDATE account_recovery_requests SET status = 'approved', decided_by = requested_by, decided_at = now() WHERE id = $1", [requested.data.request.id]),
       /account_recovery_requests_check|check/i,
     );
-    await assert.rejects(db.query('DELETE FROM account_recovery_requests'), /account_recovery_request_immutable/);
+    await assertOwnerGuard(db, 'DELETE FROM account_recovery_requests', /account_recovery_request_immutable/);
   } finally {
     await db.close();
   }

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 async function call(env, path, opts = {}) {
   const response = await handlePgRequest(request(path, opts), env);
@@ -112,10 +112,7 @@ test('retention_policies jest tylko do dopisywania (UPDATE/DELETE odrzucone) i w
       db.query("UPDATE retention_policies SET decision_ref = 'zmienione' WHERE id = 'rp-3'"),
       /append-only/,
     );
-    await assert.rejects(
-      db.query("DELETE FROM retention_policies WHERE id = 'rp-3'"),
-      /append-only/,
-    );
+    await assertOwnerGuard(db, "DELETE FROM retention_policies WHERE id = 'rp-3'", /append-only/);
     await assert.rejects(
       db.query(
         `INSERT INTO retention_policies (id, data_category, decision_ref, created_by)

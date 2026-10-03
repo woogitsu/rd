@@ -9,7 +9,7 @@ import {
   sha256Hex, TABLES_ADDED_IN_V2, verifyBundle,
 } from '../src/pg/export.js';
 import { CHECKLIST_ITEMS } from '../src/pg/routes/year-close.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession, ownerDb } from './helpers/pg.js';
 
 const YEAR = 'y-2026';
 const NEXT = 'y-2027';
@@ -220,7 +220,13 @@ test('paczka v2 zawiera gospodarstwa, historię, uzgodnienia i zamknięcie; bez 
 test('odtworzenie v2: lista klasy, karta gospodarstwa, raport KR i stan zamknięcia jak przed eksportem', async () => {
   const target = await createTestDb();
   try {
-    const report = await restoreBundle(target, bundle);
+    // SR-05: rola aplikacji nie odtworzy paczki (session_replication_role wymaga właściciela) i niczego
+    // nie zapisze; odtworzenie idzie przez DATABASE_MIGRATION_URL (scripts/verify-export.js).
+    if (target.appRole) {
+      await assert.rejects(restoreBundle(target, bundle), { code: '42501' });
+      assert.equal((await target.query('SELECT count(*)::int AS n FROM students')).rows[0].n, 0);
+    }
+    const report = await restoreBundle(ownerDb(target), bundle);
     assert.equal(report.restored, true);
     assert.equal(report.countsMatch, true);
     assert.deepEqual(report.warnings, []);
@@ -247,7 +253,7 @@ test('odtworzenie odrzuca paczkę bez danych pochodnych triggerów; baza docelow
   assert.doesNotThrow(() => verifyBundle(broken));
   const target = await createTestDb();
   try {
-    await assert.rejects(restoreBundle(target, broken), { code: 'restore_verification_failed:derived:student_households' });
+    await assert.rejects(restoreBundle(ownerDb(target), broken), { code: 'restore_verification_failed:derived:student_households' });
     assert.equal((await target.query('SELECT count(*)::int AS n FROM students')).rows[0].n, 0);
   } finally {
     await target.close();
@@ -280,7 +286,7 @@ test('zgodność: paczka v1 jest przyjmowana z ostrzeżeniem, gospodarstwa odtwa
 
   const target = await createTestDb();
   try {
-    const report = await restoreBundle(target, v1);
+    const report = await restoreBundle(ownerDb(target), v1);
     assert.deepEqual(report.warnings, ['bundle_incomplete', 'households_backfilled_from_v1']);
     assert.deepEqual(report.backfilled, { studentHouseholds: 3, guardianHouseholds: 3 });
     const cookie = await seedUserSession(target, { userId: 'u-reader', roles: [{ role: 'board' }], mfa: true });

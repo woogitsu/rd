@@ -4,7 +4,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { passwordLogin, resetPasswordWithToken } from '../src/pg/login.js';
 import { buildAccountOperations } from '../src/pg/routes/reconciliation.js';
 import { accountOperationsSection } from '../src/pg/audit-report.js';
-import { createTestDb, request, seedClass, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedUser, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 import { SYNTHETIC_PHONE_IN_TEXT } from './helpers/assertions.js';
 
 // #146: nadanie roli chronionej (admin, zarząd, skarbnik) — przydział,
@@ -106,7 +106,7 @@ test('zatwierdzenie: wnioskodawca i adresat nie mogą; drugi administrator nadaj
     // Zamknięty wniosek nie da się odrzucić; baza pilnuje niezmienności.
     assert.equal((await post(env, `/api/admin/grant-requests/${requested.data.request.id}/reject`, cookies['u-admin-a'])).status, 409);
     await assert.rejects(db.query("UPDATE role_grant_requests SET status = 'rejected'"), /role_grant_request_immutable/);
-    await assert.rejects(db.query('DELETE FROM role_grant_requests'), /role_grant_request_immutable/);
+    await assertOwnerGuard(db, 'DELETE FROM role_grant_requests', /role_grant_request_immutable/);
     // Zasada czterech oczu także jako CHECK w bazie.
     await assert.rejects(db.query(
       `INSERT INTO role_grant_requests (id, kind, role, target_user_id, requested_by, status, expires_at, decided_by, decided_at, result_id)

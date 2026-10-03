@@ -5,7 +5,7 @@ import worker from '../src/index.js';
 import { hashSecret } from '../src/auth.js';
 import { handlePgRequest, ROUTES } from '../src/pg/app.js';
 import * as paymentsRoutes from '../src/pg/routes/payments.js';
-import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedEnrolledHousehold, seedSchoolYear, seedUserSession, assertOwnerGuard, ownerDb } from './helpers/pg.js';
 import { createLegacyDb, createNormalizer, d1Adapter } from './helpers/parity.js';
 import { assertEvery } from './helpers/assertions.js';
 
@@ -301,7 +301,7 @@ test('corrections sent via Promise.all (sequential on PGlite) never exceed the p
      VALUES ('direct', $1, 1, 'Bezpośrednio', 'u1', 'direct-key-0001')`, [payment.id],
   ), /payment_correction_exceeds_remaining_amount/);
   // Historia jest niezmienna.
-  await assert.rejects(backend.db.query('DELETE FROM payment_corrections'), /cannot_be_changed/);
+  await assertOwnerGuard(backend.db, 'DELETE FROM payment_corrections', /cannot_be_changed/);
   await assert.rejects(backend.db.query('UPDATE payment_entries SET amount_cents = 1'), /immutable/);
 }));
 
@@ -459,7 +459,8 @@ test('audit events are atomic with the write and carry no amounts, references or
   assert.deepEqual(events[2].metadata_json, { paymentEntryId: payment.id, schoolYearId: 'y2026' });
 
   // Gdy zapis audytu zawiedzie, wpłata nie powstaje (jedna transakcja).
-  await backend.db.exec(`
+  // Sztuczna awaria audytu to DDL w danych testowych: połączenie właściciela (SR-05).
+  await ownerDb(backend.db).exec(`
     CREATE FUNCTION fail_payment_audit() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN IF NEW.action = 'payment.created' THEN RAISE EXCEPTION 'audit_down'; END IF; RETURN NEW; END $$;
     CREATE TRIGGER fail_payment_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_payment_audit();
@@ -480,7 +481,7 @@ test('audit events are atomic with the write and carry no amounts, references or
 
   // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok
   // wykona przeglądarka skarbnika po 503 (macierz scenariuszy AGENTS.md, wpłaty).
-  await backend.db.exec('DROP TRIGGER fail_payment_audit ON audit_events; DROP FUNCTION fail_payment_audit();');
+  await ownerDb(backend.db).exec('DROP TRIGGER fail_payment_audit ON audit_events; DROP FUNCTION fail_payment_audit();');
   const retried = await createPayment(backend, {}, 'audit-fail-0001');
   assert.equal(retried.status, 201);
   assert.equal(retried.replayed, 'false');

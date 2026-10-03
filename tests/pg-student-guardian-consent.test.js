@@ -8,7 +8,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { buildClassRoster } from '../src/pg/export.js';
 import { computeSnapshot } from '../src/pg/routes/email.js';
 import { loadMigrations } from '../src/postgres-migrations.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 const REASON = 'Zgoda złożona na zebraniu (syntetyczne)';
@@ -193,9 +193,9 @@ describe('zgoda relacji opiekun–dziecko na wspólnej bazie', () => {
 
   test('strażnik: DELETE, kaskada, zmiana tożsamości i ponowne zakończenie są odrzucane; historia tylko do dopisywania', async () => {
     const { db } = await setup();
-    await assert.rejects(db.query("DELETE FROM student_guardians WHERE student_id = 's-3'"), /student_guardians_cannot_be_deleted/);
-    await assert.rejects(db.query("DELETE FROM students WHERE id = 's-3'"), /foreign key|student_guardians/);
-    await assert.rejects(db.query("DELETE FROM guardians WHERE id = 'g-3'"), /foreign key|student_guardians/);
+    await assertOwnerGuard(db, "DELETE FROM student_guardians WHERE student_id = 's-3'", /student_guardians_cannot_be_deleted/);
+    await assertOwnerGuard(db, "DELETE FROM students WHERE id = 's-3'", /foreign key|student_guardians/);
+    await assertOwnerGuard(db, "DELETE FROM guardians WHERE id = 'g-3'", /foreign key|student_guardians/);
     await assert.rejects(db.query("UPDATE student_guardians SET guardian_id = 'g-1' WHERE student_id = 's-3'"), /student_guardian_identity_immutable/);
     await assert.rejects(db.query("UPDATE student_guardians SET created_at = now() - interval '1 day' WHERE student_id = 's-3'"), /identity_immutable/);
     await assert.rejects(db.query("UPDATE student_guardians SET ends_on = '2026-12-31' WHERE student_id = 's-1' AND guardian_id = 'g-2'"), /student_guardian_already_ended/);
@@ -211,7 +211,7 @@ describe('zgoda relacji opiekun–dziecko na wspólnej bazie', () => {
     assert.equal(rows.at(-1).changed_by, null);
 
     await assert.rejects(db.query('UPDATE student_guardian_changes SET reason = NULL'), /family_history_is_append_only/);
-    await assert.rejects(db.query('DELETE FROM student_guardian_changes'), /family_history_is_append_only/);
+    await assertOwnerGuard(db, 'DELETE FROM student_guardian_changes', /family_history_is_append_only/);
   });
 });
 

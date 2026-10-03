@@ -3,7 +3,7 @@
 import test, { after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, seedPublishedPrivacyNotice, assertOwnerGuard } from './helpers/pg.js';
 
 const Y1 = 'y-2026';
 
@@ -124,9 +124,6 @@ describe('dziennik odczytu danych rodzin (#133)', () => {
       db.query('UPDATE data_access_log SET outcome = $2 WHERE id = $1', [id, 'not_found']),
       /data_access_log_entry_immutable/,
     );
-    await assert.rejects(
-      db.query('DELETE FROM data_access_log WHERE id = $1', [id]),
-      /data_access_log_cannot_be_deleted/,
-    );
+    await assertOwnerGuard(db, 'DELETE FROM data_access_log WHERE id = $1', /data_access_log_cannot_be_deleted/, [id]);
   });
 });

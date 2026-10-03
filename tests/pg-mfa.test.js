@@ -6,7 +6,7 @@ import {
   base32Decode, base32Encode, decryptSecret, encryptSecret, hashRecoveryCode, hotp, loadEncryptionKey,
   MFA_POLICY, totp, totpMethod,
 } from '../src/pg/mfa.js';
-import { createTestDb, request, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const KEY = randomBytes(32).toString('base64');
@@ -332,12 +332,12 @@ test('recovery codes are single use and verify only the calling session', async 
 
 test('factor rows and recovery codes cannot be deleted or rewritten', async () => withDb(async (db, env) => {
   const { factorId } = await enrollAndConfirm(db, env, 'u-guard');
-  await assert.rejects(db.query('DELETE FROM user_mfa_factors WHERE id = $1', [factorId]), /mfa_factor_immutable/);
+  await assertOwnerGuard(db, 'DELETE FROM user_mfa_factors WHERE id = $1', /mfa_factor_immutable/, [factorId]);
   await assert.rejects(db.query("UPDATE user_mfa_factors SET secret_ciphertext = 'AAAA' WHERE id = $1", [factorId]), /mfa_factor_immutable/);
   await assert.rejects(db.query('UPDATE user_mfa_factors SET last_used_step = last_used_step - 1 WHERE id = $1', [factorId]), /mfa_factor_immutable/);
   await db.query("UPDATE mfa_recovery_codes SET used_at = now() WHERE id = (SELECT id FROM mfa_recovery_codes WHERE user_id = 'u-guard' LIMIT 1)");
   await assert.rejects(db.query("UPDATE mfa_recovery_codes SET used_at = NULL WHERE used_at IS NOT NULL AND user_id = 'u-guard'"), /mfa_recovery_code_immutable/);
-  await assert.rejects(db.query('DELETE FROM mfa_recovery_codes'), /mfa_recovery_code_immutable/);
+  await assertOwnerGuard(db, 'DELETE FROM mfa_recovery_codes', /mfa_recovery_code_immutable/);
 }));
 
 test('revoke-all revokes only the caller\'s sessions, with audit', async () => withDb(async (db, env) => {

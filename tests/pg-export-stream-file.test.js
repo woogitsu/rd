@@ -15,7 +15,7 @@ import {
 import { JsonLinesScanner, readBundleStream, scanJsonLines } from '../src/pg/export-reader.js';
 import { activeExportSpools, createExportSpool } from '../src/pg/export-spool.js';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedSchoolYear, seedUserSession, ownerDb } from './helpers/pg.js';
 
 setFlagsFromString('--expose-gc');
 const gc = runInNewContext('gc');
@@ -169,8 +169,9 @@ test('restoreBundleFile: odtworzenie z pliku jak restoreBundle; zmieniony plik w
   const tamperedTarget = await createTestDb();
   try {
     const path = await bundleFile('restore.json', buffered.body);
-    const expected = await restoreBundle(fromMemory, JSON.parse(buffered.body));
-    const report = await restoreBundleFile(fromFile, path);
+    // Odtworzenie to operacja operatora na DATABASE_MIGRATION_URL (właściciel; SR-05, scripts/verify-export.js).
+    const expected = await restoreBundle(ownerDb(fromMemory), JSON.parse(buffered.body));
+    const report = await restoreBundleFile(ownerDb(fromFile), path);
     assert.deepEqual(report, expected);
     assert.equal(report.reexportFilesMatch, true);
     const again = await fromFile.transaction((tx) => buildYearlyExport(tx, YEAR));
@@ -178,7 +179,7 @@ test('restoreBundleFile: odtworzenie z pliku jak restoreBundle; zmieniony plik w
 
     const tampered = JSON.parse(buffered.body);
     tampered.files['students.jsonl'] += '{"x":1}\n';
-    await assert.rejects(restoreBundleFile(tamperedTarget, await bundleFile('tampered.json', JSON.stringify(tampered))),
+    await assert.rejects(restoreBundleFile(ownerDb(tamperedTarget), await bundleFile('tampered.json', JSON.stringify(tampered))),
       { code: 'file_hash_mismatch:students.jsonl' });
     assert.equal((await tamperedTarget.query('SELECT count(*)::int AS n FROM audit_events')).rows[0].n, 0);
   } finally {

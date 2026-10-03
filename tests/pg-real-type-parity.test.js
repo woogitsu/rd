@@ -14,13 +14,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { toSafeInteger } from '../src/pg/routes/payments.js';
-import { createPgliteTestDb, createRealTestDb } from './helpers/pg.js';
+import { createPgliteTestDb, createRealTestDb, ownerDb } from './helpers/pg.js';
 
 const skip = process.env.RD_TEST_PG_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego PostgreSQL)';
 
 // Strefa inna niż UTC, żeby rozbieżność `date` (północ lokalna vs UTC) była widoczna.
 process.env.TZ = 'Europe/Brussels';
 
+// Tabelę próbną zakłada właściciel (ownerDb, SR-05: rola aplikacji nie ma CREATE w public); wiersze
+// wstawia i czyta połączenie aplikacji (domyślne uprawnienia z 0170).
 const PROBE_TABLE = `CREATE TABLE type_parity_probe (
   id uuid PRIMARY KEY,
   amount_cents bigint NOT NULL,
@@ -66,7 +68,7 @@ function kind(value) {
 }
 
 async function describeAll(db) {
-  await db.exec(PROBE_TABLE);
+  await ownerDb(db).exec(PROBE_TABLE);
   await db.exec(INSERT);
   const out = {};
   for (const [name, sql] of Object.entries(QUERIES)) {
@@ -132,7 +134,7 @@ test('#208/5: rozbieżności PGlite vs pg to dokładnie znana lista — nowa roz
 
 test('#208/5: wartości po konwencji aplikacji (::int, toSafeInteger, to_char) są identyczne w JSON na obu backendach', { skip }, async () => {
   async function normalized(db) {
-    await db.exec(PROBE_TABLE);
+    await ownerDb(db).exec(PROBE_TABLE);
     await db.exec(INSERT);
     const { rows: [agg] } = await db.query(QUERIES.aggregates);
     const { rows: [col] } = await db.query(QUERIES.columns);
@@ -154,7 +156,7 @@ test('#208/5: wartości po konwencji aplikacji (::int, toSafeInteger, to_char) s
 
 test('#208/5: kolumna `date` — PGlite zwraca północ UTC, pg północ lokalną; to_char daje ten sam tekst', { skip }, async () => {
   async function paidOn(db) {
-    await db.exec(PROBE_TABLE);
+    await ownerDb(db).exec(PROBE_TABLE);
     await db.exec(INSERT);
     const { rows: [row] } = await db.query(
       "SELECT paid_on, to_char(paid_on, 'YYYY-MM-DD') AS paid_text FROM type_parity_probe WHERE small_cents = 2500",

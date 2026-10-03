@@ -4,7 +4,7 @@
 import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUserSession, ownerDb } from './helpers/pg.js';
 import { assertEvery } from './helpers/assertions.js';
 
 const Y1 = 'y-2026';
@@ -171,7 +171,8 @@ describe('przegląd dziennika odczytu danych rodzin (#133)', () => {
   });
 
   test('gwarancja zapisu: eksport listy klasy jest wycofany, gdy wpis dziennika się nie zapisze', async () => {
-    await db.exec(`
+    // Sztuczna awaria dziennika to DDL w danych testowych: połączenie właściciela (SR-05).
+    await ownerDb(db).exec(`
       CREATE FUNCTION rd_test_fail_roster() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN IF NEW.access_kind = 'class_roster_export' THEN RAISE EXCEPTION 'test_access_log_down'; END IF; RETURN NEW; END $$;
       CREATE TRIGGER rd_test_fail_roster BEFORE INSERT ON data_access_log FOR EACH ROW EXECUTE FUNCTION rd_test_fail_roster();
@@ -183,12 +184,12 @@ describe('przegląd dziennika odczytu danych rodzin (#133)', () => {
       for (const marker of PII) assert.ok(!res.text.includes(marker));
       assert.equal((await db.query(`SELECT count(*)::int AS n FROM export_runs`)).rows[0].n, before, 'brak export_runs');
     } finally {
-      await db.exec('DROP TRIGGER rd_test_fail_roster ON data_access_log; DROP FUNCTION rd_test_fail_roster();');
+      await ownerDb(db).exec('DROP TRIGGER rd_test_fail_roster ON data_access_log; DROP FUNCTION rd_test_fail_roster();');
     }
   });
 
   test('gwarancja zapisu: awaria dziennika nie blokuje listy/karty (access_log_failed bez danych)', async () => {
-    await db.exec(`
+    await ownerDb(db).exec(`
       CREATE FUNCTION rd_test_fail_card() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN IF NEW.access_kind = 'household_card' THEN RAISE EXCEPTION 'test_access_log_down'; END IF; RETURN NEW; END $$;
       CREATE TRIGGER rd_test_fail_card BEFORE INSERT ON data_access_log FOR EACH ROW EXECUTE FUNCTION rd_test_fail_card();
@@ -201,7 +202,7 @@ describe('przegląd dziennika odczytu danych rodzin (#133)', () => {
       assert.equal(res.status, 200);
     } finally {
       console.error = original;
-      await db.exec('DROP TRIGGER rd_test_fail_card ON data_access_log; DROP FUNCTION rd_test_fail_card();');
+      await ownerDb(db).exec('DROP TRIGGER rd_test_fail_card ON data_access_log; DROP FUNCTION rd_test_fail_card();');
     }
     const event = logged.find((args) => args[0] === 'access_log_failed');
     assert.ok(event);

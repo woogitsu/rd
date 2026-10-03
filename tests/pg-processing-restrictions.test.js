@@ -6,7 +6,7 @@ import test, { after, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handlePgRequest } from '../src/pg/app.js';
 import { runEmailBatch } from '../src/email/worker.js';
-import { createTestDb, request, seedClass, seedPublishedPrivacyNotice, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedPublishedPrivacyNotice, seedUserSession, assertOwnerGuard } from './helpers/pg.js';
 
 const YEAR = 'y2026';
 const DAY1 = new Date('2026-10-05T08:00:00Z');
@@ -173,7 +173,7 @@ describe('ograniczenie przetwarzania (#100, art. 18)', () => {
     const campaignId = await snapshotCampaign();
     assert.ok((await recipientHouseholds(campaignId)).some((r) => r.guardian_id === 'g-3'));
     await assert.rejects(db.query("UPDATE processing_restrictions SET action = 'lift' WHERE action = 'restrict'"), /processing_restrictions_are_append_only/);
-    await assert.rejects(db.query('DELETE FROM processing_restrictions'), /processing_restrictions_are_append_only/);
+    await assertOwnerGuard(db, 'DELETE FROM processing_restrictions', /processing_restrictions_are_append_only/);
     const events = await rows("SELECT action FROM audit_events WHERE action LIKE 'processing_restriction.%' AND metadata_json->>'requestId' = $1 ORDER BY occurred_at, id", [id]);
     assert.equal(events.length, 2);
   });

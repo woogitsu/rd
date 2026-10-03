@@ -8,14 +8,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyDbError } from '../src/pg/db-errors.js';
-import { createRealTestDb } from './helpers/pg.js';
+import { createRealTestDb, ownerDb } from './helpers/pg.js';
 
 const skip = process.env.RD_TEST_PG_URL ? false : 'brak RD_TEST_PG_URL (wymaga prawdziwego PostgreSQL)';
 
 async function withReal(fn) {
   const db = await createRealTestDb();
   try {
-    await db.exec('CREATE TABLE tx_conflict_probe (id text PRIMARY KEY, value integer NOT NULL)');
+    // Tabela próbna to DDL: zakłada ją właściciel (SR-05; rola aplikacji nie ma CREATE w public),
+    // a domyślne uprawnienia z 0170 dają roli aplikacji SELECT/INSERT/UPDATE — zapisy idą jej połączeniem.
+    await ownerDb(db).exec('CREATE TABLE tx_conflict_probe (id text PRIMARY KEY, value integer NOT NULL)');
     await db.query("INSERT INTO tx_conflict_probe (id, value) VALUES ('counter', 0)");
     return await fn(db);
   } finally { await db.close(); }

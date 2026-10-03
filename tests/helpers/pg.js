@@ -9,6 +9,7 @@
 // PGlite spełnia kontrakt src/db.js: db.query(sql, params) -> { rows },
 // db.transaction(async (tx) => …). Można go podać bezpośrednio jako env.db.
 
+import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { after, afterEach } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
@@ -93,24 +94,78 @@ export async function createRealTestDb() {
   // testowego: wynik zapytań z ::date/to_char na timestamptz nie zależy od maszyny.
   // To ustawienie testów, nie decyzja o strefie aplikacji.
   const options = `-c timezone=UTC${appRole ? ` -c role=${appRole}` : ''}`;
-  const pool = new pg.Pool(poolConfig({ connectionString: url, max: 10, statement_timeout: 30_000, options }));
-  const db = createPgDatabase(pool);
-  const closePool = db.close.bind(db);
+  const app = poolHandle(url, options, 10);
+  // Połączenie WŁAŚCICIELA tabel (bez `-c role=…`) dla operacji, których rola aplikacji celowo
+  // nie ma: DDL w danych testowych, DELETE/TRUNCATE na tabelach z historią (sprawdzenie komunikatu
+  // triggera), odtworzenie paczki (session_replication_role; w produkcji DATABASE_MIGRATION_URL).
+  // Bez RD_TEST_PG_APP_ROLE to ta sama pula; z rolą — osobna, zakładana leniwie. Patrz ownerDb().
+  let owner = null;
   const handle = {
-    url,
-    query: db.query.bind(db),
-    transaction: db.transaction.bind(db),
-    probe: db.probe.bind(db),
-    // Odpowiednik PGlite.exec: kilka instrukcji w jednym tekście (protokół prosty).
-    async exec(sql) { await pool.query(sql); },
+    ...app.handle,
+    appRole: appRole || '',
+    get owner() {
+      if (!appRole) return handle;
+      owner ??= poolHandle(url, '-c timezone=UTC', 3);
+      return owner.handle;
+    },
     async close() {
       liveRealDbs.delete(name);
-      await closePool().catch(() => {});
+      if (owner) await owner.close().catch(() => {});
+      await app.close().catch(() => {});
       await adminQuery(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
     },
   };
   liveRealDbs.set(name, handle);
   return handle;
+}
+
+// Pula `pg` z kontraktem src/db.js (query/transaction/probe) i `exec` jak PGlite.
+function poolHandle(url, options, max) {
+  const pool = new pg.Pool(poolConfig({ connectionString: url, max, statement_timeout: 30_000, options }));
+  const db = createPgDatabase(pool);
+  return {
+    handle: {
+      url,
+      query: db.query.bind(db),
+      transaction: db.transaction.bind(db),
+      probe: db.probe.bind(db),
+      // Odpowiednik PGlite.exec: kilka instrukcji w jednym tekście (protokół prosty).
+      async exec(sql) { await pool.query(sql); },
+    },
+    close: db.close.bind(db),
+  };
+}
+
+// SR-05 (#101): baza z uprawnieniami właściciela tabel. Na PGlite i na prawdziwym PostgreSQL bez
+// RD_TEST_PG_APP_ROLE to ta sama baza; z RD_TEST_PG_APP_ROLE=rd_app — osobne połączenie bez
+// `-c role=…`. Używać WYŁĄCZNIE do operacji, których aplikacja w produkcji nie wykonuje swoją rolą:
+//  - DDL w danych testowych (sztuczna awaria przez trigger, usunięcie tabeli, sztuczna kolumna);
+//  - bezpośredni DELETE/TRUNCATE na tabeli z historią, gdy test sprawdza komunikat strażnika
+//    (trigger) — rola aplikacji odpada wcześniej na 42501, dowód: assertAppRoleDenied();
+//  - odtworzenie paczki (restoreBundle: session_replication_role), które w produkcji idzie przez
+//    DATABASE_MIGRATION_URL (scripts/verify-export.js, src/migration-url.js).
+export function ownerDb(db) {
+  return db?.owner ?? db;
+}
+
+// SR-05 (#101): z RD_TEST_PG_APP_ROLE operacja na połączeniu aplikacji musi skończyć się brakiem
+// uprawnień (42501), zanim dojdzie do triggera. Bez roli aplikacji (PGlite, przebieg właściciela)
+// nie ma czego sprawdzać — zwraca false; dowód strażnika daje wtedy ownerDb(db) (= db).
+export async function assertAppRoleDenied(db, sql, params = []) {
+  if (!db?.appRole) return false;
+  await assert.rejects(db.query(sql, params), (error) => {
+    assert.equal(error?.code, '42501', `${sql}: oczekiwano 42501 dla roli ${db.appRole}, jest ${error?.code}: ${error?.message}`);
+    assert.match(String(error?.message), /permission denied|must be owner/);
+    return true;
+  });
+  return true;
+}
+
+// Strażnik bazy na operacji, której rola aplikacji nie ma (DELETE na tabeli z historią, TRUNCATE):
+// komunikat triggera na połączeniu właściciela ORAZ (z RD_TEST_PG_APP_ROLE) 42501 na roli aplikacji.
+export async function assertOwnerGuard(db, sql, expected, params = []) {
+  await assert.rejects(ownerDb(db).query(sql, params), expected, sql);
+  await assertAppRoleDenied(db, sql, params);
 }
 
 // #111: szablon bazy PGlite. Wcześniej każde createPgliteTestDb() zakładało świeżą

@@ -6,7 +6,7 @@
 // (@example.invalid).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestDb, seedSchoolYear, seedUser } from './helpers/pg.js';
+import { createTestDb, seedSchoolYear, seedUser, assertOwnerGuard } from './helpers/pg.js';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -118,7 +118,7 @@ test('sessions: wiersza sesji nie da się usunąć', async () => {
     `INSERT INTO sessions (id, user_id, token_hash, expires_at)
      VALUES ('s4', 'u-author', repeat('e', 64), now() + interval '1 hour')`,
   );
-  await assert.rejects(db.query(`DELETE FROM sessions WHERE id = 's4'`), /sessions_cannot_be_deleted/);
+  await assertOwnerGuard(db, `DELETE FROM sessions WHERE id = 's4'`, /sessions_cannot_be_deleted/);
   await db.close();
 });
 

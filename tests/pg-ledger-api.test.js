@@ -10,7 +10,7 @@ import * as ledgerRoutes from '../src/pg/routes/ledger.js';
 import { unzipSync, strFromU8 } from 'fflate';
 import { buildLedgerUrl, buildOverviewUrl, normalizeEntry } from '../ledger/core.js';
 import { assertEvery } from './helpers/assertions.js';
-import { createTestDb, seedSchoolYear, seedUserSession } from './helpers/pg.js';
+import { createTestDb, seedSchoolYear, seedUserSession, assertOwnerGuard, ownerDb } from './helpers/pg.js';
 
 const BASE = 'https://rd.example';
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
@@ -438,9 +438,9 @@ test('corrections sent via Promise.all (sequential on PGlite) never exceed the e
     `INSERT INTO ledger_corrections (id, ledger_entry_id, amount_cents, reason, created_by, idempotency_key)
      VALUES ('direct', $1, 1, 'Bezpośrednio', 'u1', 'direct-key-0001')`, [entry.id],
   ), /ledger_correction_exceeds_remaining_amount/);
-  await assert.rejects(backend.db.query('DELETE FROM ledger_corrections'), /cannot_be_changed/);
+  await assertOwnerGuard(backend.db, 'DELETE FROM ledger_corrections', /cannot_be_changed/);
   await assert.rejects(backend.db.query('UPDATE ledger_entries SET amount_cents = 1'), /cannot_be_changed/);
-  await assert.rejects(backend.db.query('DELETE FROM ledger_entries'), /cannot_be_changed/);
+  await assertOwnerGuard(backend.db, 'DELETE FROM ledger_entries', /cannot_be_changed/);
 }));
 
 test('#99: after re-login the same Idempotency-Key does not duplicate a ledger entry (expired session, lost response)', async () => withPg({}, async (backend) => {
@@ -631,7 +631,8 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
   for (const secret of ['4321', '321', 'XYZ', 'UCHWALA', 'Powód', 'd1']) assert.ok(!metadata.includes(secret), secret);
 
   // Gdy zapis audytu zawiedzie, wpis nie powstaje (jedna transakcja).
-  await backend.db.exec(`
+  // Sztuczna awaria audytu to DDL w danych testowych: połączenie właściciela (SR-05).
+  await ownerDb(backend.db).exec(`
     CREATE FUNCTION fail_ledger_audit() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN IF NEW.action LIKE 'ledger.%' THEN RAISE EXCEPTION 'audit_down'; END IF; RETURN NEW; END $$;
     CREATE TRIGGER fail_ledger_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_ledger_audit();
@@ -657,7 +658,7 @@ test('audit events are atomic with the write and carry no amounts, descriptions 
 
   // #211: ponowienie tym samym kluczem po usunięciu awarii — dokładnie ten krok
   // wykona przeglądarka skarbnika po 503 (macierz scenariuszy AGENTS.md, księga).
-  await backend.db.exec('DROP TRIGGER fail_ledger_audit ON audit_events; DROP FUNCTION fail_ledger_audit();');
+  await ownerDb(backend.db).exec('DROP TRIGGER fail_ledger_audit ON audit_events; DROP FUNCTION fail_ledger_audit();');
   const retried = await createEntry(backend, {}, 'audit-fail-0001');
   assert.equal(retried.status, 201);
   assert.equal(retried.replayed, 'false');

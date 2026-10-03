@@ -11,7 +11,7 @@ import { handlePgRequest } from '../src/pg/app.js';
 import { assertNoPii } from '../src/pg/audit.js';
 import { buildYearlyExport } from '../src/pg/export.js';
 import { planAnonymization } from '../src/pg/anonymization.js';
-import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession } from './helpers/pg.js';
+import { createTestDb, request, seedClass, seedSchoolYear, seedUser, seedUserSession, assertOwnerGuard, ownerDb, assertAppRoleDenied } from './helpers/pg.js';
 
 // Lata dawno zakończone, by okres retencji (retain_for) mógł upłynąć w teście.
 const Y1 = 'y-anon-1';
@@ -522,12 +522,12 @@ describe('anonimizacja gospodarstwa (#91)', () => {
       await assert.rejects(db.query("UPDATE payment_corrections SET reason = '[zanonimizowano]' WHERE id = 'pc-2'"), /payment_corrections_cannot_be_changed/);
       await assert.rejects(db.query("UPDATE guardian_contact_changes SET previous_email = NULL WHERE guardian_id = 'g-b'"), /family_history_is_append_only|guardian_contact_changes/);
       await assert.rejects(db.query("UPDATE email_campaign_recipients SET email = 'zanonimizowano@anonim.invalid' WHERE id = 'r-x'"), /email_snapshot_rows_immutable/);
-      await assert.rejects(db.query("DELETE FROM payment_entries WHERE id = 'p-x'"), /payment_entries_cannot_be_deleted/);
-      await assert.rejects(db.query('TRUNCATE anonymization_runs'), /truncate_not_allowed/);
+      await assertOwnerGuard(db, "DELETE FROM payment_entries WHERE id = 'p-x'", /payment_entries_cannot_be_deleted/);
+      await assertOwnerGuard(db, 'TRUNCATE anonymization_runs', /truncate_not_allowed/);
       await assert.rejects(db.query("UPDATE anonymization_runs SET counts = '{}'::jsonb"), /anonymization_runs_is_append_only/);
-      await assert.rejects(db.query("DELETE FROM anonymization_runs"), /anonymization_runs_is_append_only/);
+      await assertOwnerGuard(db, "DELETE FROM anonymization_runs", /anonymization_runs_is_append_only/);
 
-      const inRun = (statement) => db.transaction(async (tx) => {
+      const inRun = (statement, target = db) => target.transaction(async (tx) => {
         await tx.query("SELECT set_config('rd.anonymization_run', '11111111-1111-4111-8111-111111111111', true)");
         await tx.query(statement);
       });
@@ -541,7 +541,9 @@ describe('anonimizacja gospodarstwa (#91)', () => {
       await assert.rejects(inRun("UPDATE ledger_entries SET description = '[zanonimizowano]' WHERE id = 'le-1'"), /ledger_entries_cannot_be_changed/);
       await assert.rejects(inRun("UPDATE guardian_contact_changes SET new_contact_allowed = NOT new_contact_allowed WHERE guardian_id = 'g-b'"), /family_history_is_append_only|guardian_contact_changes/);
       await assert.rejects(inRun("UPDATE email_campaign_recipients SET email_hash = repeat('9', 64) WHERE id = 'r-x'"), /email_snapshot_rows_immutable/);
-      await assert.rejects(inRun("DELETE FROM payment_entries WHERE id = 'p-x'"), /payment_entries_cannot_be_deleted/);
+      // DELETE: strażnik na połączeniu właściciela; rola aplikacji nie ma DELETE na tej tabeli (SR-05).
+      await assert.rejects(inRun("DELETE FROM payment_entries WHERE id = 'p-x'", ownerDb(db)), /payment_entries_cannot_be_deleted/);
+      await assertAppRoleDenied(db, "DELETE FROM payment_entries WHERE id = 'p-x'");
       // Kontekst z niepoprawnym identyfikatorem przebiegu nie otwiera furtki.
       await assert.rejects(db.transaction(async (tx) => {
         await tx.query("SELECT set_config('rd.anonymization_run', 'tak', true)");
