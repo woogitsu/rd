@@ -7,7 +7,8 @@
 //   npm run openapi:build           # regeneruje docs/openapi.json
 //   npm run openapi:build -- --check  # 0 = aktualny, 1 = trzeba regenerować
 //
-// Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga, rodziny, sesja); pozostałe są
+// Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga z preliminarzem, kasą i centrami
+// kosztów, rodziny, sesja); pozostałe są
 // jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
 // tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
 // „do zatwierdzenia” przez zarząd/szkołę.
@@ -105,11 +106,16 @@ const RESPONSE_TEXT = {
 
 const ref = (name) => ({ $ref: `#/components/schemas/${name}` });
 
-// Odpowiedź sukcesu ze schematu trasy (src/pg/schemas): treść JSON albo plik; bez `schema`
-// (np. 204 wylogowania) odpowiedź nie ma treści.
+// Odpowiedź sukcesu ze schematu trasy (src/pg/schemas): treść JSON albo plik; `content`
+// (mapa typ → schemat) opisuje trasę z kilkoma formatami (parametr `format`); bez `schema`
+// i `content` (np. 204 wylogowania) odpowiedź nie ma treści.
 function schemaResponse(spec) {
   const response = { description: spec.description };
-  if (spec.schema !== undefined) response.content = { [spec.contentType ?? 'application/json']: { schema: spec.schema } };
+  if (spec.content) {
+    response.content = Object.fromEntries(Object.entries(spec.content).map(([type, schema]) => [type, { schema }]));
+  } else if (spec.schema !== undefined) {
+    response.content = { [spec.contentType ?? 'application/json']: { schema: spec.schema } };
+  }
   if (spec.replayed) {
     response.headers = {
       'Idempotency-Replayed': {

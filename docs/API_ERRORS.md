@@ -241,6 +241,8 @@ przy przydziale, nie błąd.
 | `invalid_method` | Wybierz sposób wpłaty z listy. | Nie — popraw dane żądania. |
 | `invalid_names` | Podaj nazwy klas (każda do 60 znaków). | Nie — popraw dane żądania. |
 | `invalid_next_school_year` | Niepoprawny następny rok szkolny. | Nie — popraw dane żądania. |
+| `invalid_note` | Opis lub uwaga musi mieć od 3 do 500 znaków. | Nie — popraw dane żądania. |
+| `invalid_notes` | Uwagi muszą mieć od 3 do 1000 znaków. | Nie — popraw dane żądania. |
 | `invalid_notice_content` | Treść zawiadomienia nie nadaje się na wiadomość e-mail (znaki klamrowe, niedozwolone sformułowanie albo za długa treść). Popraw zebranie lub porządek obrad i przygotuj nową wersję. | Nie — popraw dane żądania. |
 | `invalid_notice_rule` | Podaj razem minimalną liczbę dni zawiadomienia i źródło tej reguły albo zostaw oba pola puste. | Nie — popraw dane żądania. |
 | `invalid_ogm_base` | Niepoprawna baza referencji płatności. | Nie — popraw dane żądania. |
@@ -647,7 +649,8 @@ błędów"). Nie obejmuje:
   `families.js`/`documents.js` i `payments.js`/`ledger.js`/`email.js`/
   `reconciliation.js` opisane w issue #160);
 - schematów ciał żądań i odpowiedzi dla modułów jeszcze niepokrytych w
-  `docs/openapi.json` (etap 2 objął wpłaty i księgę, etap 3 rodziny i sesję; reszta wg
+  `docs/openapi.json` (etap 2 objął wpłaty i księgę, etap 3 rodziny i sesję, etap 4
+  preliminarz, kasę i centra kosztów; reszta wg
   `x-rd-schema-coverage`, patrz `docs/API.md`, „Schematy żądań i odpowiedzi”);
 - objęcia sprawdzaniem typów całego `src/pg/**`. Dziś (#160): `jsconfig.json`
   z `checkJs` dla `src/pg/input.js`, `scope.js`, `pii-gate.js`, `audit.js`,

@@ -8,7 +8,7 @@
 //   POST /api/ledger/opening-balance                           (Idempotency-Key) — pierwszy rok
 //        { schoolYearId, bankCents, cashCents, note, sourceDocumentId? }
 //   POST /api/ledger/opening-balance/adjustments               (Idempotency-Key)
-//        { schoolYearId, amountCents, cashCents, reason, sourceDocumentId? }
+//        { schoolYearId, amountCents, cashCents, reason }
 //
 // Przeniesienie jest operacją wewnętrzną: nie jest przychodem ani wydatkiem
 // (ledger_year_summary bez zmian), zmienia tylko podział rachunek/kasa

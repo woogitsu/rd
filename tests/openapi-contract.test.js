@@ -1,6 +1,8 @@
-// Kontrakt API (#160, etapy 2-3): schematy ciał żądań i odpowiedzi w docs/openapi.json
+// Kontrakt API (#160, etapy 2-4): schematy ciał żądań i odpowiedzi w docs/openapi.json
 // (src/pg/schemas/*) — wpłaty (payments, payment-references, payment-instructions) i księga
-// (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js.
+// (ledger) tutaj; rodziny (families) i sesja (session) w tests/openapi-contract-families.test.js;
+// preliminarz, kasa i centra kosztów (ledger-budget, ledger-cash, ledger-cost-centers)
+// w tests/openapi-contract-ledger-extra.test.js.
 // Testy rejestru poniżej obejmują wszystkie pokryte moduły.
 //
 //  * rejestr pokrycia: każda trasa pokrytego modułu MA schemat; moduły bez schematów
@@ -30,7 +32,7 @@ const errorCatalog = parseErrorCatalog(await readFile(new URL('../docs/API_ERROR
 const components = spec.components.schemas;
 
 // Sufit listy niepokrytych modułów: kolejne PR-y go obniżają (razem z UNCOVERED_MODULES).
-const MAX_UNCOVERED_MODULES = 23;
+const MAX_UNCOVERED_MODULES = 20;
 // Zapisy bez ciała żądania (cały zapis wynika ze ścieżki albo z sesji).
 const POST_WITHOUT_BODY = new Set(['POST /api/ledger/categories/{categoryId}/deactivate', 'POST /api/logout']);
 

@@ -193,7 +193,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-3)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-4)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -205,23 +205,26 @@ Schemat modułu eksportuje `name`, `components` (schematy współdzielone) i `ro
 `{ 'POST /api/payments': { body, idempotencyKey, query, responses, errors } }`. Generator dołącza do
 operacji `requestBody`, parametry (zapytanie, `Idempotency-Key`), odpowiedzi sukcesu z kształtem
 (200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; eksporty CSV/XLSX z typem pliku;
-wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
+trasa z kilkoma formatami wybieranymi parametrem `format` ma mapę `content` typ treści → schemat, helper
+`formatsResponse` w `src/pg/schemas/common.js`; wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
 per status, wyłącznie z katalogu. Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
 ale trasa go nie zwraca (dziś: `403` przy `GET /api/session` i `GET /api/access`, patrz niżej). Wspólne
 elementy (`Id`, kwoty w eurocentach, daty) są w `src/pg/schemas/common.js`. Schematy odpowiedzi są ścisłe
 (`additionalProperties: false`): nowe pole w odpowiedzi trasy wymaga świadomej zmiany schematu;
 schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 
-Pilnują tego `tests/openapi-contract.test.js` i `tests/openapi-contract-families.test.js` (opis w
-`docs/TESTING.md`): każda trasa pokrytego modułu ma schemat, a **prawdziwe odpowiedzi** tras (utworzenie,
-ponowienie z tym samym kluczem, korekta częściowa, lista z kursorem, karta gospodarstwa z rodzeństwem i
-opieką dzieloną, sesja przed i po MFA, odmowy i błędy) przechodzą walidację tymi schematami. Schematy opisują obecny kontrakt
+Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js` i
+`tests/openapi-contract-ledger-extra.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
+z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
+i przypisania do centrów kosztów, bilans otwarcia z poprawkami, zamknięty rok, odmowy i błędy) przechodzą
+walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (48 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3) |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `email`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `ledger-budget`, `ledger-cash`, `ledger-cost-centers`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `reconciliation`, `representative`, `year-close` |
+| Pokryte (63 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4) |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `email`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `reconciliation`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -234,6 +237,22 @@ Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zm
 - `session`: logowanie (`login`) i MFA (`mfa`) są osobnymi modułami, jeszcze bez schematów. Macierz tras
   przypisuje `GET /api/session` i `GET /api/access` status odmowy `403`, choć trasy są dostępne dla każdego
   zalogowanego i zwolnione z bramki MFA, więc `403` nie występuje (stąd pusta lista kodów).
+
+Cechy modułów etapu 4 (preliminarz, kasa, centra kosztów — opis stanu, nie zmiana tras):
+
+- `GET /api/ledger/budget/execution` (`format` = `json`, `csv`, `xlsx`, `html`) i `GET /api/ledger/cost-centers`
+  (`format` = `json`, `csv`, `xlsx`) mają w specyfikacji po jednym schemacie na format odpowiedzi `200`;
+  `csv`, `xlsx` i `html` zestawienia preliminarza zapisują zdarzenie eksportu w dzienniku.
+- Wszystkie zapisy wymagają `Idempotency-Key` (ponowienie: `200`, `Idempotency-Replayed: true`). Bilans
+  otwarcia (`POST /api/ledger/opening-balance`) odtwarza zapis tylko dla tego samego klucza i autora; ten sam
+  rok innym kluczem to `409 opening_balance_exists`, a ten sam klucz z inną treścią `409 idempotency_conflict`.
+- Kilka odpowiedzi `409` niesie pole ponad `error` (schemat `Error` je dopuszcza): `budget_line_superseded`
+  z `currentLineId`, `allocation_version_conflict` z `currentVersionId`; `422` bramki danych osobowych
+  z `categories`.
+- Odczyty nie są stronicowane (pełna historia wersji, przeniesień i przypisań roku). Bilans otwarcia bez zapisu
+  zwraca `openingBalance: null`, `adjustments: []`, `current: null`; bilans przeniesiony zamknięciem roku ma
+  `carriedFromSchoolYearId`. Kwota kasy w bilansie (`cashCents`) jest w schemacie liczbą ze znakiem, bo bilans
+  przeniesiony z zamknięcia roku kopiuje stan kasy; ręczny bilans przyjmuje tylko `cashCents ≥ 0`.
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
