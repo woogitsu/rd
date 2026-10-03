@@ -5,7 +5,7 @@
 //   POST /api/ledger/budget/{lineId}/revisions           (Idempotency-Key) { plannedCents, reason }
 //   POST /api/ledger/budget/adoptions                    (Idempotency-Key) { schoolYearId, adoptedOn, note, resolutionId? }
 //   GET  /api/ledger/budget/history?schoolYearId=…       wszystkie wersje linii i przyjęcia
-//   GET  /api/ledger/budget/execution?schoolYearId=…[&asOf=RRRR-MM-DD][&format=json|csv|html]
+//   GET  /api/ledger/budget/execution?schoolYearId=…[&asOf=RRRR-MM-DD][&format=json|csv|xlsx|html]
 //
 // Tworzenie kategorii (POST /api/ledger/categories) obsługuje ledger.js
 // (#207) — ta sama trasa, z opcjonalnym nagłówkiem Idempotency-Key, którego

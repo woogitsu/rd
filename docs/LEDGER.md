@@ -96,7 +96,7 @@ Bilans otwarcia (`ledger_opening_balances.amount_cents` = całość) ma część
 | `POST /api/ledger/transfers` | admin, zarząd, skarbnik + MFA, `Idempotency-Key` | `{ schoolYearId, direction: 'cash_to_bank' \| 'bank_to_cash', amountCents, transferredOn, description, sourceDocumentId? }` → 201; storno: `{ schoolYearId, reversesId, description }` (przeciwny kierunek, ta sama kwota i data; drugie storno i storno storna → 409) |
 | `GET /api/ledger/opening-balance?schoolYearId=…` | admin, zarząd, skarbnik + MFA | pierwotny bilans (rachunek/kasa), poprawki, stan bieżący, rok, z którego przeniesiono |
 | `POST /api/ledger/opening-balance` | zarząd + MFA, `Idempotency-Key` | `{ schoolYearId, bankCents, cashCents ≥ 0, note, sourceDocumentId? }` → 201; tylko pierwszy rok w systemie (`409 not_first_school_year`), jeden na rok (`409 opening_balance_exists`) |
-| `POST /api/ledger/opening-balance/adjustments` | zarząd + MFA, `Idempotency-Key` | `{ schoolYearId, amountCents, cashCents, reason, sourceDocumentId? }` → 201 (nowy wiersz, poprzednia wartość zostaje); kasa poniżej zera → `409 cash_below_zero`; zamknięty rok → `409 school_year_closed` |
+| `POST /api/ledger/opening-balance/adjustments` | zarząd + MFA, `Idempotency-Key` | `{ schoolYearId, amountCents, cashCents, reason }` → 201 (nowy wiersz, poprzednia wartość zostaje); kasa poniżej zera → `409 cash_below_zero`; zamknięty rok → `409 school_year_closed` |
 
 - Przeniesienie jest operacją wewnętrzną: nie zmienia przychodów, wydatków ani bilansu (`ledger_year_summary`), zmienia tylko podział rachunek/kasa. Data w granicach roku (`422 date_outside_school_year`), rok zamknięty → `409`.
 - Wszystko jest niezmienne (triggery); korekta to nowy wiersz. Zapis i zdarzenie audytu (`ledger.transfer.created`, `ledger.transfer.reversed`, `ledger_opening_balance.created`, `ledger_opening_balance.adjusted`) w jednej transakcji, bez kwot i opisów. Podwójne kliknięcie → jeden zapis.
@@ -121,7 +121,7 @@ Wpis księgi można przypisać do **wydarzenia** (`events`) albo **klasy** (`cla
 | --- | --- |
 | `GET /api/ledger/{id}/allocations` | netto wpisu, bieżąca wersja, suma przypisana, „ogólne”, historia wersji |
 | `POST /api/ledger/{id}/allocations` | `Idempotency-Key`; `{ "items": [{ "eventId" \| "classId", "amountCents" }], "supersedesId": null \| "<bieżąca wersja>", "reason?" }`; `items: []` = całość do „ogólne” |
-| `GET /api/ledger/cost-centers?schoolYearId=&type=event\|class&format=json\|csv` | przychody, wydatki i wynik per centrum + „ogólne” + razem; suma = `ledger_year_summary` |
+| `GET /api/ledger/cost-centers?schoolYearId=&type=event\|class&format=json\|csv\|xlsx` | przychody, wydatki i wynik per centrum + „ogólne” + razem; suma = `ledger_year_summary` |
 | `GET /api/ledger/cost-centers/events/{eventId}` | rozliczenie wydarzenia: przypisane wpisy (data, kategoria, opis, kwota), wynik |
 
 Rozliczenie wydarzenia jest pod `/api/ledger/…`, bo moduł wydarzeń obsługuje całe `/api/events/*` (zamiast proponowanego `/api/events/{id}/finance`).
