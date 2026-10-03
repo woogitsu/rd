@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-8)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-9)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -220,21 +220,22 @@ schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
 `tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
-`tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js` i `tests/openapi-contract-documents.test.js`
-(opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`
+i `tests/openapi-contract-events.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
 dopasowania z cofnięciem, raport Komisji Rewizyjnej, zebranie z porządkiem obrad, zawiadomieniem, obecnością,
-uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i treścią po autoryzacji, zamknięty rok,
+uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i treścią po autoryzacji, wydarzenia od szkicu
+do publikacji i odwołania z zadaniami wolontariuszy, zapisami i widokiem publicznym, zamknięty rok,
 odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (157 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (172 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events` |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `login`, `mfa`, `news`, `print`, `privacy-notice`, `representative`, `year-close` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -399,6 +400,47 @@ Cechy modułu etapu 8 (`documents`, prywatne dokumenty Rady i dowody finansowe �
   dopuszcza tylko typy podglądu) — kod jest w schemacie jako obrona; `413 request_too_large` przesłania zwraca serwer Node
   przed trasą (`Content-Length` ponad limit), więc test kontraktu na PGlite go nie osiąga; docs/DOCUMENTS.md pisze o `404`
   przy braku MFA dla `financial`, a zarząd i skarbnik bez czynnika dostają wcześniej `403` bramki routera.
+
+Cechy modułu etapu 9 (`events`, wydarzenia, zadania i zapisy wolontariuszy — opis stanu, nie zmiana tras):
+
+- Specyfikacja obejmuje 15 operacji z macierzy tras: lista roku, utworzenie, odczyt i zmiana wydarzenia, cztery kroki przebiegu
+  (`submit`, `approve`, `publish`, `cancel`), zadania (lista, opiekunowie do formularza, utworzenie, odwołanie), zapisy (zapis,
+  wycofanie) i `GET /api/public/events`. Moduł obsługuje jeszcze `GET /api/public/events.ics`, `GET /api/public/events/{id}.ics`
+  i `GET /api/public/events/{id}/tasks` (publiczne, bez logowania), których **nie ma w macierzy tras**, więc nie ma ich też w
+  `docs/openapi.json` (generator bierze ścieżki z macierzy). „Wynik wydarzenia” (rozliczenie kosztów i wpływów) nie należy do
+  tego modułu: to `GET /api/ledger/cost-centers/events/{eventId}` (`ledger-cost-centers`, etap 4) i sekcja raportu KR (etap 5).
+  Schemat `EventStatus` jest wspólny z `ledger-cost-centers`.
+- `Idempotency-Key` (wymagany) mają utworzenie wydarzenia, zadania i zapisu, ale **tylko utworzenie wydarzenia** wysyła
+  `Idempotency-Replayed` (`201`/`false`, ponowienie `200`/`true`, ciało `{ event }` bez pola `replayed`). Zadanie i zapis
+  odpowiadają `201`/`200` bez nagłówka, z polem `replayed` (`false`/`true`) w treści — jak dokumenty (etap 8). Ten sam klucz
+  zadania z inną treścią → `409 idempotency_conflict`; zapis tej samej osoby do tego samego zadania jest powtórką niezależnie od
+  klucza (konfliktu klucza nie ma). Wycofana osoba zapisana ponownie to ten sam wiersz (`201`, ten sam `id`, status `confirmed`).
+- `PATCH`, kroki przebiegu, odwołanie zadania i wycofanie zapisu nie mają klucza: zawsze `200` bez nagłówka, ponowienie
+  sygnalizuje `replayed: true`. `PATCH` i kroki wymagają `revision` (`400 invalid_revision`, `409 revision_conflict`); `PATCH`
+  zwraca też `tasksOutsideEventTime`. Czasy wejściowe to czas lokalny Europe/Brussels (`ambiguous_local_time`,
+  `nonexistent_local_time`, `offset_not_valid_in_europe_brussels`, `invalid_datetime`), odpowiedzi — czas lokalny z
+  przesunięciem i UTC. Wycofanie zapisu nie czyta ciała (brak `requestBody`, brak `415`/`413`).
+- Zatwierdzenie z tą samą osobą co autor wydarzenia albo wersji → `409 four_eyes_required` (zebrania: `403
+  notice_four_eyes_required`/`minutes_four_eyes_required`). Publikacja wydarzenia wewnętrznego → `409 event_not_public`.
+  Wymóg MFA modułu (`403 mfa_required`) przy zatwierdzeniu i publikacji widać tylko wtedy, gdy bramka routera przepuści sesję
+  bez MFA; zarząd bez czynnika dostaje wcześniej `403 mfa_enrollment_required`.
+- Wydarzenie spoza zakresu podglądu: każdy odczyt i zapis wydarzenia, jego zadań i zapisów → `404 event_not_found` jak nieznany
+  identyfikator (SR-07); `403 forbidden` — lista roku, utworzenie poza zakresem (przedstawiciel: inna klasa albo wydarzenie
+  ogólnoszkolne) i krok bez prawa przy widocznym wydarzeniu (zatwierdzenie i publikacja przez przedstawiciela lub admina,
+  odwołanie opublikowanego przez przedstawiciela). Skarbnik, Komisja Rewizyjna, dyrekcja i zarząd z przydziałem klasy: lista
+  `403`, wydarzenie `404`.
+- Zły identyfikator zadania lub zapisu w ścieżce daje `400 invalid_event_id` (moduł nie ma osobnych kodów jak
+  `invalid_meeting_id`/`invalid_agenda_item_id` w zebraniach). Zła data kalendarzowa w `from` listy publicznej (np.
+  `2027-02-30`) daje `400 invalid_datetime`, zły zapis — `400 invalid_date`.
+- Listy: tylko `GET /api/public/events` ma kursor (`limit` 1-200, domyślnie 100; `cursor` związany z filtrem roku i `from`).
+  Wewnętrzna lista roku i lista zadań nie są stronicowane. `personName` zapisu jest wyłącznie w liście zadań (w schemacie
+  opcjonalne). Widok publiczny czyta wyłącznie ostatnią **opublikowaną** wersję z odbiorcami `public`; `volunteerTasks` ma
+  tylko nieodwołane zadania z `isPublic` (`{ id, title, stillNeeded }`), a dla odwołanego wydarzenia jest puste.
+- **Zamknięty rok** (trasy `year-close`): utworzenie, zmiana, kroki przebiegu, odwołanie wydarzenia, nowe zadanie, zapis i
+  wycofanie zapisu → `409 school_year_closed`; odczyty i lista publiczna działają. Rozbieżność: **odwołanie zadania** w zamkniętym
+  roku przechodzi (`200`) — trigger zamrożenia `a0_year_freeze` obejmuje w `event_tasks` tylko `INSERT`
+  (`postgres/migrations/0076_event_volunteering.sql`), a docs/EVENTS.md opisuje zamrożenie zadań ogólnie; schemat tej trasy
+  nie wymienia `school_year_closed`.
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.

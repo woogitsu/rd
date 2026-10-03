@@ -98,6 +98,7 @@
     "covered": [
       "documents",
       "email",
+      "events",
       "families",
       "ledger",
       "ledger-budget",
@@ -115,7 +116,6 @@
       "audit-history",
       "audit-reviews",
       "board",
-      "events",
       "exports",
       "financial-reports",
       "guardian-updates",
@@ -130,7 +130,7 @@
     ],
     "operations": {
       "total": 297,
-      "withSchema": 157
+      "withSchema": 172
     }
   },
   "paths": {
@@ -13428,15 +13428,47 @@
           {
             "name": "schoolYearId",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wydarzenia roku (bez stronicowania), od najwcześniejszego; przedstawiciel widzi tylko wydarzenia swoich klas.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Event"
+                      }
+                    }
+                  },
+                  "required": [
+                    "events"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_school_year"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -13449,7 +13481,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -13495,9 +13532,113 @@
       },
       "post": {
         "operationId": "events_create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Odtworzenie po tym samym kluczu idempotencji (ta sama osoba, zakres i treść; bez nowego zapisu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    }
+                  },
+                  "required": [
+                    "event"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: odpowiedź odtworzona po tym samym kluczu idempotencji, bez nowego zapisu.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Szkic wydarzenia utworzony (nic nie jest publikowane).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    }
+                  },
+                  "required": [
+                    "event"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "false: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "false"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "ambiguous_local_time",
+              "ends_before_start",
+              "invalid_audience",
+              "invalid_class",
+              "invalid_datetime",
+              "invalid_description",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_location",
+              "invalid_organizer",
+              "invalid_reference",
+              "invalid_school_year",
+              "invalid_title",
+              "nonexistent_local_time",
+              "offset_not_valid_in_europe_brussels"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -13510,7 +13651,67 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -13568,16 +13769,67 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wydarzenie z pełną historią wersji (od pierwszej).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    },
+                    "revisions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EventRevision"
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "event",
+                    "revisions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -13587,7 +13839,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
           }
         },
         "security": [
@@ -13643,16 +13898,94 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventUpdateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Nowa wersja treści (wydarzenie wraca do szkicu) albo odtworzenie (`replayed: true`). `tasksOutsideEventTime` wymienia nieodwołane zadania, których okno wykracza poza nowy czas wydarzenia (nie są odwoływane).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    },
+                    "tasksOutsideEventTime": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EventTaskOutsideTime"
+                      }
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "event",
+                    "tasksOutsideEventTime",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "ambiguous_local_time",
+              "ends_before_start",
+              "invalid_audience",
+              "invalid_datetime",
+              "invalid_description",
+              "invalid_event_id",
+              "invalid_json",
+              "invalid_location",
+              "invalid_organizer",
+              "invalid_revision",
+              "invalid_title",
+              "nonexistent_local_time",
+              "offset_not_valid_in_europe_brussels"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -13662,7 +13995,65 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "event_cancelled",
+              "revision_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -13720,13 +14111,59 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventTransitionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zatwierdzenie zgłoszonej wersji przez zarząd (MFA, cztery oczy); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "event",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id",
+              "invalid_json",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -13739,7 +14176,13 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -13749,7 +14192,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "event_cancelled",
+              "four_eyes_required",
+              "invalid_transition",
+              "revision_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -13795,16 +14284,79 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventCancelRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Odwołanie z powodem (stan końcowy; opublikowane zostaje publicznie ze statusem `cancelled`); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "event",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id",
+              "invalid_json",
+              "invalid_reason",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -13814,7 +14366,66 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "event_cancelled",
+              "invalid_transition",
+              "revision_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -13872,13 +14483,59 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventTransitionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Publikacja zatwierdzonej wersji z odbiorcami `public` przez zarząd (MFA); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "event",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id",
+              "invalid_json",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -13891,7 +14548,13 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -13901,7 +14564,53 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "event_cancelled",
+              "event_not_public",
+              "invalid_transition",
+              "revision_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -13947,16 +14656,77 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventTransitionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zgłoszenie wersji do zatwierdzenia; ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {
+                      "$ref": "#/components/schemas/Event"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "event",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id",
+              "invalid_json",
+              "invalid_revision"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -13966,7 +14736,52 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "event_cancelled",
+              "invalid_transition",
+              "revision_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -14024,16 +14839,62 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zadania wydarzenia (także odwołane) z zapisami i imieniem i nazwiskiem zapisanych osób; odczyt nazwisk opiekunów trafia do dziennika (liczba, bez nazwisk).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tasks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EventTaskWithSignups"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tasks"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -14043,7 +14904,10 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
           }
         },
         "security": [
@@ -14095,20 +14959,119 @@
         "operationId": "events_taskCreate",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "eventId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventTaskCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ten sam klucz i treść: istniejące zadanie, `replayed: true` (także po odwołaniu wydarzenia).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task": {
+                      "$ref": "#/components/schemas/EventTask"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "task",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zadanie utworzone (bez nagłówka `Idempotency-Replayed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task": {
+                      "$ref": "#/components/schemas/EventTask"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "task",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "ambiguous_local_time",
+              "ends_before_start",
+              "invalid_datetime",
+              "invalid_event_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_slots_needed",
+              "invalid_title",
+              "nonexistent_local_time",
+              "offset_not_valid_in_europe_brussels",
+              "task_time_outside_event"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -14118,7 +15081,65 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "event_cancelled",
+              "idempotency_conflict",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -14176,16 +15197,90 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
+          },
+          {
+            "name": "classId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Klasa (z roku wydarzenia) — wymagana dla wydarzenia ogólnoszkolnego (400 `class_required`); dla klasowego musi być klasą wydarzenia (400 `invalid_class`)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Opiekunowie z bieżącą relacją do dziecka bieżąco przypisanego do klasy: tylko identyfikator i imię z nazwiskiem (bez e-maili, dzieci i gospodarstw); odczyt w `data_access_log`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "classId": {
+                      "$ref": "#/components/schemas/EntityId"
+                    },
+                    "guardians": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/EntityId"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "classId",
+                    "guardians"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "class_required",
+              "invalid_class",
+              "invalid_event_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -14195,7 +15290,11 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "class_not_found",
+              "event_not_found"
+            ]
           }
         },
         "security": [
@@ -14253,7 +15352,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -14261,16 +15360,77 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventTaskCancelRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zadanie odwołane (zapisy zostają, nowe zablokowane); ponowienie: `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task": {
+                      "$ref": "#/components/schemas/EventTask"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "task",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id",
+              "invalid_json",
+              "invalid_reason"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -14280,7 +15440,51 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found",
+              "event_task_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -14334,11 +15538,19 @@
         "operationId": "events_signupCreate",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          },
+          {
             "name": "eventId",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -14346,16 +15558,102 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventSignupRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Osoba już zapisana: istniejący zapis, `replayed: true` (niezależnie od klucza).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "signup": {
+                      "$ref": "#/components/schemas/EventTaskSignup"
+                    },
+                    "replayed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "signup",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zapis utworzony albo ponowny zapis wycofanej osoby (ten sam wiersz, status `confirmed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "signup": {
+                      "$ref": "#/components/schemas/EventTaskSignup"
+                    },
+                    "replayed": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "signup",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "guardian_outside_class",
+              "invalid_event_id",
+              "invalid_idempotency_key",
+              "invalid_json",
+              "invalid_reference",
+              "invalid_signup_target"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -14365,7 +15663,52 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found",
+              "event_task_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "event_cancelled",
+              "school_year_closed",
+              "task_full"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -14423,7 +15766,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -14431,7 +15774,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -14439,16 +15782,65 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zapis wycofany (ten sam wiersz, status `withdrawn`; zwalnia miejsce); ponowienie: `replayed: true`. Trasa nie czyta ciała.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "signup": {
+                      "$ref": "#/components/schemas/EventTaskSignup"
+                    },
+                    "replayed": {
+                      "type": "boolean",
+                      "description": "true: ponowienie rozpoznane po stanie obiektu (bez nowego zapisu i wpisu w dzienniku)."
+                    }
+                  },
+                  "required": [
+                    "signup",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_event_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           },
           "404": {
             "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
@@ -14458,7 +15850,24 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "event_not_found",
+              "event_task_signup_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
           }
         },
         "security": [
@@ -31377,9 +32786,112 @@
     "/api/public/events": {
       "get": {
         "operationId": "events_public",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej strony tego samego filtru (inny filtr → 400 `invalid_cursor`)."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IsoDate"
+            },
+            "description": "Wydarzenia kończące się (albo zaczynające) od tego dnia, czas Europe/Brussels."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          },
+          {
+            "name": "schoolYearId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "description": "Filtr roku szkolnego (400 `invalid_school_year`)."
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Publiczne (bez logowania): opublikowane wydarzenia od najbliższego (`begins_at`, `id`), kursor keyset; `Cache-Control: public, max-age=60`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "timezone": {
+                      "const": "Europe/Brussels"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EventPublic"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Kursor następnej strony; null na ostatniej."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 200
+                    }
+                  },
+                  "required": [
+                    "timezone",
+                    "events",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_date",
+              "invalid_datetime",
+              "invalid_limit",
+              "invalid_school_year"
+            ]
           }
         },
         "security": [],
@@ -41422,6 +42934,618 @@
         ],
         "description": "Kody z docs/API_ERRORS.md."
       },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "classId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Klasa wydarzenia klasowego; null — ogólnoszkolne. Ustalone przy tworzeniu (niezmienne)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/EventStatus",
+            "description": "Zmiana treści wraca do `draft` (opublikowana wersja zostaje publiczna do następnej publikacji); `cancelled` — stan końcowy."
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "draft_public",
+              "published"
+            ],
+            "description": "Pochodna odbiorców i publikacji (trigger bazy)."
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "public"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Bieżąca wersja treści (każda zmiana treści = nowa, niezmienna wersja)."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "organizer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "const": "Europe/Brussels"
+          },
+          "startsAt": {
+            "$ref": "#/components/schemas/EventLocalDateTime"
+          },
+          "startsAtUtc": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventLocalDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endsAtUtc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "submittedRevision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedRevision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Zatwierdzający (inna osoba niż autor wydarzenia i autor wersji — cztery oczy)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publishedRevision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Wersja widoczna publicznie; null — nigdy nie opublikowane."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancellationReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Powód odwołania (tylko wewnętrznie)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "schoolYearId",
+          "classId",
+          "status",
+          "visibility",
+          "audience",
+          "revision",
+          "title",
+          "description",
+          "location",
+          "organizer",
+          "timezone",
+          "startsAt",
+          "startsAtUtc",
+          "endsAt",
+          "endsAtUtc",
+          "createdBy",
+          "createdAt",
+          "updatedBy",
+          "updatedAt",
+          "submittedRevision",
+          "approvedRevision",
+          "approvedBy",
+          "approvedAt",
+          "publishedRevision",
+          "publishedAt",
+          "cancelledAt",
+          "cancellationReason"
+        ],
+        "additionalProperties": false,
+        "description": "Wydarzenie w widoku wewnętrznym (osoby z prawem do szkicu wydarzenia)."
+      },
+      "EventCancelRequest": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji widziany przez użytkownika; brak → 400 `invalid_revision`, niezgodny → 409 `revision_conflict`."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); wewnętrzny, nie trafia na stronę publiczną ani do dziennika. Bramka danych osobowych (#152); inna długość → 400 `invalid_reason`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "revision",
+          "reason"
+        ],
+        "description": "Odwołanie (stan końcowy); opublikowane wydarzenie odwołuje tylko zarząd."
+      },
+      "EventCreateRequest": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "classId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Klasa wydarzenia; pominięte/null — ogólnoszkolne (tylko admin i zarząd). Przedstawiciel: tylko własna klasa."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł (3-200 znaków po przycięciu spacji; bramka danych osobowych, #152)."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000,
+                "description": "Opis (do 4000 znaków; bramka danych osobowych)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startsAt": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(Z|[+-]\\d{2}:\\d{2})?$",
+            "description": "Czas lokalny Europe/Brussels `RRRR-MM-DDTGG:MM` (opcjonalnie sekundy i przesunięcie). Godzina powtórzona przy zmianie czasu wymaga przesunięcia (400 `ambiguous_local_time`), nieistniejąca → 400 `nonexistent_local_time`, przesunięcie niezgodne ze strefą → 400 `offset_not_valid_in_europe_brussels`, inny zapis → 400 `invalid_datetime`."
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(Z|[+-]\\d{2}:\\d{2})?$",
+                "description": "Koniec (opcjonalny, nie wcześniej niż początek: 400 `ends_before_start`); pusty ciąg = brak."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "organizer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "public"
+            ],
+            "description": "Domyślnie `internal`; publikować można tylko `public`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "title",
+          "startsAt"
+        ],
+        "description": "Nowy szkic wydarzenia (pierwsza wersja treści)."
+      },
+      "EventLocalDateTime": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Czas lokalny Europe/Brussels z przesunięciem (`RRRR-MM-DDTGG:MM:SS+01:00`)."
+      },
+      "EventPublic": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "organizer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "const": "Europe/Brussels"
+          },
+          "startsAt": {
+            "$ref": "#/components/schemas/EventLocalDateTime"
+          },
+          "startsAtUtc": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventLocalDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endsAtUtc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "cancelled"
+            ],
+            "description": "Odwołane opublikowane wydarzenie zostaje na liście (bez powodu)."
+          },
+          "changedAfterPublication": {
+            "type": "boolean",
+            "description": "true po ponownej publikacji albo gdy nowsza wersja czeka na zatwierdzenie (strona pokazuje ostatnią opublikowaną)."
+          },
+          "volunteerTasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventPublicVolunteerTask"
+            },
+            "description": "Puste dla odwołanego wydarzenia."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "location",
+          "organizer",
+          "timezone",
+          "startsAt",
+          "startsAtUtc",
+          "endsAt",
+          "endsAtUtc",
+          "status",
+          "changedAfterPublication",
+          "volunteerTasks"
+        ],
+        "additionalProperties": false,
+        "description": "Publiczny wpis: wyłącznie ostatnia opublikowana wersja (bez autorów, klas, wersji i powodu odwołania)."
+      },
+      "EventPublicVolunteerTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "stillNeeded": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "„Potrzebni jeszcze”: `slotsNeeded` minus zapisy `confirmed`, nie mniej niż 0."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "stillNeeded"
+        ],
+        "additionalProperties": false,
+        "description": "Zadanie jawnie oznaczone `isPublic`, nieodwołane — bez osób i identyfikatorów zapisów."
+      },
+      "EventRevision": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "organizer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "public"
+            ]
+          },
+          "startsAt": {
+            "$ref": "#/components/schemas/EventLocalDateTime"
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventLocalDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "app",
+              "legacy_d1"
+            ],
+            "description": "`legacy_d1` — wersja przeniesiona z poprzedniego systemu."
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "revision",
+          "title",
+          "description",
+          "location",
+          "organizer",
+          "audience",
+          "startsAt",
+          "endsAt",
+          "source",
+          "createdBy",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Niezmienna wersja treści wydarzenia (historia nie jest nadpisywana ani usuwana)."
+      },
+      "EventSignupRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "guardianId": {
+                "$ref": "#/components/schemas/Id",
+                "description": "Istniejący opiekun (przedstawiciel: tylko z bieżącą relacją do dziecka klasy wydarzenia)."
+              }
+            },
+            "required": [
+              "guardianId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "userId": {
+                "$ref": "#/components/schemas/Id",
+                "description": "Istniejące konto."
+              }
+            },
+            "required": [
+              "userId"
+            ]
+          }
+        ],
+        "description": "Dokładnie jedno z `guardianId` i `userId` (oba albo żadne → 400 `invalid_signup_target`). Bez nowych danych osobowych."
+      },
       "EventStatus": {
         "type": "string",
         "enum": [
@@ -41432,6 +43556,456 @@
           "cancelled"
         ],
         "description": "Status wydarzenia (postgres/migrations/0008_events.sql)."
+      },
+      "EventTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "eventId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "startsAtUtc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Początek zadania (UTC); null = bez czasu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endsAtUtc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Koniec zadania (UTC); null = bez czasu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slotsNeeded": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Liczba potrzebnych miejsc (limit zapisów `confirmed`)."
+          },
+          "isPublic": {
+            "type": "boolean",
+            "description": "true: liczba „potrzebni jeszcze” trafia na stronę publiczną (`volunteerTasks`)."
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Odwołanie zadania (stan końcowy)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancellationReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Powód odwołania (wewnętrzny)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "eventId",
+          "title",
+          "startsAtUtc",
+          "endsAtUtc",
+          "slotsNeeded",
+          "isPublic",
+          "cancelledAt",
+          "cancellationReason",
+          "createdBy",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Zadanie wolontariuszy w obrębie wydarzenia (treść niezmienna; jedyna zmiana to odwołanie)."
+      },
+      "EventTaskCancelRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Powód (3-500 znaków po przycięciu spacji); wewnętrzny, nie trafia na stronę publiczną ani do dziennika. Bramka danych osobowych (#152); inna długość → 400 `invalid_reason`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "EventTaskCreateRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł (3-200 znaków po przycięciu spacji; bramka danych osobowych, #152)."
+          },
+          "slotsNeeded": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Inna wartość → 400 `invalid_slots_needed`."
+          },
+          "startsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(Z|[+-]\\d{2}:\\d{2})?$",
+                "description": "Opcjonalny początek; nie przed początkiem wydarzenia (400 `task_time_outside_event`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(Z|[+-]\\d{2}:\\d{2})?$",
+                "description": "Opcjonalny koniec; nie po końcu wydarzenia, gdy wydarzenie ma koniec."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "isPublic": {
+            "type": "boolean",
+            "description": "Domyślnie false."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "title",
+          "slotsNeeded"
+        ],
+        "description": "Nowe zadanie (treść niezmienna po utworzeniu)."
+      },
+      "EventTaskOutsideTime": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "EventTaskSignup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "taskId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "userId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Konto zapisane do zadania (dokładnie jedno z `userId`/`guardianId`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "guardianId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Opiekun zapisany do zadania."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "personName": {
+            "type": "string",
+            "description": "Imię i nazwisko opiekuna albo nazwa konta — WYŁĄCZNIE w liście zadań (`GET …/tasks`) dla ról z dostępem do wydarzenia; brak w odpowiedziach zapisu i wycofania oraz gdy nazwa jest pusta."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "withdrawn"
+            ],
+            "description": "Wycofanie i ponowny zapis zmieniają status tego samego wiersza."
+          },
+          "recordedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "taskId",
+          "userId",
+          "guardianId",
+          "status",
+          "recordedBy",
+          "createdAt",
+          "updatedBy",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "EventTaskWithSignups": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "eventId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "startsAtUtc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Początek zadania (UTC); null = bez czasu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endsAtUtc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Koniec zadania (UTC); null = bez czasu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slotsNeeded": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Liczba potrzebnych miejsc (limit zapisów `confirmed`)."
+          },
+          "isPublic": {
+            "type": "boolean",
+            "description": "true: liczba „potrzebni jeszcze” trafia na stronę publiczną (`volunteerTasks`)."
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Odwołanie zadania (stan końcowy)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancellationReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Powód odwołania (wewnętrzny)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "outsideEventTime": {
+            "type": "boolean",
+            "description": "true: okno nieodwołanego zadania wykracza poza OBECNY czas wydarzenia (po zmianie czasu wydarzenia; zadanie i zapisy zostają)."
+          },
+          "signups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventTaskSignup"
+            },
+            "description": "Wszystkie zapisy (także wycofane), od najstarszego."
+          },
+          "confirmedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Liczba zapisów `confirmed`."
+          }
+        },
+        "required": [
+          "id",
+          "eventId",
+          "title",
+          "startsAtUtc",
+          "endsAtUtc",
+          "slotsNeeded",
+          "isPublic",
+          "cancelledAt",
+          "cancellationReason",
+          "createdBy",
+          "createdAt",
+          "outsideEventTime",
+          "signups",
+          "confirmedCount"
+        ],
+        "additionalProperties": false
+      },
+      "EventTransitionRequest": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji widziany przez użytkownika; brak → 400 `invalid_revision`, niezgodny → 409 `revision_conflict`."
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "description": "Krok przebiegu dla wskazanej wersji (zgłoszenie, zatwierdzenie, publikacja)."
+      },
+      "EventUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji widziany przez użytkownika; brak → 400 `invalid_revision`, niezgodny → 409 `revision_conflict`."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Tytuł (3-200 znaków po przycięciu spacji; bramka danych osobowych, #152)."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000,
+                "description": "Opis (do 4000 znaków; bramka danych osobowych)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startsAt": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(Z|[+-]\\d{2}:\\d{2})?$",
+            "description": "Czas lokalny Europe/Brussels `RRRR-MM-DDTGG:MM` (opcjonalnie sekundy i przesunięcie). Godzina powtórzona przy zmianie czasu wymaga przesunięcia (400 `ambiguous_local_time`), nieistniejąca → 400 `nonexistent_local_time`, przesunięcie niezgodne ze strefą → 400 `offset_not_valid_in_europe_brussels`, inny zapis → 400 `invalid_datetime`."
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(Z|[+-]\\d{2}:\\d{2})?$",
+                "description": "Koniec (opcjonalny, nie wcześniej niż początek: 400 `ends_before_start`); pusty ciąg = brak."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "organizer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "internal",
+              "public"
+            ],
+            "description": "Domyślnie `internal`; publikować można tylko `public`."
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "true potwierdza ostrzeżenie bramki danych osobowych (#152), np. 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "description": "Nowa wersja treści (pominięte pola bez zmian; `classId` i `schoolYearId` są ignorowane). Ta sama treść = odtworzenie (`replayed: true`); ponowienie tej samej zmiany przez jej autora po nowszym numerze wersji — też."
       },
       "FamilyClass": {
         "type": "object",

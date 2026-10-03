@@ -254,13 +254,13 @@ wymienionych w `include` w `jsconfig.json` (obecnie `src/pg/input.js`, `scope.js
 w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując go do
 `include` i poprawiając błędy adnotacjami JSDoc bez zmiany zachowania.
 
-## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-8)
+## Kontrakt OpenAPI: schematy i prawdziwe odpowiedzi (#160, etapy 2-9)
 
 `docs/openapi.json` jest generowany (`npm run openapi:build`, sprawdzenie: `npm run openapi:build -- --check`);
 `tests/openapi.test.js` pilnuje, że plik zgadza się z generatorem. Operacje modułów z `COVERED_MODULES`
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
 etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
-etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; razem 157 operacji)
+etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; etap 9 — `events`; razem 172 operacje)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
@@ -269,7 +269,8 @@ mają schematy ciał żądań i odpowiedzi
   `UNCOVERED_MODULES` nie rośnie (sufit `MAX_UNCOVERED_MODULES`, obniżany w kolejnych PR-ach);
 - kody błędów w schematach należą do katalogu `docs/API_ERRORS.md` i występują w źródle trasy (dla `reconciliation`
   także w parserach wyciągów `src/pg/bank/*.js`, dla `meetings` w module domenowym `src/pg/meetings.js`, dla `documents`
-  w kontroli struktury pliku `src/documents.js` i kursorze list, `ROUTE_HELPER_SOURCES`);
+  w kontroli struktury pliku `src/documents.js` i kursorze list, dla `events` w module domenowym `src/pg/events.js`,
+  `ROUTE_HELPER_SOURCES`);
 - **prawdziwe odpowiedzi** (PGlite, dane syntetyczne) przez `tests/helpers/contract-client.js` i walidator
   `tests/helpers/json-schema.js` (bez nowej zależności; nieznane słowo kluczowe schematu rzuca wyjątek, więc nie
   przepuszcza po cichu): utworzenie, ponowienie z tym samym kluczem (`Idempotency-Replayed`), korekta częściowa,
@@ -494,13 +495,53 @@ błędem). Klient przyjmuje ciało binarne (`Uint8Array`) i wymaga, by jego `Con
 `413 request_too_large` przesłania (serwer Node przed trasą) i `400 document_preview_unsupported` (nieosiągalne dla
 dokumentów z API) są w schemacie, ale nie w tym teście (rozbieżności opisuje `docs/API.md`, „Cechy modułu etapu 8”).
 
+Prawdziwe odpowiedzi etapu 9 (moduł `events`, 15 operacji) sprawdza `tests/openapi-contract-events.test.js` (ten sam
+`createContractClient`, PGlite, dane syntetyczne `@example.invalid`, imiona opiekunów syntetyczne; moduł niczego nie wysyła,
+pułapka sieci kończy się zerem). Osobny test sprawdza w specyfikacji, że nagłówek `Idempotency-Replayed` ma tylko utworzenie
+wydarzenia, a zadanie i zapis sygnalizują ponowienie polem `replayed` (`const` w schemacie 201/200). Scenariusz:
+
+- wydarzenie klasowe przedstawiciela 1A: utworzenie z ponowieniem (`Idempotency-Replayed`), `idempotency_conflict`,
+  `invalid_idempotency_key`, **odmowa dla klasy spoza przydziału i wydarzenia ogólnoszkolnego** (`403 forbidden`), błędy czasu
+  Europe/Brussels (`ambiguous_local_time` 25.10.2026, `nonexistent_local_time` 28.03.2027, `offset_not_valid_in_europe_brussels`,
+  `invalid_datetime`, `ends_before_start`), błędy treści (`invalid_title`, `invalid_description`, `invalid_location`,
+  `invalid_organizer`, `invalid_audience`, `invalid_school_year`, `invalid_class`), klasa z innego roku albo nieistniejąca
+  (`invalid_reference`), bramka danych osobowych (`422` i potwierdzenie);
+- wydarzenie ogólnoszkolne zarządu: szczegóły z historią wersji, lista roku (przedstawiciel widzi tylko swoją klasę),
+  **zmiana z wersją** (podwójne kliknięcie `replayed: true`, `revision_conflict`, `invalid_revision`), zgłoszenie z ponowieniem,
+  zatwierdzenie (`invalid_transition` dla szkicu, **cztery oczy** `four_eyes_required`, `403 forbidden` dla admina i
+  przedstawiciela), **publikacja** z ponowieniem, `event_not_public` dla wydarzenia wewnętrznego;
+- **zadania i zapisy z limitem**: zadanie publiczne i wewnętrzne, ponowienie kluczem (`replayed: true` bez nagłówka),
+  `idempotency_conflict`, `task_time_outside_event`, `invalid_slots_needed`, `422`; opiekunowie do formularza (`class_required`,
+  `class_not_found`, `invalid_class`, rodzeństwo w dwóch klasach); **dwoje opiekunów jednego dziecka** to dwa zapisy, podwójny
+  zapis innym kluczem — powtórka, trzeci zapis `409 task_full`, wycofanie z ponowieniem i ponowny zapis tego samego wiersza,
+  zapis konta (`userId`), `invalid_signup_target`, `invalid_reference`, `event_task_not_found` (także zadanie innego wydarzenia),
+  `event_task_signup_not_found`; przedstawiciel zapisuje opiekuna dziecka swojej klasy, opiekun spoza klasy
+  `guardian_outside_class`; zmiana czasu wydarzenia wykazuje zadanie poza czasem (`tasksOutsideEventTime`, `outsideEventTime`);
+  odwołanie zadania z ponowieniem (zapisy zablokowane `event_cancelled`, `invalid_reason`, `422`);
+- **widok publiczny tylko z zatwierdzonymi danymi**: zatwierdzone, ale nieopublikowane wydarzenie poza listą, opublikowane
+  bez autorów i osób, `volunteerTasks` tylko z zadań `isPublic` (`stillNeeded`), po zmianie opublikowanego — ostatnia
+  opublikowana wersja z `changedAfterPublication: true`, odwołane opublikowane — `cancelled` bez powodu i bez zadań;
+  **lista z kursorem** (strony po 2 aż do `nextCursor: null`, ta sama kolejność co jedna strona, kursor innego filtru
+  `invalid_cursor`, filtr `from`, `invalid_limit`, `invalid_date`, `invalid_datetime`, `invalid_school_year`);
+- **odwołanie** wydarzenia klasowego przez przedstawiciela (ponowienie, potem `event_cancelled` przy zmianie, zgłoszeniu,
+  nowym zadaniu i zapisie; wycofanie zapisu nadal działa) i opublikowanego przez zarząd (przedstawiciel `403 forbidden`);
+- granice ról: brak sesji `401` na każdej operacji; przedstawiciel 1A — wydarzenie ogólnoszkolne i klasy 1B jak nieistniejące
+  (`404 event_not_found`); zarząd z przydziałem klasy, Komisja Rewizyjna, dyrekcja i skarbnik — lista `403`, wydarzenie i zapisy
+  `404`, utworzenie `403`; zarząd bez MFA `403 mfa_enrollment_required`, a przy pustym `MFA_REQUIRED_ROLES` szkic i zgłoszenie
+  działają, zatwierdzenie i publikacja — `403 mfa_required` modułu; obcy `Origin` `403 invalid_origin` na każdym zapisie;
+- błędy `400` (`invalid_event_id` — także dla identyfikatora zadania i zapisu, `invalid_json`), `404`, `413`, `415` oraz
+  **zamknięty rok** przez trasy `year-close` (zapisy → `409 school_year_closed`, odczyty i lista publiczna działają; odwołanie
+  zadania przechodzi — rozbieżność opisana w `docs/API.md`, „Cechy modułu etapu 9”);
+- pominięcie każdego wymaganego pola ciała → `400` i każda odpowiedź sukcesu ze schematu zwalidowana na prawdziwej odpowiedzi.
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
 `tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`, jak
 `tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js`,
 `tests/openapi-contract-reconciliation.test.js`, `tests/openapi-contract-email.test.js`,
-`tests/openapi-contract-meetings.test.js` i `tests/openapi-contract-documents.test.js`).
+`tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js` i
+`tests/openapi-contract-events.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 
