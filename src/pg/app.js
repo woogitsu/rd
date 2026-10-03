@@ -7,9 +7,11 @@
 // i jest dopisywany JEDNĄ linią do ROUTES poniżej. Moduły są sprawdzane po
 // kolei; pierwszy, który zwróci Response, kończy obsługę. null = „nie moja trasa”.
 //
-// Przed modułami handlePgRequest odrzuca każde żądanie POST/PUT/PATCH/DELETE
-// pod /api/ bez zgodnego nagłówka Origin (403 invalid_origin). Moduł sam
-// sprawdza sesję i uprawnienia (requireAccess z ./authorization.js).
+// Przed modułami handlePgRequest odrzuca każde żądanie pod /api/ metodą inną
+// niż GET i HEAD (POST/PUT/PATCH/DELETE, ale też OPTIONS i metoda nieznana) bez
+// zgodnego nagłówka Origin (403 invalid_origin). HEAD jest metodą bezpieczną,
+// której żadna trasa /api/ nie obsługuje (moduł: 404 albo 405 z Allow). Moduł
+// sam sprawdza sesję i uprawnienia (requireAccess z ./authorization.js).
 //
 // Następnie bramka MFA (./mfa-policy.js): sesja bez potwierdzonego MFA konta
 // z czynnikiem MFA dostaje 403 mfa_required, a konta z rolą z MFA_REQUIRED_ROLES
@@ -18,12 +20,12 @@
 // env.db ma kontrakt z src/db.js (w testach: PGlite).
 //
 // Tryb tylko do odczytu (APP_WRITE_MODE=read_only, issue #143): każde żądanie
-// zmieniające pod /api/ (poza /api/login i /api/logout — patrz ../write-mode.js)
+// metodą inną niż GET i HEAD pod /api/ (poza /api/login i /api/logout — patrz ../write-mode.js)
 // dostaje 503 { error: 'read_only' } zanim trafi do modułu, w tym webhook
 // Brevo (dostawca ponawia dostarczenie po 5xx — zdarzenie nie ginie).
 
 import { isSameOrigin } from '../auth.js';
-import { json, logRouteError, UNSAFE_METHODS } from './http.js';
+import { isSafeMethod, json, logRouteError } from './http.js';
 import { isReadOnly, isWriteExempt, READ_ONLY_RETRY_AFTER_SECONDS } from '../write-mode.js';
 import { log } from '../log.js';
 import { classifyDbError } from './db-errors.js';
@@ -91,18 +93,26 @@ export const ROUTES = [
   // Kolejne moduły dopisują tu po jednej linii.
 ];
 
+const LOGGED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
+
 export function createPgHandler(routes = ROUTES) {
   return async function handle(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') return json({ status: 'ok' });
 
-    if (url.pathname.startsWith('/api/') && UNSAFE_METHODS.has(request.method) && !isSameOrigin(request)) {
+    // Każda metoda poza GET i HEAD (także OPTIONS i nieznana) przechodzi przez
+    // bramkę Origin i trybu tylko do odczytu — moduł, który przez pomyłkę dopasuje
+    // ścieżkę zapisu do innej metody, nie ominie ich (po #748, http.js isSafeMethod).
+    const unsafe = url.pathname.startsWith('/api/') && !isSafeMethod(request.method);
+    if (unsafe && !isSameOrigin(request)) {
       const exempt = routes.some((route) => typeof route.allowsCrossOrigin === 'function' && route.allowsCrossOrigin(request, url));
       if (!exempt) return json({ error: 'invalid_origin' }, 403);
     }
 
-    if (url.pathname.startsWith('/api/') && UNSAFE_METHODS.has(request.method) && !isWriteExempt(url.pathname) && isReadOnly(env)) {
-      log.warn('write_mode_rejected', { method: request.method, path: url.pathname });
+    if (unsafe && !isWriteExempt(url.pathname) && isReadOnly(env)) {
+      // Metoda spoza listy (np. dowolny token klienta) trafia do logu jako OTHER, jak w node-app.js.
+      const method = LOGGED_METHODS.has(request.method) ? request.method : 'OTHER';
+      log.warn('write_mode_rejected', { method, path: url.pathname });
       return json({ error: 'read_only' }, 503, { 'Retry-After': String(READ_ONLY_RETRY_AFTER_SECONDS) });
     }
 

@@ -264,6 +264,7 @@
     "tests/pg-report-snapshots.test.js": 18.0,
     "tests/pg-representative-overview.test.js": 9.1,
     "tests/pg-retention.test.js": 5.4,
+    "tests/pg-route-method-guard.test.js": 11.0,
     "tests/pg-routes-input-static.test.js": 0.2,
     "tests/pg-routes-wiring.test.js": 4.0,
     "tests/pg-schema-consistency-0143.test.js": 14.3,
