@@ -6,6 +6,10 @@
 //   npm run test:pg-real -- tests/a.test.js   wskazane pliki
 //   npm run test:pg-real -- --all             CAŁY zestaw tests/*.test.js z bazą
 //                                             PostgreSQL zamiast PGlite (RD_TEST_PG_BACKEND=real)
+//   npm run test:pg-real -- --repeat=50 --name='wzorzec' tests/a.test.js
+//                                             te same pliki N razy (nocne powtórzenia testów
+//                                             współbieżności, #111); --name zawęża do testów
+//                                             o pasującej nazwie (node --test-name-pattern)
 //
 // Gdy RD_TEST_PG_URL jest już ustawione (CI: usługa `services: postgres` w
 // .github/workflows/ci.yml), skrypt NIE tworzy własnego serwera, tylko uruchamia
@@ -37,6 +41,9 @@ const args = process.argv.slice(2);
 const runAll = args.includes('--all');
 const externalUrl = process.env.RD_TEST_PG_URL || '';
 const explicitFiles = args.filter((a) => !a.startsWith('--'));
+// --repeat=N: ten sam zestaw plików N razy (domyślnie 1); każdy plik w osobnym procesie.
+const repeat = Math.max(1, Math.min(1000, Number.parseInt(args.find((a) => a.startsWith('--repeat='))?.slice('--repeat='.length) ?? '1', 10) || 1));
+const namePattern = args.find((a) => a.startsWith('--name='))?.slice('--name='.length) || '';
 
 function findBin() {
   const candidates = [];
@@ -67,16 +74,36 @@ function run(command, commandArgs) {
 }
 const idOf = (flag) => Number(spawnSync('id', [flag, 'postgres'], { encoding: 'utf8' }).stdout);
 
+// Przebieg na roli aplikacji (RD_TEST_PG_APP_ROLE=rd_app, #101 pkt 3): dwie grupy plików wymagają
+// uprawnień, których rola aplikacji celowo nie ma, więc biegną w przebiegu właściciela (bez
+// RD_TEST_PG_APP_ROLE), a tu są wypisywane jako pominięte z powodu uprawnień:
+//  - pliki, które do przygotowania danych wyłączają triggery (DISABLE TRIGGER,
+//    session_replication_role = replica; lista z uzasadnieniami: TRIGGER_BYPASS_ALLOWED w
+//    tests/test-quality-lint.test.js) — właśnie tego rd_app zrobić nie może (pg-real-app-role.test.js);
+//  - pliki czytające pg_stat_activity bezpośrednio albo przez tests/helpers/pg-barrier.js i
+//    pg-race.js (testy z barierą sprawdzają, na czym czeka drugie żądanie):
+//    cudze zapytania są widoczne dopiero z rolą pg_read_all_stats, której aplikacja nie dostaje.
+// Reszta zestawu musi przejść na samej roli aplikacji.
+const OWNER_ONLY_FILES = /DISABLE\s+TRIGGER|session_replication_role\s*=\s*replica|pg_stat_activity|helpers\/pg-(?:barrier|race)\.js/i;
+const ownerOnly = (dir, file) => readFileSync(join(dir, file), 'utf8').split('\n')
+  .some((line) => !/^\s*\/\//.test(line) && OWNER_ONLY_FILES.test(line));
+
 function testFiles() {
   if (explicitFiles.length) return explicitFiles;
   const dir = join(root, 'tests');
   const all = readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort();
+  if (runAll && process.env.RD_TEST_PG_APP_ROLE) {
+    const skipped = all.filter((f) => ownerOnly(dir, f));
+    console.error(`# rola ${process.env.RD_TEST_PG_APP_ROLE}: pominięte pliki wymagające uprawnień właściciela albo pg_read_all_stats (${skipped.length}), biegną w przebiegu właściciela: ${skipped.join(', ')}`);
+    return all.filter((f) => !skipped.includes(f)).map((f) => `tests/${f}`);
+  }
   if (runAll) return all.map((f) => `tests/${f}`);
   return all.filter((f) => /process\.env\.RD_TEST_PG_URL/.test(readFileSync(join(dir, f), 'utf8'))).map((f) => `tests/${f}`);
 }
 
 // Testy w tym samym trybie co `npm test` (tests/setup.js: APP_ENV=test, pułapka na sieć).
-const nodeTestArgs = ['--test', '--test-concurrency=1', '--import', './tests/setup.js'];
+const nodeTestArgs = ['--test', '--test-concurrency=1', '--import', './tests/setup.js',
+  ...(namePattern ? [`--test-name-pattern=${namePattern}`] : [])];
 
 function testEnv(extra = {}) {
   const env = { ...process.env, TZ: 'UTC', ...extra };
@@ -110,17 +137,20 @@ async function runFiles(files, url) {
   const env = testEnv({ RD_TEST_PG_URL: url, RD_TEST_PG_RUN_TAG: tag });
   let failed = 0;
   let swept = 0;
-  for (const file of files) {
-    const code = await new Promise((ok) => {
-      currentChild = spawn(process.execPath, [...nodeTestArgs, file], { cwd: root, env, stdio: 'inherit' });
-      currentChild.on('close', (c) => ok(c ?? 1));
-      currentChild.on('error', () => ok(2));
-    });
-    currentChild = null;
-    if (code !== 0) { failed += 1; console.error(`# NIEPOWODZENIE (${code}): ${file}`); }
-    swept += await sweepDatabases(url, tag);
+  for (let round = 1; round <= repeat; round += 1) {
+    if (repeat > 1) console.error(`# powtórzenie ${round}/${repeat}`);
+    for (const file of files) {
+      const code = await new Promise((ok) => {
+        currentChild = spawn(process.execPath, [...nodeTestArgs, file], { cwd: root, env, stdio: 'inherit' });
+        currentChild.on('close', (c) => ok(c ?? 1));
+        currentChild.on('error', () => ok(2));
+      });
+      currentChild = null;
+      if (code !== 0) { failed += 1; console.error(`# NIEPOWODZENIE (${code}): ${file}${repeat > 1 ? ` (powtórzenie ${round}/${repeat})` : ''}`); }
+      swept += await sweepDatabases(url, tag);
+    }
   }
-  console.error(`# pliki: ${files.length}, z błędem: ${failed}, porzucone bazy usunięte przez skrypt: ${swept}`);
+  console.error(`# pliki: ${files.length}${repeat > 1 ? ` × ${repeat}` : ''}, z błędem: ${failed}, porzucone bazy usunięte przez skrypt: ${swept}`);
   return failed ? 1 : 0;
 }
 

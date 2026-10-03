@@ -1,7 +1,19 @@
 name: Nightly real PostgreSQL
-# #111: nocny przebieg PEŁNEGO zestawu tests/*.test.js na prawdziwym PostgreSQL
-# (`--all`, RD_TEST_PG_BACKEND=real) oraz kontrola mutacyjna blokad. Osobny
-# workflow: nie jest wymaganym checkiem i nie wchodzi w `ci-ok` (ci.yml).
+# #111, #101: nocne przebiegi na prawdziwym PostgreSQL, każdy w osobnym jobie
+# (własny serwer `services:` i limit czasu):
+#   nightly-pg-real           PEŁNY zestaw tests/*.test.js (`--all`, RD_TEST_PG_BACKEND=real)
+#                             i kontrola mutacyjna blokad;
+#   nightly-pg-real-app-role  ten sam zestaw na roli aplikacji `rd_app` (SR-05, #101 pkt 3): szuka
+#                             ukrytych zależności od uprawnień właściciela (bez plików, które
+#                             wyłączają triggery w danych testowych albo czytają
+#                             pg_stat_activity — biegną w jobie wyżej). Przebieg DIAGNOSTYCZNY:
+#                             część testów sprawdza niezmienność tabel bezpośrednim UPDATE/DELETE
+#                             albo zakłada obiekty w schemacie public, czego rd_app nie może, więc
+#                             lista niezgodnych plików trafia do podsumowania joba, a krok nie
+#                             oblewa workflow, dopóki nie zostaną sklasyfikowane (docs/TESTING.md);
+#   nightly-concurrency       N-krotne powtórzenie testów z barierą (wyścigi, blokady, 23505)
+#                             i 50 powtórzeń podwójnego przyjęcia zaproszenia.
+# Osobny workflow: nie jest wymaganym checkiem i nie wchodzi w `ci-ok` (ci.yml).
 # Bez sekretów i bez wysyłek; dane wyłącznie syntetyczne.
 on:
   schedule:
@@ -47,3 +59,97 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run test:pg-real -- --all
       - run: npm run test:pg-mutations
+
+  nightly-pg-real-app-role:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        # Ten sam digest co w ci.yml (postgres:16, multi-arch index).
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_PASSWORD: rd_ci_only
+          # Strefa serwera UTC (jak domyślnie na Railway); testy i tak przypinają UTC w sesji.
+          TZ: UTC
+          PGTZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TZ: UTC
+      RD_TEST_PG_URL: postgres://postgres:rd_ci_only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      # Rola aplikacji bez własności tabel (migracja 0170): połączenia testów startują z `-c role=rd_app`,
+      # a baza i szablon migracji powstają rolą właściciela. Pliki wymagające uprawnień właściciela
+      # albo pg_read_all_stats skrypt pomija i wypisuje (biegną w jobie nightly-pg-real).
+      # continue-on-error: lista niezgodnych plików jest jeszcze nieklasyfikowana (docs/TESTING.md),
+      # więc krok nie oblewa workflow; wynik jest w podsumowaniu joba i w logu kroku.
+      - name: Zestaw na roli rd_app
+        id: app-role
+        shell: bash
+        continue-on-error: true
+        run: npm run test:pg-real -- --all 2>&1 | tee rd-app-role.log
+        env:
+          RD_TEST_PG_APP_ROLE: rd_app
+      - name: Pliki niezgodne z rolą rd_app
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Przebieg na roli rd_app'
+            echo
+            echo "Wynik kroku: ${{ steps.app-role.outcome }}"
+            echo
+            grep -E '^# (NIEPOWODZENIE|pliki:|rola )' rd-app-role.log | sed 's/^# /- /' || echo 'Brak danych w logu.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  nightly-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        # Ten sam digest co w ci.yml (postgres:16, multi-arch index).
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_PASSWORD: rd_ci_only
+          # Strefa serwera UTC (jak domyślnie na Railway); testy i tak przypinają UTC w sesji.
+          TZ: UTC
+          PGTZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TZ: UTC
+      RD_TEST_PG_URL: postgres://postgres:rd_ci_only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      # Testy z barierą wymuszają przeplot, więc powtórzenia nie dają „szczęśliwych” przebiegów,
+      # tylko wykrywają niestabilność (czasy, kolejność zatwierdzeń, ponowienia 40001/40P01).
+      - run: >-
+          npm run test:pg-real -- --repeat=20
+          tests/pg-real-double-click.test.js tests/pg-real-domain-locks.test.js
+          tests/pg-real-record-locks.test.js tests/pg-real-replay-23505.test.js
+          tests/pg-real-payment-locks.test.js
+      # #111: podwójne przyjęcie zaproszenia (jedna rola, jedno already_used) 50 razy.
+      - run: npm run test:pg-real -- --repeat=50 --name='zaproszenia' tests/pg-real-record-locks.test.js

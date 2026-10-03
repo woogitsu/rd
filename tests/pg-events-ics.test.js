@@ -1,21 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   approve, cancel, createDraft, handle, listPublic, publish, submit, updateDraft,
 } from '../src/pg/events.js';
+import { createPgliteTestDb } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const ORIGIN = 'https://rd.example.invalid';
 
 const board1 = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: 'year' }], mfaVerified: true };
 const board2 = { userId: 'board2', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
 
 async function eventsDb() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query("INSERT INTO school_years VALUES ('year','2026/27','2026-09-01','2027-08-31')");
   for (const id of ['board1', 'board2']) {
     await db.query('INSERT INTO users (id,email,display_name) VALUES ($1,$2,$3)', [id, `${id}@example.invalid`, `Synthetic ${id}`]);

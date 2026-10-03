@@ -6,11 +6,9 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import { checkSnapshot, createSnapshot, restoreSnapshot, SNAPSHOT_FORMAT, SNAPSHOT_TABLES, snapshotChecksum, verifySnapshot } from '../src/d1-postgres-migration.js';
-
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
+import { createPgliteTestDb } from './helpers/pg.js';
+import { PGlite } from '@electric-sql/pglite';
 
 function syntheticSnapshot() {
   const tables = Object.fromEntries(SNAPSHOT_TABLES.map((table) => [table, []]));
@@ -35,9 +33,7 @@ function syntheticSnapshot() {
 }
 
 async function emptyPostgres() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
-  return db;
+  return createPgliteTestDb();
 }
 
 test('snapshot checksum rejects tampering before restore', () => {

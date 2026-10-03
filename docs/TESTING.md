@@ -17,7 +17,8 @@ Uwaga o współbieżności: testy oparte na PGlite wykonują transakcje po kolei
 „równoległe” scenariusze sprawdzają niezmiennik wyniku, a nie realny wyścig
 (realne wyścigi na PostgreSQL: `tests/pg-reconciliation-race.test.js`,
 `tests/pg-export-race.test.js`, `tests/pg-real-concurrency.test.js`,
-`tests/pg-year-close-race.test.js`, `tests/pg-real-double-click.test.js`, uruchamiane z `RD_TEST_PG_URL`; #208, sekcja „Testy na prawdziwym PostgreSQL” niżej).
+`tests/pg-year-close-race.test.js`, `tests/pg-real-double-click.test.js`, `tests/pg-real-record-locks.test.js`,
+`tests/pg-real-replay-23505.test.js`, uruchamiane z `RD_TEST_PG_URL`; #208, sekcja „Testy na prawdziwym PostgreSQL” niżej).
 
 ## Macierz
 
@@ -279,6 +280,60 @@ zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, us
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
 `tests/openapi-contract.test.js` albo dodają osobny plik z `createContractClient`).
 
+## Szablon bazy PGlite i czas testów (#111)
+
+`createPgliteTestDb()` (`tests/helpers/pg.js`; `createTestDb()` wywołuje je, gdy backend to PGlite) wykonywało dawniej
+wszystkie pliki z `postgres/migrations` przy każdej bazie (~4,5 s). Teraz migracje idą RAZ NA PROCES testowy:
+pierwsza baza jest migrowana, jej katalog danych zrzucany przez `dumpDataDir('none')` PRZED oddaniem bazy testowi
+(zrzut jest więc czysty, mimo że test zaraz zmienia tę bazę), a każda następna baza to nowa instancja z
+`new PGlite({ loadDataDir })` tego zrzutu (~0,6 s). Równoległe pierwsze wywołania czekają na ten sam zrzut,
+a nieudana budowa nie zatruwa kolejnych. Zrzut (~67 MB) żyje w pamięci procesu, więc szablon nie przekracza granic
+procesów: `node --test` uruchamia każdy plik osobno i każdy płaci za migracje raz (plik z jedną bazą płaci tylko za zrzut,
+~0,3 s). Izolację i równoważność z bazą zmigrowaną od zera pilnuje `tests/pg-template-isolation.test.js`
+(ten sam schemat, wyzwalacze, funkcje, indeksy i rola `rd_app`; zapis w jednej bazie niewidoczny w drugiej ani w
+następnym klonie; wyzwalacz niezmienności działa w klonie).
+
+Instancja z `loadDataDir` trzyma w Node timer do `close()`, więc plik testowy, który nie zamyka baz, nie kończyłby procesu
+(wiele testów nie woła `db.close()`). `tests/helpers/pg.js` zamyka niezamknięte bazy PGlite w `after()` pliku testowego,
+a `close()` jest idempotentne (własne `after(() => shared.close())` w testach działa bez zmian). Dotyczy tylko baz z
+`createPgliteTestDb()`/`createTestDb()`; bazy tworzone bezpośrednio przez `new PGlite()` zachowują się jak dotąd.
+
+`RD_TEST_PGLITE_TEMPLATE=off` wraca do migracji od zera przy każdej bazie (pomiar „przed”, diagnostyka; CI tego nie używa).
+Testy, które same budowały `new PGlite()` i pętlę migracji (13 plików: `pg-events*`, `pg-event-tasks`, `pg-meetings*`,
+`postgres-ledger`, `postgres-payments`, `d1-postgres-migration`), korzystają z `createPgliteTestDb()` bez zmiany treści testów.
+Poza szablonem zostają pliki z jedną współdzieloną bazą na plik albo schematem na test (`pg-reconciliation*`,
+`pg-annual-report`, `pg-payment-allocations*`, `pg-report-snapshots`, `pg-bank-statement-import`,
+`pg-ledger-cost-centers`, `health-ready`, `jobs-health` — ten ostatni celowo nie importuje `helpers/pg.js`) oraz
+testy z częściowym zestawem migracji albo migrujące od zera z założenia (`postgres-migrations-manifest`, `postgres-core`,
+`pg-year-close-class-grants`, `pg-schema-consistency-0143`).
+`createPgliteTestDb` zostaje osobną funkcją (używa jej `tests/pg-real-type-parity.test.js` do porównania backendów).
+
+Pomiar lokalny (kontener: 4 rdzenie, 16 GB, Node 22, PGlite 0.5.8; `node --test <plik>` po kolei, ten sam kod, różni się
+tylko `RD_TEST_PGLITE_TEMPLATE`; GitHub runner ma 2 rdzenie i 7 GB, więc czasy bezwzględne tam będą inne):
+
+| Zestaw | Szablon wyłączony | Szablon włączony |
+|---|---|---|
+| 17 reprezentatywnych `tests/pg-*.test.js` (`pg-auth`, `pg-access-denied`, `pg-import`, `pg-documents`, `pg-email`, `pg-authz-matrix`, …), razem | 1323 s | 700 s (−47%) |
+| `pg-auth` (25 baz) | 58,9 s | 18,2 s |
+| `pg-import` (33 bazy) | 79,2 s | 23,6 s |
+| `pg-documents` | 181,7 s | 43,1 s |
+| 13 przekonwertowanych plików, razem | 314 s | 112 s (−64%) |
+| największy proces testowy (RSS) w 17 plikach | 1816 MB | 1710 MB |
+| shard 1/6 (`--test-concurrency=2`, jak w CI) | 333 s | 161 s (−52%) |
+| szczytowy RSS jednego procesu w shardzie | 5935 MB (`pg-promotions`) | 5589 MB (`pg-promotions`) |
+
+Shard 1/6 to 55 plików, 723 testów (711 zielonych, 12 pominiętych, m.in. testy na prawdziwym
+PostgreSQL bez `RD_TEST_PG_URL`), w obu wariantach te same liczby. Szczytowy RSS procesu dla `tests/pg-promotions.test.js` (5,6 GB; baza na każdy test, nigdy niezamykana,
+po ok. 270 MB) i `tests/pg-anonymization-reapply.test.js` (4,0 GB; baza źródłowa i 15 docelowych zamykanych dopiero w
+`after()`) to ryzyko pamięci, niezależne od szablonu (bez niego: 5,9 i 4,4 GB): na runnerze GitHub z 7 GB dwa takie procesy
+naraz (`--test-concurrency=2`) dają górne oszacowanie ponad 9 GB. Nie ma jeszcze danych z GitHub; krok z podsumowaniem pamięci
+w jobie `test` pokaże, czy któryś shard łączy te pliki. Zamykanie baz po każdym teście w obu plikach zmniejszyłoby szczyt
+kilkukrotnie (zakres osobnego PR).
+
+`pg-authz-matrix` (330 testów, ~6,5 min) praktycznie się nie zmienia: dominuje w nim praca testów, nie migracje.
+Czas przebiegów PR na GitHub (kryterium „co najmniej o połowę krótszy, zmierzone na 3 kolejnych przebiegach”) trzeba
+zmierzyć po scaleniu: metoda w `docs/RAILWAY_OPERATIONS.md`, „Pomiar czasu i pamięci testów w CI”.
+
 ## Testy na prawdziwym PostgreSQL (#208)
 
 PGlite ma jedno połączenie i wykonuje transakcje po kolei, więc **nie nadaje się do
@@ -293,7 +348,21 @@ npm run test:pg-real                       # pliki czytające RD_TEST_PG_URL (wy
 npm run test:pg-real -- tests/pg-x.test.js # wskazane pliki
 npm run test:pg-real -- --all              # CAŁY zestaw na PostgreSQL zamiast PGlite
 RD_TEST_PG_APP_ROLE=rd_app npm run test:pg-real -- --all  # jw., ale połączenia testów rolą rd_app (SR-05, #101)
+npm run test:pg-real -- --repeat=20 tests/pg-real-double-click.test.js   # te same pliki 20 razy (#111)
+npm run test:pg-real -- --repeat=50 --name='zaproszenia' tests/pg-real-record-locks.test.js
 ```
+
+`--repeat=N` uruchamia wskazany zestaw plików N razy (każdy plik w osobnym procesie; podsumowanie
+liczy niepowodzenia ze wszystkich powtórzeń), a `--name=wzorzec` zawęża przebieg do testów o pasującej
+nazwie (`node --test-name-pattern`). Używa ich nocny job `nightly-concurrency`.
+
+Przebieg `--all` z `RD_TEST_PG_APP_ROLE` pomija i wypisuje (`# rola rd_app: pominięte pliki …`) pliki, które
+do przygotowania danych potrzebują uprawnień właściciela (`DISABLE TRIGGER`, `session_replication_role = replica`;
+lista z uzasadnieniami: `TRIGGER_BYPASS_ALLOWED` w `tests/test-quality-lint.test.js`) albo czytają `pg_stat_activity`
+(bezpośrednio lub przez `tests/helpers/pg-barrier.js` / `pg-race.js`; cudze zapytania widzi dopiero rola
+`pg_read_all_stats`, której aplikacja nie dostaje). Te pliki biegną w przebiegu właściciela, a reszta zestawu
+musi przejść na samej roli `rd_app`. To nie jest „pełny zestaw na `rd_app`” z kryterium #101: pominięte pliki
+nie mają dowodu na tej roli.
 
 `scripts/test-pg-real.js`: `initdb` w katalogu tymczasowym → serwer na losowym porcie
 (wyłącznie `127.0.0.1`, uwierzytelnianie `trust`, `fsync=off`) → `node --test
@@ -437,6 +506,45 @@ samej linii (`409 budget_line_superseded`, jedna rewizja) oraz dwie poprawki kas
 `budget-category`, `budget-revision`, `opening-adjustment`. `createOpening` używa
 `LOCK TABLE`, nie `FOR UPDATE`, więc zostaje poza listą.
 
+`tests/pg-real-record-locks.test.js` (#208, #111, pomijany bez `RD_TEST_PG_URL`): bariera dla kolejnych blokad
+wiersza, których jedynym punktem serializacji jest zapytanie `FOR UPDATE` z kodu trasy. Rodziny: dwie identyczne
+zmiany imienia ucznia i nazwiska opiekuna (`updateIdentity`), zgody na kontakt w relacji (`updateRelationContact`),
+klasy (`changeEnrollment`), zakończenia przypisania (`endEnrollment`), relacji (`endRelation`), członkostwa ucznia
+(`endStudentHousehold`) i opiekuna (`endGuardianHousehold`) w gospodarstwie oraz dodania członkostwa
+(`addStudentHousehold`) — drugie żądanie czeka na blokadę wiersza i jest powtórką (`changed: false`, jeden wpis
+historii i audytu). Dokumenty: dwa opisy pod różnymi kluczami dostają wersje 1 i 2 (`createDescription`). Aktualności:
+cofnięcie praw do zdjęcia kontra weryfikacja (`409 photo_revoked`, `lockPhoto`). Zebrania: dwie edycje zebrania i
+projektu uchwały z tej samej rewizji (`409 revision_conflict`) oraz dwie korekty obecności tej samej osoby
+(`recordAttendance`). Zaproszenia: podwójne przyjęcie tego samego zaproszenia (`lockInvitation`) kończy się jednym
+przydziałem roli i `already_used` — ten test powtarza nocny job 50 razy (#111). Każdy test sprawdza w
+`pg_stat_activity`, że drugie żądanie czeka na `SELECT … FOR UPDATE` (zwykły SELECT nie czeka na blokadę wiersza, więc
+czekający UPDATE albo INSERT oznaczałby brak blokady). Wspólny szkielet (`race`, `assertWaitsOn`) jest w
+`tests/helpers/pg-race.js`. Mutanty: `families-identity`, `families-relation-contact`, `families-change-enrollment`,
+`families-end-enrollment`, `families-end-relation`, `families-end-student-household`,
+`families-end-guardian-household`, `families-add-student-household`, `documents-description`, `news-photo-lock`,
+`meetings-update`, `meetings-resolution-update`, `meetings-attendance`, `invitation-accept`.
+
+`tests/pg-real-replay-23505.test.js` (#208 kryterium 3, pomijany bez `RD_TEST_PG_URL`): gałęzie `23505 → odtworzenie
+zapisu`, których na PGlite nie da się wykonać. Tu nie ma blokady wiersza: pierwsze żądanie zatrzymuje się w transakcji
+po zapisie wiersza z kluczem, drugie dochodzi do `INSERT` i czeka na transakcję pierwszego (`transactionid`), po jej
+zatwierdzeniu dostaje `23505` (kod w `errors`), a kod trasy odtwarza zapis spoza transakcji. Pokryte: wysłanie
+dokumentu z tym samym kluczem (`200 replayed`, obiekt przegranego usunięty z bucketu, `document_uploads`
+`abandoned`/`duplicate_idempotency_key`), utworzenie wydarzenia, wpisu aktualności i rejestracja zdjęcia z tym samym
+kluczem, wysłanie pliku zdjęcia (23505 na `(zdjęcie, wariant)`, istniejące pliki zwrócone, obiekty przegranego
+usunięte), utworzenie zebrania (23505 na `meeting_request_keys`, zapis przegranej transakcji wycofany), dwie wersje
+dwa zapisy nowej osoby na
+liście obecności (`ON CONFLICT DO NOTHING` → `409 concurrent_version`) oraz podwójne „Rozpocznij zamykanie roku”
+(23505 na `school_year_closures` → dziś `409 conflict`, ponowienie `200 replayed`; test dokumentuje obecne
+zachowanie, nie rozstrzyga, czy powinna to być powtórka; 23505 jest tam mapowany na `conflict` w samej
+transakcji, więc dowodem jest czekanie na transakcję pierwszego i ten kod). Dwa testy to wyjątki od „23505”:
+wersje protokołu zebrania numeruje wyzwalacz `meeting_minutes_insert_guard` (0009) pod `FOR UPDATE` na zebraniu,
+więc druga transakcja dostaje `P0001` i `409 minutes_version_mismatch`, a nie 23505 (ponowienie zapisuje wersję 2);
+podwójne potwierdzenie punktu listy kontrolnej zamknięcia roku serializuje `FOR UPDATE` na istniejącym wierszu
+zamknięcia (mutant `year-close-closure-lock`). Blokada w wyzwalaczu migracji nie ma mutanta (mutant działa na kodzie
+`src/`), ale ma test z barierą.
+Poza zakresem: `createSignup` w `events.js` — gałąź `23505` leży za `FOR UPDATE` na wydarzeniu (`lockEvent`),
+więc bez usunięcia tamtej blokady jest nieosiągalna, a po błędzie transakcja i tak byłaby przerwana (25P02).
+
 `tests/pg-real-idempotency-quota.test.js` (#6, #84, pomijany bez `RD_TEST_PG_URL`): dwa
 wyścigi bez odpowiednika na PGlite. (1) Dwa przypisania dwóch różnych wpłat pod tym samym
 `Idempotency-Key`: zwycięzca dostaje `201`, przegrany czeka w bazie na unikalny klucz
@@ -492,11 +600,20 @@ oraz (`tests/pg-real-domain-locks.test.js`) `lockEvent`, `lockPost`, `lockMeetin
 i `updateGuardianContact`, a w `tests/pg-real-cost-center-locks.test.js` blokadę wpisu przy
 przypisaniu do centrów kosztów (`loadEntry` w `ledger-cost-centers.js`), a w
 `tests/pg-real-budget-locks.test.js` blokady kategorii (dezaktywacja), linii preliminarza (rewizja)
-i bilansu otwarcia (poprawka).
-Poza listą (brak testu z barierą, #208): pozostałe `FOR UPDATE` w `families.js` (relacje, gospodarstwa,
-zapisy do klas), `events.js` (zadania, wycofanie zapisu), `news.js` (zdjęcia), `meetings.js` (uchwały,
-porządek obrad, zawiadomienia), `documents.js` (opis), pozostałe w `payments.js`/`ledger.js`
-(autoryzacje uchwał), `LOCK TABLE` w `createOpening` oraz blokady w triggerach migracji.
+i bilansu otwarcia (poprawka), a w `tests/pg-real-record-locks.test.js` osiem blokad w `families.js`
+(tożsamość, zgoda w relacji, klasa, zakończenie przypisania, relacji i członkostw, dodanie członkostwa),
+`createDescription` (dokumenty), `lockPhoto` (aktualności), `updateMeeting`, `updateResolution` i
+`recordAttendance` (zebrania) oraz `lockInvitation` (przyjęcie zaproszenia), a w
+`tests/pg-real-replay-23505.test.js` blokadę wiersza zamknięcia roku (`loadClosure`).
+Poza listą (#208): `FOR UPDATE` w `events.js` (`cancelTask`, `createSignup`, `withdrawSignup`) oraz w
+`meetings.js` (`withdrawAgendaItem`, `reorderAgendaItems`, `loadNotice`) — te funkcje biorą wcześniej blokadę
+`lockEvent`/`lockMeeting`, więc usunięcie samego drugiego zapytania niczego nie zmienia w wyniku (mutant
+równoważny, nie do zabicia bez usunięcia obu blokad); `FOR UPDATE` w pozostałych modułach (`email.js` poza
+kampanią, `guardian-updates.js`, `payment-references.js`, `login.js`, `mfa.js`, `grant-requests.js`,
+`account-recovery.js`, `privacy-notice.js`, `report-snapshots.js`), blokady doradcze w `promotions.js`,
+`anonymization.js`, `invitation-batch.js`, `processing-restrictions.js` i `reconciliation.js`
+(`bank_statement_file_import`), pozostałe w `payments.js`/`ledger.js` (autoryzacje uchwał), `LOCK TABLE` w
+`createOpening` oraz blokady w triggerach migracji. Kolejny zakres to rozszerzenie listy o te moduły.
 
 Nazwy testów na PGlite nie obiecują wyścigu: `tests/test-quality-lint.test.js`
 (reguła `pglite-race-claim`) odrzuca w plikach bez `RD_TEST_PG_URL` nazwy z
@@ -541,50 +658,33 @@ digest obrazu `postgres:16`). Gdy `RD_TEST_PG_URL` jest ustawione, skrypt
 `scripts/test-pg-real.js` nie stawia własnego serwera, tylko używa wskazanego;
 bez zmiennej działa jak wcześniej (`initdb` w katalogu tymczasowym).
 Zwykłe shardy (`test`) nadal biegną na PGlite i pomijają testy wyścigów.
-Nocny przebieg (#111): osobny workflow `.github/workflows/nightly-pg-real.yml`
-(`schedule:` codziennie 02:17 UTC oraz ręczne `workflow_dispatch`) uruchamia
-`npm run test:pg-real -- --all` (cały zestaw `tests/*.test.js` na prawdziwym
-PostgreSQL) i `npm run test:pg-mutations`, timeout 120 min. Nie jest wymaganym
-checkiem i nie wchodzi w `ci-ok`; `ci.yml` nie ma wyzwalacza `schedule`. Te same
+Nocny przebieg (#111, #101): osobny workflow `.github/workflows/nightly-pg-real.yml`
+(`schedule:` codziennie 02:17 UTC oraz ręczne `workflow_dispatch`), trzy joby z własną usługą PostgreSQL i limitem czasu:
+
+- `nightly-pg-real` (120 min): `npm run test:pg-real -- --all` (cały zestaw `tests/*.test.js` na prawdziwym
+  PostgreSQL) i `npm run test:pg-mutations`;
+- `nightly-pg-real-app-role` (120 min): ten sam zestaw z `RD_TEST_PG_APP_ROLE=rd_app` (punkt 3 z #101). To przebieg
+  DIAGNOSTYCZNY (`continue-on-error`): lokalna próba 18 plików na roli `rd_app` dała 12 plików z błędem, bo testy
+  sprawdzają niezmienność tabel bezpośrednim `UPDATE`/`DELETE` (rola dostaje `permission denied`, a nie komunikat
+  triggera: `audit_events`, `payment_corrections`, `ledger_corrections`, `user_mfa_factors`, `password_reset_tokens`,
+  `access_denial_windows`…), zakładają obiekty w schemacie `public` (`permission denied for schema public`:
+  `pg-real-type-parity`, testy „audit events are atomic…”) albo zmieniają tabele (`must be owner of table`). To nie są
+  błędy aplikacji, tylko testy napisane pod właściciela. Lista niezgodnych plików trafia do podsumowania joba
+  (`### Przebieg na roli rd_app`); kryterium „pełny zestaw testów przechodzi na `rd_app`” z #101 jest otwarte do czasu
+  sklasyfikowania tej listy (test zgodny z rolą albo jawna lista wyjątków z uzasadnieniem, jak `TRIGGER_BYPASS_ALLOWED`);
+- `nightly-concurrency` (90 min): 20 powtórzeń plików z barierą (`pg-real-double-click`, `pg-real-domain-locks`,
+  `pg-real-record-locks`, `pg-real-replay-23505`, `pg-real-payment-locks`) i 50 powtórzeń podwójnego przyjęcia zaproszenia
+  (`--repeat=50 --name='zaproszenia'`, kryterium z #111). Testy z barierą wymuszają przeplot, więc powtórzenia nie są
+  „szczęśliwymi przebiegami”, tylko wykrywają niestabilność (czas, kolejność zatwierdzeń, ponowienia 40001/40P01).
+  `tests/nightly-workflow.test.js` pilnuje, żeby `--name` pasowało do dokładnie jednego testu (wzorzec bez dopasowania to
+  zero testów i cichy zielony przebieg).
+
+Workflow nie jest wymaganym checkiem i nie wchodzi w `ci-ok`; `ci.yml` nie ma wyzwalacza `schedule`. Te same
 przypięte SHA akcji i digest obrazu `postgres` co w `ci.yml` pilnuje
 `tests/ci-supply-chain.test.js` (dla wszystkich plików w `.github/workflows`);
 przy aktualizacji digestu zmień go w obu plikach. Shardy `test` pilnuje
 `tests/ci-shard-coverage.test.js` (każdy plik `tests/*.test.js` w dokładnie jednym
-z 6 shardów).
-
-## Anonimizacja: odtworzenie i ponowne zastosowanie (#91)
-
-Trzy pliki, wyłącznie dane syntetyczne (znaczniki `MRK-*`, domeny `.invalid`):
-
-- `tests/pg-anonymization.test.js` — przebieg z trasy: rodzeństwo i opieka
-  dzielona, sumy netto, paczka roczna bez zmian liczb, wpłaty częściowe i korekty,
-  podwójne kliknięcie, odmowa bez polityki, granice ról, furtka w strażnikach.
-- `tests/pg-anonymization-reapply.test.js` — „odtworzenie eksportu sprzed
-  anonimizacji + ponowne zastosowanie przebiegów”: źródło → paczka roczna PRZED
-  przebiegami → dwa przebiegi (opieka dzielona) → dziennik do pliku poza bazą →
-  `restoreBundle` do pustej bazy (dane osobowe wracają, `anonymization_runs` puste)
-  → `scripts/reapply-anonymization.js`. Sprawdza: dane osobowe zastąpione i stan
-  równy źródłu po przebiegach; sumy wpłat (`household_payment_totals`), korekty,
-  zwroty, księga, relacje i sumy `*_cents` paczki rocznej bez zmian; `--dry-run`
-  niczego nie zmienia i zostawia tylko ślad podglądu; idempotencja (ponowienie,
-  równoległe uruchomienie, kopia już zawierająca pierwszy przebieg, gospodarstwo
-  nieobecne albo już zanonimizowane); kolejność dla osoby wspólnej; wiele plików
-  dziennika; jedna transakcja (wstrzyknięty błąd wycofuje całość); odmowy: brak
-  `--actor`, aktor bez roli `admin` (brak konta, inna rola, zablokowany, cofnięty
-  przydział), blokada środowiska bez `--allow-production`, plik uszkodzony,
-  edytowany albo z danymi osobowymi (np. e-mail zamiast identyfikatora
-  gospodarstwa); strażniki niezmienności po ponowieniu; dziennik i audyt bez danych
-  osobowych; eksport dziennika po ponowieniu równoważny pierwotnemu.
-- `tests/pg-anonymization-proposals.test.js` — raport „propozycja do
-  zatwierdzenia”: „brak polityk” przy pustym rejestrze, polityki niezatwierdzone i
-  opisowe, kandydaci przy komplecie polityk, gospodarstwa z nieupłyniętym okresem poza listą,
-  transakcja `READ ONLY` bez żadnego zapisu, zgodność skrótu planu z podglądem trasy,
-  brak ścieżki wykonania i brak crona w plikach `railway*.json`.
-
-Na prawdziwym PostgreSQL (odtworzenie paczki wymaga uprawnień
-superużytkownika, `session_replication_role`):
-`RD_TEST_PG_BACKEND=real node scripts/test-pg-real.js tests/pg-anonymization-reapply.test.js`
-(analogicznie `tests/pg-anonymization-proposals.test.js`). Nie `--all`.
+z 6 shardów). Job `test-pg-real` ma limit 45 min (było 30; 42 mutanty zamiast 27).
 
 ## Pokrycie dziennikiem zdarzeń (#184)
 

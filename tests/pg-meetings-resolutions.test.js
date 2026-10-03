@@ -2,9 +2,6 @@
 // i śledzenie wykonania. Dane wyłącznie syntetyczne.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   correctResolution,
   createMeeting,
@@ -17,8 +14,8 @@ import {
   recordResolutionExecution,
 } from '../src/pg/meetings.js';
 import { updateMeeting } from './helpers/with-revision.js';
+import { createPgliteTestDb } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const ORIGIN = 'https://rd.example.invalid';
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
@@ -34,8 +31,7 @@ let keySeq = 0;
 const key = () => `res-test-key-${++keySeq}`;
 
 async function resolutionsDb({ pattern = null } = {}) {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query(`INSERT INTO school_years (id, label, starts_on, ends_on, resolution_number_pattern)
     VALUES ('year','2026/27','2026-09-01','2027-08-31', $1),
            ('other','2027/28','2027-09-01','2028-08-31', NULL)`, [pattern]);
@@ -101,7 +97,7 @@ test('no pattern configured (D-15 undecided): suggestedNumber is null, nothing e
   } finally { await db.close(); }
 });
 
-test('two parallel drafts using the same suggested number: the second gets 409 with a fresh suggestion', async () => {
+test('two parallel drafts using the same suggested number: the second gets 409 with a fresh suggestion (PGlite: po kolei, nie wyścig)', async () => {
   const db = await resolutionsDb({ pattern: '{seq}/{year}' });
   try {
     const { meeting, quorumCheck } = await heldMeetingWithQuorum(db);

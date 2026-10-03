@@ -1,14 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
+import { createPgliteTestDb } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 async function ledgerDb() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query("INSERT INTO school_years VALUES ('year','2026/27','2026-09-01','2027-08-31'), ('other','2027/28','2027-09-01','2028-08-31')");
   await db.query("INSERT INTO households (id) VALUES ('family')");
   await db.query("INSERT INTO users (id,email,display_name) VALUES ('user','test@example.invalid','Synthetic')");

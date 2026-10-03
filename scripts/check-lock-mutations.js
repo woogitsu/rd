@@ -13,9 +13,9 @@
 // plik przed kolejnym mutantem. Najpierw przebieg bez mutacji (każdy plik
 // testowy musi być zielony), potem mutanty. Wyłącznie dane syntetyczne.
 //
-// Blokady spoza listy (np. pozostałe FOR UPDATE w families.js, events.js, news.js,
-// meetings.js, documents.js) nie mają jeszcze testu z barierą — docs/TESTING.md,
-// „Kontrola mutacyjna”.
+// Blokady spoza listy nie mają testu, który wykryłby ich usunięcie — docs/TESTING.md,
+// „Kontrola mutacyjna” (m.in. `FOR UPDATE` w events.js, powielone pod `lockEvent`,
+// oraz w `news.js`/`meetings.js`/`documents.js`, powielone pod `lockPost`/`lockMeeting`).
 import { spawn } from 'node:child_process';
 import { cp, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,6 +31,8 @@ const DOMAIN = 'tests/pg-real-domain-locks.test.js';
 const YEAR_CLOSE = 'tests/pg-year-close-race.test.js';
 const COST_CENTERS = 'tests/pg-real-cost-center-locks.test.js';
 const BUDGET_LOCKS = 'tests/pg-real-budget-locks.test.js';
+const RECORD_LOCKS = 'tests/pg-real-record-locks.test.js';
+const REPLAY_23505 = 'tests/pg-real-replay-23505.test.js';
 
 // kind: 'for-update' usuwa każde `FOR UPDATE [OF x]` w funkcji `fn`;
 // 'advisory' zamienia `pg_advisory_xact_lock(` na `(` (zapytanie zostaje
@@ -63,6 +65,21 @@ export const MUTANTS = [
   { id: 'budget-category', file: 'src/pg/routes/ledger-budget.js', fn: 'deactivateCategory', kind: 'for-update', test: BUDGET_LOCKS },
   { id: 'budget-revision', file: 'src/pg/routes/ledger-budget.js', fn: 'reviseLine', kind: 'for-update', test: BUDGET_LOCKS },
   { id: 'opening-adjustment', file: 'src/pg/routes/ledger-cash.js', fn: 'createAdjustment', kind: 'for-update', test: BUDGET_LOCKS },
+  { id: 'families-identity', file: 'src/pg/routes/families.js', fn: 'updateIdentity', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-relation-contact', file: 'src/pg/routes/families.js', fn: 'updateRelationContact', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-change-enrollment', file: 'src/pg/routes/families.js', fn: 'changeEnrollment', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-end-enrollment', file: 'src/pg/routes/families.js', fn: 'endEnrollment', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-end-relation', file: 'src/pg/routes/families.js', fn: 'endRelation', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-end-student-household', file: 'src/pg/routes/families.js', fn: 'endStudentHousehold', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-end-guardian-household', file: 'src/pg/routes/families.js', fn: 'endGuardianHousehold', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-add-student-household', file: 'src/pg/routes/families.js', fn: 'addStudentHousehold', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'documents-description', file: 'src/pg/routes/documents.js', fn: 'createDescription', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'news-photo-lock', file: 'src/pg/news.js', fn: 'lockPhoto', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'meetings-update', file: 'src/pg/meetings.js', fn: 'updateMeeting', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'meetings-resolution-update', file: 'src/pg/meetings.js', fn: 'updateResolution', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'meetings-attendance', file: 'src/pg/meetings.js', fn: 'recordAttendance', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'invitation-accept', file: 'src/pg/auth.js', fn: 'lockInvitation', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'year-close-closure-lock', file: 'src/pg/routes/year-close.js', fn: 'loadClosure', kind: 'for-update', test: REPLAY_23505 },
 ];
 
 // Zwraca [początek, koniec) ciała funkcji najwyższego poziomu `fn` w `source`.

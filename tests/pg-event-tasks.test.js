@@ -1,15 +1,12 @@
 // Zadania i zapisy wolontariuszy (issue #142, Etap 1). Wyłącznie syntetyczne dane.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   cancel, cancelTask, createDraft, createSignup, createTask, listPublic, listPublicTasks, listTaskCandidates, listTasks,
   publish, approve, submit, updateDraft, withdrawSignup,
 } from '../src/pg/events.js';
+import { createPgliteTestDb } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 const board = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: 'year' }], mfaVerified: true };
 const board2 = { userId: 'board2', grants: [{ role: 'board', classId: null, schoolYearId: null }], mfaVerified: true };
@@ -17,8 +14,7 @@ const repA = { userId: 'repa', grants: [{ role: 'representative', classId: 'c1a'
 const repB = { userId: 'repb', grants: [{ role: 'representative', classId: 'c1b', schoolYearId: 'year' }], mfaVerified: false };
 
 async function tasksDb() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query("INSERT INTO school_years VALUES ('year','2026/27','2026-09-01','2027-08-31'), ('next','2027/28','2027-09-01','2028-08-31')");
   await db.query("INSERT INTO classes VALUES ('c1a','year','1A'), ('c1b','year','1B')");
   for (const id of ['board1', 'board2', 'repa', 'repb']) {
@@ -111,7 +107,7 @@ test('two guardians of the same child can each sign up to the same task; no dupl
   } finally { await db.close(); }
 });
 
-test('slot limit: the last concurrent signup gets task_full', async () => {
+test('slot limit: the last concurrent signup gets task_full (PGlite: po kolei, nie wyścig)', async () => {
   const db = await tasksDb();
   try {
     const event = await draftClassEvent(db, board, 'c1a');
