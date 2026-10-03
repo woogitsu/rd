@@ -188,7 +188,7 @@ test('cancelling a task itself is a terminal, idempotent action and no audit met
   } finally { await db.close(); }
 });
 
-test('closed school year freezes new tasks and signups (409 school_year_closed)', async () => {
+test('closed school year freezes new tasks, signups and task cancellation (409 school_year_closed)', async () => {
   const db = await tasksDb();
   try {
     const event = await draftClassEvent(db, board, 'c1a');
@@ -212,6 +212,20 @@ test('closed school year freezes new tasks and signups (409 school_year_closed)'
       createSignup(db, repA, { eventId: event.id, taskId: created.task.id, guardianId: 'g1', idempotencyKey: key() }),
       (error) => error.code === 'school_year_closed',
     );
+    // #80 (0186): odwołanie zadania to UPDATE event_tasks — też zamrożone.
+    await assert.rejects(
+      cancelTask(db, board, { eventId: event.id, taskId: created.task.id, reason: 'Odwołanie po zamknięciu' }),
+      (error) => error.code === 'school_year_closed' && error.status === 409,
+    );
+    await assert.rejects(
+      db.query('UPDATE event_tasks SET cancelled_at = now(), cancelled_by = $2, cancellation_reason = $3 WHERE id = $1',
+        [created.task.id, 'board1', 'Bezpośrednio w bazie']),
+      /school_year_closed/,
+    );
+    const { rows } = await db.query('SELECT cancelled_at FROM event_tasks WHERE id = $1', [created.task.id]);
+    assert.equal(rows[0].cancelled_at, null, 'zadanie zamkniętego roku nadal nieodwołane');
+    const audits = await db.query("SELECT count(*)::int AS n FROM audit_events WHERE action = 'event.task_cancelled'");
+    assert.equal(audits.rows[0].n, 0, 'odrzucone odwołanie nie zostawia zdarzenia audytu');
   } finally { await db.close(); }
 });
 

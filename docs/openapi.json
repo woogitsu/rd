@@ -15446,6 +15446,19 @@
               "event_task_not_found"
             ]
           },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed"
+            ]
+          },
           "413": {
             "description": "Żądanie albo wynik za duży (kod z katalogu).",
             "content": {

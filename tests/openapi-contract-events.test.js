@@ -558,10 +558,11 @@ test('kontrakt modułu events: prawdziwe odpowiedzi wydarzeń, przebiegu, zadań
       const response = await client.call(method, path, { cookie: G, body, key: keyed ? key('closed') : undefined, expect: 409 });
       assert.equal(response.body.error, 'school_year_closed', `${method} ${path}`);
     }
-    // Stan obecny (rozbieżność opisana w docs/API.md, etap 9): trigger zamrożenia roku obejmuje tylko INSERT do event_tasks,
-    // więc odwołanie zadania (UPDATE) w zamkniętym roku przechodzi.
-    const lateCancel = await client.call('POST', `${openBase}/tasks/${openTask.id}/cancel`, { cookie: G, body: { reason: 'Odwołanie po zamknięciu roku' }, expect: 200 });
-    assert.deepEqual([lateCancel.body.replayed, Boolean(lateCancel.body.task.cancelledAt)], [false, true]);
+    // Odwołanie zadania (UPDATE event_tasks) w zamkniętym roku: trigger a0_year_freeze obejmuje od 0186 także UPDATE (#80),
+    // więc 409 school_year_closed jak pozostałe zapisy; zadanie zostaje nieodwołane.
+    const lateCancel = await client.call('POST', `${openBase}/tasks/${openTask.id}/cancel`, { cookie: G, body: { reason: 'Odwołanie po zamknięciu roku' }, expect: 409 });
+    assert.equal(lateCancel.body.error, 'school_year_closed');
+    assert.equal((await client.call('GET', `${openBase}/tasks`, { cookie: G, expect: 200 })).body.tasks[0].cancelledAt, null, 'zadanie nadal nieodwołane');
     assert.equal((await client.call('GET', `${openBase}/tasks`, { cookie: G, expect: 200 })).body.tasks[0].confirmedCount, 1, 'odczyt w zamkniętym roku działa');
     assert.ok((await publicIds(`?schoolYearId=${YEAR}`)).includes(school.id), 'publiczny kalendarz zamkniętego roku nadal działa');
     assert.equal((await client.call('GET', `/api/events?schoolYearId=${YEAR}`, { cookie: A, expect: 403 })).body.error, 'forbidden', 'przydział roku wygasł');

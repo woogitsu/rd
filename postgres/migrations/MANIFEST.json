@@ -430,5 +430,9 @@
   {
     "name": "0185_anonymization_reapply.sql",
     "sha256": "3bf397b24c4d9b4aa2ea76458a70ae21b2a55efd26ef9c761282df00b43e3f0a"
+  },
+  {
+    "name": "0186_event_tasks_year_freeze_update.sql",
+    "sha256": "1f388b6a122d0e57d4b4196e5d7cf997c5017c08c78b5670d60190223dbaf1e5"
   }
 ]
