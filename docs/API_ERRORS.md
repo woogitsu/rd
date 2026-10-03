@@ -449,7 +449,9 @@ przy przydziale, nie błąd.
 | `request_not_found` | Nie znaleziono wniosku. | Nie — popraw dane żądania. |
 | `request_too_large` | Za dużo danych w jednym żądaniu. | Zależy od kontekstu (patrz moduł trasy). |
 | `reschedule_no_change` | Podany termin jest taki sam jak obecny. | Nie — popraw dane żądania. |
+| `resolution_amount_exceeded` | Ten wydatek przekracza kwotę upoważnioną uchwałą. Sprawdź pozostałą kwotę albo potrzebną nową uchwałę. | Nie — popraw dane żądania. |
 | `resolution_expense_only` | Uchwałę jako upoważnienie można wskazać tylko przy wydatku. | Zależy od kontekstu (patrz moduł trasy). |
+| `resolution_expired` | Termin upoważnienia z uchwały minął przed datą wydatku. | Nie — popraw dane żądania. |
 | `resolution_final_immutable` | Uchwała przyjęta lub odrzucona jest niezmienna. Użyj poprawki zapisu. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_adopted` | Wskazana uchwała nie jest przyjęta. | Zależy od kontekstu (patrz moduł trasy). |
 | `resolution_not_approvable` | Zatwierdzenia drugiej osoby wymaga tylko potwierdzenie, że wiadomość nie wyszła. | Nie — popraw dane żądania. |
@@ -458,6 +460,7 @@ przy przydziale, nie błąd.
 | `resolution_not_found` | Nie znaleziono uchwały. | Nie — popraw dane żądania. |
 | `resolution_number_required` | Uchwała przyjęta wymaga numeru. | Nie — popraw dane żądania. |
 | `resolution_number_taken` | Ten numer uchwały jest już zajęty w tym roku szkolnym. | Zależy od kontekstu (patrz moduł trasy). |
+| `resolution_repealed` | Wskazana uchwała została uchylona. | Nie — popraw dane żądania. |
 | `resolution_reference_mismatch` | Referencja uchwały nie zgadza się z numerem wskazanej uchwały. | Nie — popraw dane żądania. |
 | `resolution_required` | Ten wydatek wymaga wskazania uchwały. | Nie — popraw dane żądania. |
 | `restore_drill_failed` | Próba odtworzenia kopii nie powiodła się. Sprawdź dziennik operacyjny. | Zależy od kontekstu (patrz moduł trasy). |
@@ -565,12 +568,15 @@ i transakcje z `src/db.js`:
 - **`405` zawsze z `Allow`.** `tests/pg-tx-retry.test.js` skanuje `src/pg/**`
   i sprawdza odpowiedzi na nieobsługiwane metody.
 
-## OpenAPI (#160, etap 1)
+## OpenAPI (#160, etapy 1-3)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem
-`npm run openapi:build` z `tests/helpers/route-matrix.js` i z tabeli kodów
-powyżej; `tests/openapi.test.js` psuje się przy ręcznej edycji pliku albo trasie
-dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
+`npm run openapi:build` z `tests/helpers/route-matrix.js`, z tabeli kodów
+powyżej i ze schematów `src/pg/schemas/*` (moduły pokryte w etapie 2: wpłaty
+i księga, w etapie 3: rodziny i sesja; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
+`tests/openapi-contract.test.js` sprawdza, że należą do tego katalogu i
+występują w źródle trasy); `tests/openapi.test.js` psuje się przy ręcznej
+edycji pliku albo trasie dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
 `docs/AUTHORIZATION.md` (D-08/D-09), do zatwierdzenia przez zarząd/szkołę.
 `x-rd-deny-status` to statusy odmowy wyliczone z macierzy (403 lub 404 per
 trasa), więc polityka 403/404 jest już czytelna maszynowo, choć jeszcze nie
@@ -640,9 +646,9 @@ błędów"). Nie obejmuje:
   (tabela per moduł wyżej opisuje stan, nie decyzję; różnice między
   `families.js`/`documents.js` i `payments.js`/`ledger.js`/`email.js`/
   `reconciliation.js` opisane w issue #160);
-- schematów ciał żądań i odpowiedzi w `docs/openapi.json` (etap 1 generatora,
-  `scripts/build-openapi.js`, opisuje tylko ścieżki, metody, role, MFA,
-  statusy i kody z tego katalogu; patrz sekcja „OpenAPI” niżej);
+- schematów ciał żądań i odpowiedzi dla modułów jeszcze niepokrytych w
+  `docs/openapi.json` (etap 2 objął wpłaty i księgę, etap 3 rodziny i sesję; reszta wg
+  `x-rd-schema-coverage`, patrz `docs/API.md`, „Schematy żądań i odpowiedzi”);
 - objęcia sprawdzaniem typów całego `src/pg/**`. Dziś (#160): `jsconfig.json`
   z `checkJs` dla `src/pg/input.js`, `scope.js`, `pii-gate.js`, `audit.js`,
   `authorization.js`, `auth.js`, `http.js` (typy `Db`, `Tx`, `Actor`,

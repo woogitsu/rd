@@ -151,8 +151,8 @@ Panel zebrań dociąga kolejne strony `GET /api/meetings`, dopóki jest `nextCur
 
 ## Monitoring kolejki kodów weryfikacyjnych (#140 pkt 5)
 
-Trasy się nie zmieniają (nowych ścieżek nie ma, więc `docs/openapi.json` jest bez zmian — generator
-opisuje ścieżki, role i statusy, nie schematy odpowiedzi). Zmieniły się kształty trzech odczytów
+Trasy się nie zmieniają (nowych ścieżek nie ma, więc `docs/openapi.json` jest bez zmian — te trasy
+nie mają jeszcze schematów odpowiedzi, patrz „Schematy żądań i odpowiedzi” niżej). Zmieniły się kształty trzech odczytów
 techniczno-operacyjnych; wszystkie niosą wyłącznie liczby, znaczniki czasu i kody — bez adresów,
 kodów weryfikacyjnych, skrótów i identyfikatorów wniosków:
 
@@ -190,6 +190,51 @@ Dla pozostałych kont (także `audit` przy fladze wyłączonej) pole nie występ
 odpowiedź nie zdradza konfiguracji serwera, a kształt sesji pozostaje jak dotąd
 (`sessionId`, `user`, `expiresAt`, `mfaVerified`, `writeMode`). Pole niczego nie
 odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądaniu
-(`docs/AUTHORIZATION.md`, „Zakres roli audit”). Opis w `docs/openapi.json` nie ma
-schematu odpowiedzi sesji (generator opisuje trasy i role, nie treść odpowiedzi),
-więc `npm run openapi:build` nie zmienia pliku.
+(`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
+`capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
+
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-3)
+
+`docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
+zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
+(`tests/helpers/route-matrix.js`: ścieżki, metody, role, MFA, statusy), katalogu kodów
+(`docs/API_ERRORS.md`) i **schematów ręcznie pisanych obok tras** w `src/pg/schemas/<moduł>.js`.
+Plik nie jest edytowany ręcznie; role w `x-rd-roles` pozostają założeniami D-08/D-09 do zatwierdzenia.
+
+Schemat modułu eksportuje `name`, `components` (schematy współdzielone) i `routes`:
+`{ 'POST /api/payments': { body, idempotencyKey, query, responses, errors } }`. Generator dołącza do
+operacji `requestBody`, parametry (zapytanie, `Idempotency-Key`), odpowiedzi sukcesu z kształtem
+(200 odtworzenia i 201 zapisu, z nagłówkiem `Idempotency-Replayed`; eksporty CSV/XLSX z typem pliku;
+wpis bez `schema`, np. `204` wylogowania, nie ma treści) oraz `x-rd-error-codes` — kody błędów danej trasy
+per status, wyłącznie z katalogu. Pusta lista kodów oznacza status, który macierz tras przypisuje operacji,
+ale trasa go nie zwraca (dziś: `403` przy `GET /api/session` i `GET /api/access`, patrz niżej). Wspólne
+elementy (`Id`, kwoty w eurocentach, daty) są w `src/pg/schemas/common.js`. Schematy odpowiedzi są ścisłe
+(`additionalProperties: false`): nowe pole w odpowiedzi trasy wymaga świadomej zmiany schematu;
+schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
+
+Pilnują tego `tests/openapi-contract.test.js` i `tests/openapi-contract-families.test.js` (opis w
+`docs/TESTING.md`): każda trasa pokrytego modułu ma schemat, a **prawdziwe odpowiedzi** tras (utworzenie,
+ponowienie z tym samym kluczem, korekta częściowa, lista z kursorem, karta gospodarstwa z rodzeństwem i
+opieką dzieloną, sesja przed i po MFA, odmowy i błędy) przechodzą walidację tymi schematami. Schematy opisują obecny kontrakt
+tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
+
+| Stan | Moduły |
+| --- | --- |
+| Pokryte (48 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3) |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `admin`, `audit-history`, `audit-reviews`, `board`, `documents`, `email`, `events`, `exports`, `financial-reports`, `guardian-updates`, `import`, `ledger-budget`, `ledger-cash`, `ledger-cost-centers`, `login`, `meetings`, `mfa`, `news`, `print`, `privacy-notice`, `reconciliation`, `representative`, `year-close` |
+
+Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
+
+- `families`: zapisy **nie** używają `Idempotency-Key` — ponowienie tej samej zmiany (podwójne kliknięcie)
+  zwraca `200` z `changed: false` bez drugiego wpisu historii (dodanie członkostwa i nowe przypisanie do klasy:
+  `201` przy zapisie, `200` przy ponowieniu). Listy klas i uczniów klasy nie są stronicowane (bez kursora).
+  Zakres klasowy dostaje węższy kształt karty gospodarstwa: bez `isPrimaryHousehold`, bez `isPrimary` przy
+  gospodarstwach i bez `paymentTotals` (te pola są w schemacie opcjonalne). Obiekt poza zakresem i błędny
+  identyfikator w ścieżce dają `404 not_found` jak nieistniejący.
+- `session`: logowanie (`login`) i MFA (`mfa`) są osobnymi modułami, jeszcze bez schematów. Macierz tras
+  przypisuje `GET /api/session` i `GET /api/access` status odmowy `403`, choć trasy są dostępne dla każdego
+  zalogowanego i zwolnione z bramki MFA, więc `403` nie występuje (stąd pusta lista kodów).
+
+Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
+`UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.
+

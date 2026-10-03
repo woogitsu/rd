@@ -13,14 +13,16 @@
 // plik przed kolejnym mutantem. Najpierw przebieg bez mutacji (każdy plik
 // testowy musi być zielony), potem mutanty. Wyłącznie dane syntetyczne.
 //
-// Blokady spoza listy nie mają testu, który wykryłby ich usunięcie — docs/TESTING.md,
-// „Kontrola mutacyjna” (m.in. `FOR UPDATE` w events.js, powielone pod `lockEvent`,
-// oraz w `news.js`/`meetings.js`/`documents.js`, powielone pod `lockPost`/`lockMeeting`).
+// Blokady wierszy spoza listy mają wpis w LOCK_EXCEPTIONS (scripts/lock-inventory.js)
+// z uzasadnieniem; tests/lock-inventory.test.js pilnuje, żeby każda blokada wiersza
+// w src/pg miała mutant albo wyjątek (tabela pokrycia: docs/TESTING.md,
+// „Inwentaryzacja blokad wierszy”).
 import { spawn } from 'node:child_process';
 import { cp, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LOCK_KINDS, scanSource } from './lock-inventory.js';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -33,10 +35,17 @@ const COST_CENTERS = 'tests/pg-real-cost-center-locks.test.js';
 const BUDGET_LOCKS = 'tests/pg-real-budget-locks.test.js';
 const RECORD_LOCKS = 'tests/pg-real-record-locks.test.js';
 const REPLAY_23505 = 'tests/pg-real-replay-23505.test.js';
+const REQUEST_LOCKS = 'tests/pg-real-request-locks.test.js';
+const DISABLE_SESSION = 'tests/pg-disable-session-race.test.js';
+const AUTH_LOCKS = 'tests/pg-real-auth-locks.test.js';
+const EMAIL_LOCKS = 'tests/pg-real-email-locks.test.js';
 
-// kind: 'for-update' usuwa każde `FOR UPDATE [OF x]` w funkcji `fn`;
-// 'advisory' zamienia `pg_advisory_xact_lock(` na `(` (zapytanie zostaje
-// poprawne i ma te same parametry, ale niczego nie blokuje).
+// kind: 'for-update' usuwa każde `FOR UPDATE [OF x]` w kodzie funkcji `fn`
+// (komentarze pomija skaner z scripts/lock-inventory.js), 'for-share' — każde
+// `FOR SHARE [OF x]`; opcjonalne `table` zawęża mutant do blokady wierszy tej
+// tabeli (funkcja z kilkoma blokadami: osobny mutant na każdą, wymaga tego
+// tests/lock-inventory.test.js); 'advisory' zamienia `pg_advisory_xact_lock(` na
+// `(` (zapytanie zostaje poprawne i ma te same parametry, ale niczego nie blokuje).
 export const MUTANTS = [
   { id: 'payments-correction', file: 'src/pg/routes/payments.js', fn: 'createCorrection', kind: 'for-update', test: DOUBLE_CLICK },
   { id: 'payments-assign', file: 'src/pg/routes/payments.js', fn: 'assignPayment', kind: 'for-update', test: DOUBLE_CLICK },
@@ -53,7 +62,7 @@ export const MUTANTS = [
   { id: 'payments-allocation', file: 'src/pg/routes/payments.js', fn: 'createAllocation', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'payments-allocation-reversal', file: 'src/pg/routes/payments.js', fn: 'reverseAllocation', kind: 'for-update', test: PAYMENT_LOCKS },
   { id: 'ledger-transfer-reversal', file: 'src/pg/routes/ledger-cash.js', fn: 'createTransfer', kind: 'for-update', test: PAYMENT_LOCKS },
-  { id: 'ledger-replacement', file: 'src/pg/routes/ledger.js', fn: 'createReplacement', kind: 'for-update', test: PAYMENT_LOCKS },
+  { id: 'ledger-replacement', file: 'src/pg/routes/ledger.js', fn: 'createReplacement', kind: 'for-update', table: 'ledger_entries', test: PAYMENT_LOCKS },
   { id: 'email-cancel', file: 'src/pg/routes/email.js', fn: 'loadCampaign', kind: 'for-update', test: CONCURRENCY },
   { id: 'events-lock', file: 'src/pg/events.js', fn: 'lockEvent', kind: 'for-update', test: DOMAIN },
   { id: 'news-lock', file: 'src/pg/news.js', fn: 'lockPost', kind: 'for-update', test: DOMAIN },
@@ -65,7 +74,8 @@ export const MUTANTS = [
   { id: 'budget-category', file: 'src/pg/routes/ledger-budget.js', fn: 'deactivateCategory', kind: 'for-update', test: BUDGET_LOCKS },
   { id: 'budget-revision', file: 'src/pg/routes/ledger-budget.js', fn: 'reviseLine', kind: 'for-update', test: BUDGET_LOCKS },
   { id: 'opening-adjustment', file: 'src/pg/routes/ledger-cash.js', fn: 'createAdjustment', kind: 'for-update', test: BUDGET_LOCKS },
-  { id: 'families-identity', file: 'src/pg/routes/families.js', fn: 'updateIdentity', kind: 'for-update', test: RECORD_LOCKS },
+  { id: 'families-identity', file: 'src/pg/routes/families.js', fn: 'updateIdentity', kind: 'for-update', table: 'students', test: RECORD_LOCKS },
+  { id: 'families-identity-guardian', file: 'src/pg/routes/families.js', fn: 'updateIdentity', kind: 'for-update', table: 'guardians', test: RECORD_LOCKS },
   { id: 'families-relation-contact', file: 'src/pg/routes/families.js', fn: 'updateRelationContact', kind: 'for-update', test: RECORD_LOCKS },
   { id: 'families-change-enrollment', file: 'src/pg/routes/families.js', fn: 'changeEnrollment', kind: 'for-update', test: RECORD_LOCKS },
   { id: 'families-end-enrollment', file: 'src/pg/routes/families.js', fn: 'endEnrollment', kind: 'for-update', test: RECORD_LOCKS },
@@ -80,6 +90,21 @@ export const MUTANTS = [
   { id: 'meetings-attendance', file: 'src/pg/meetings.js', fn: 'recordAttendance', kind: 'for-update', test: RECORD_LOCKS },
   { id: 'invitation-accept', file: 'src/pg/auth.js', fn: 'lockInvitation', kind: 'for-update', test: RECORD_LOCKS },
   { id: 'year-close-closure-lock', file: 'src/pg/routes/year-close.js', fn: 'loadClosure', kind: 'for-update', test: REPLAY_23505 },
+  // Inwentaryzacja blokad (scripts/lock-inventory.js): blokady, których brak daje realny wyścig.
+  { id: 'grant-request-lock', file: 'src/pg/grant-requests.js', fn: 'lockGrantRequest', kind: 'for-update', test: DOUBLE_CLICK },
+  { id: 'session-create-share', file: 'src/pg/auth.js', fn: 'createSession', kind: 'for-share', test: DISABLE_SESSION },
+  { id: 'guardian-update-submit', file: 'src/pg/routes/guardian-updates.js', fn: 'submitUpdate', kind: 'for-update', test: REQUEST_LOCKS },
+  { id: 'guardian-update-decide', file: 'src/pg/routes/guardian-updates.js', fn: 'decideRequest', kind: 'for-update', table: 'guardian_update_requests', test: REQUEST_LOCKS },
+  { id: 'guardian-update-decide-guardian', file: 'src/pg/routes/guardian-updates.js', fn: 'decideRequest', kind: 'for-update', table: 'guardians', test: REQUEST_LOCKS },
+  { id: 'data-request-status', file: 'src/pg/routes/admin.js', fn: 'setDataRequestStatus', kind: 'for-update', test: REQUEST_LOCKS },
+  { id: 'processing-restriction-request', file: 'src/pg/processing-restrictions.js', fn: 'changeProcessingRestriction', kind: 'for-update', test: REQUEST_LOCKS },
+  { id: 'families-rectification-request', file: 'src/pg/routes/families.js', fn: 'checkRectificationRequest', kind: 'for-share', test: REQUEST_LOCKS },
+  { id: 'ledger-category-deactivate', file: 'src/pg/routes/ledger.js', fn: 'deactivateCategory', kind: 'for-update', test: BUDGET_LOCKS },
+  { id: 'password-reset-issue', file: 'src/pg/login.js', fn: 'issuePasswordResetInTx', kind: 'for-update', test: AUTH_LOCKS },
+  { id: 'login-attempt-reserve', file: 'src/pg/login.js', fn: 'reserveAttempt', kind: 'for-update', test: AUTH_LOCKS },
+  { id: 'grant-target-lock', file: 'src/pg/routes/admin.js', fn: 'lockGrantTarget', kind: 'for-update', test: AUTH_LOCKS },
+  { id: 'email-outbox-resolution', file: 'src/pg/routes/email.js', fn: 'createResolution', kind: 'for-update', test: EMAIL_LOCKS },
+  { id: 'email-suppression-release', file: 'src/pg/routes/email.js', fn: 'release', kind: 'for-update', test: EMAIL_LOCKS },
 ];
 
 // Zwraca [początek, koniec) ciała funkcji najwyższego poziomu `fn` w `source`.
@@ -94,12 +119,31 @@ export function functionRange(source, fn) {
 export function applyMutant(source, mutant) {
   const range = functionRange(source, mutant.fn);
   if (!range) throw new Error(`${mutant.id}: brak funkcji ${mutant.fn} w ${mutant.file}`);
-  const body = source.slice(...range);
-  const pattern = mutant.kind === 'advisory' ? /pg_advisory_xact_lock\(/g : /\s*FOR UPDATE(?: OF \w+)?/g;
-  const replacement = mutant.kind === 'advisory' ? '(' : '';
-  const hits = body.match(pattern)?.length ?? 0;
-  if (!hits) throw new Error(`${mutant.id}: brak blokady (${mutant.kind}) w ${mutant.fn} — lista mutantów jest nieaktualna`);
-  return { source: source.slice(0, range[0]) + body.replace(pattern, replacement) + source.slice(range[1]), hits };
+  if (mutant.kind === 'advisory') {
+    const body = source.slice(...range);
+    const hits = body.match(/pg_advisory_xact_lock\(/g)?.length ?? 0;
+    if (!hits) throw new Error(`${mutant.id}: brak blokady (${mutant.kind}) w ${mutant.fn} — lista mutantów jest nieaktualna`);
+    return { source: source.slice(0, range[0]) + body.replace(/pg_advisory_xact_lock\(/g, '(') + source.slice(range[1]), hits };
+  }
+  // Blokady wierszy: wystąpienia ze skanera (kod bez komentarzy) w tej funkcji,
+  // danego rodzaju i — gdy mutant ma `table` — tylko tej tabeli. Usuwane od końca
+  // razem z poprzedzającymi białymi znakami.
+  const targets = selectMutantLocks(source, mutant);
+  if (!targets.length) throw new Error(`${mutant.id}: brak blokady (${mutant.kind}${mutant.table ? `, ${mutant.table}` : ''}) w ${mutant.fn} — lista mutantów jest nieaktualna`);
+  let mutated = source;
+  for (const lock of [...targets].sort((a, b) => b.index - a.index)) {
+    let start = lock.index;
+    while (start > 0 && /\s/.test(mutated[start - 1])) start -= 1;
+    mutated = mutated.slice(0, start) + mutated.slice(lock.index + lock.length);
+  }
+  return { source: mutated, hits: targets.length };
+}
+
+// Wystąpienia blokady wierszy, które usuwa mutant (rodzaj `for-update`, `for-share`, …).
+export function selectMutantLocks(source, mutant) {
+  if (!LOCK_KINDS[mutant.kind]) throw new Error(`${mutant.id}: nieznany rodzaj mutanta ${mutant.kind}`);
+  return scanSource(source, mutant.file)
+    .filter((lock) => lock.fn === mutant.fn && lock.kind === mutant.kind && (!mutant.table || lock.table === mutant.table));
 }
 
 function runTests(dir, file) {
@@ -126,7 +170,7 @@ async function main() {
   }
   for (const mutant of mutants) applyMutant(await readFile(join(root, mutant.file), 'utf8'), mutant);
   if (args.includes('--list')) {
-    for (const m of mutants) console.log(`${m.id}\t${m.file}#${m.fn}\t${m.kind}\t${m.test}`);
+    for (const m of mutants) console.log(`${m.id}\t${m.file}#${m.fn}${m.table ? `:${m.table}` : ''}\t${m.kind}\t${m.test}`);
     return 0;
   }
 
@@ -166,7 +210,7 @@ async function main() {
           console.error(`${mutant.id}: brak raportu testów (kod ${result.code}).`);
           return 2;
         }
-        console.log(`${killed ? 'zabity  ' : 'PRZEŻYŁ '} ${mutant.id} (${mutant.file}#${mutant.fn}, ${hits}× ${mutant.kind}) — fail ${result.fail}, pass ${result.pass}`);
+        console.log(`${killed ? 'zabity  ' : 'PRZEŻYŁ '} ${mutant.id} (${mutant.file}#${mutant.fn}${mutant.table ? `:${mutant.table}` : ''}, ${hits}× ${mutant.kind}) — fail ${result.fail}, pass ${result.pass}`);
         if (!killed) survivors.push(mutant.id);
       } finally {
         await writeFile(target, original);
