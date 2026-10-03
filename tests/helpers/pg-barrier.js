@@ -90,6 +90,7 @@ export async function waitForLockWaiters(db, n = 1, options = {}) {
 export async function waitForLockWaitersWithQuery(db, n = 1, { timeoutMs = 3000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   let waiters = [];
+  let previous = null;
   while (Date.now() < deadline) {
     const { rows } = await db.query(
       `SELECT wait_event, query FROM pg_stat_activity
@@ -97,7 +98,12 @@ export async function waitForLockWaitersWithQuery(db, n = 1, { timeoutMs = 3000 
         ORDER BY wait_event, query`,
     );
     waiters = rows.map((row) => ({ event: row.wait_event, query: row.query }));
-    if (waiters.length >= n) return waiters;
+    // Dwa kolejne identyczne odczyty: `wait_event_type` i `query` jednego procesu bywają
+    // chwilowo niespójne (nocny przebieg 20×: czekający z tekstem poprzedniej instrukcji
+    // `SET LOCAL lock_timeout`), więc pierwszy odczyt z czekającym nie wystarcza.
+    const snapshot = JSON.stringify(waiters);
+    if (waiters.length >= n && snapshot === previous) return waiters;
+    previous = snapshot;
     await sleep(10);
   }
   return waiters;
