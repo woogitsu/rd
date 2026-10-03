@@ -194,7 +194,7 @@ odblokowuje: trasy księgi i dokumentów autoryzuje serwer przy każdym żądani
 (`docs/AUTHORIZATION.md`, „Zakres roli audit”). Od #160 etapu 3 kształt sesji (z opcjonalnym
 `capabilities`) opisuje schemat `Session` w `docs/openapi.json` (`src/pg/schemas/session.js`).
 
-## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-12)
+## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-13)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez
 zapisu: `npm run openapi:build -- --check`) z trzech źródeł: macierzy tras
@@ -224,8 +224,8 @@ schematy żądań nie zakazują nieznanych pól (trasy je ignorują).
 Pilnują tego `tests/openapi-contract.test.js`, `tests/openapi-contract-families.test.js`,
 `tests/openapi-contract-ledger-extra.test.js`, `tests/openapi-contract-reconciliation.test.js`,
 `tests/openapi-contract-email.test.js`, `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
-`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js` i
-`tests/openapi-contract-admin.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
+`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js`,
+`tests/openapi-contract-admin.test.js` i `tests/openapi-contract-guardian-year.test.js` (opis w `docs/TESTING.md`): każda trasa pokrytego modułu ma
 schemat, a **prawdziwe odpowiedzi** tras (utworzenie, ponowienie z tym samym kluczem, korekta częściowa, lista
 z kursorem, karta gospodarstwa z rodzeństwem i opieką dzieloną, sesja przed i po MFA, wersje linii preliminarza
 i przypisania do centrów kosztów, bilans otwarcia z poprawkami, import wyciągów JSON/CSV/CODA/CAMT.053,
@@ -234,14 +234,16 @@ uchwałami i protokołem, dokumenty z opisem, zastąpieniem, unieważnieniem i t
 do publikacji i odwołania z zadaniami wolontariuszy, zapisami i widokiem publicznym, aktualności z galerią — zgody na
 wizerunek, weryfikacja, cofnięcie praw, plik zdjęcia i widok publiczny tylko z zatwierdzonymi danymi, logowanie hasłem
 z limitem prób, zaproszenia, reset i zmiana hasła, zapis i weryfikacja MFA z kodami odzyskiwania, sesje własne,
-administracja kont i ról z czterema oczami, przeglądem dostępu, dziennikami i żądaniami osób, zamknięty rok, odmowy i błędy) przechodzą
+administracja kont i ról z czterema oczami, przeglądem dostępu, dziennikami i żądaniami osób, wnioski opiekunów o aktualizację
+kontaktu z kodem weryfikacyjnym, import z kluczem idempotencji, wersje informacji o przetwarzaniu danych, zamknięcie roku z listą
+kontrolną i przekazaniem, zamknięty rok, odmowy i błędy) przechodzą
 walidację tymi schematami. Schematy opisują obecny kontrakt
 tras; nie są jeszcze używane do walidacji wejścia po stronie serwera (parsery pozostają źródłem prawdy).
 
 | Stan | Moduły |
 | --- | --- |
-| Pokryte (252 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news`; etap 11 (13): `login` (6), `mfa` (7); etap 12 (46): `admin` |
-| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `guardian-updates`, `import`, `print`, `privacy-notice`, `representative`, `year-close` |
+| Pokryte (275 z 297 operacji) | etap 2 (32): `payments`, `payment-references`, `payment-instructions`, `ledger`; etap 3 (16): `families` (13), `session` (3); etap 4 (15): `ledger-budget` (6), `ledger-cash` (5), `ledger-cost-centers` (4); etap 5 (14): `reconciliation` (13 tras uzgodnień i `GET /api/reports/audit`); etap 6 (30): `email`; etap 7 (28): `meetings`; etap 8 (22): `documents`; etap 9 (15): `events`; etap 10 (21): `news`; etap 11 (13): `login` (6), `mfa` (7); etap 12 (46): `admin`; etap 13 (23): `guardian-updates` (10), `import` (3), `year-close` (5), `privacy-notice` (5) |
+| Jeszcze bez schematów (`UNCOVERED_MODULES` w `src/pg/schemas/index.js` i `x-rd-schema-coverage` w specyfikacji) | `audit-history`, `audit-reviews`, `board`, `exports`, `financial-reports`, `print`, `representative` |
 
 Cechy modułów etapu 3, które schematy odwzorowują wprost (opis stanu, nie zmiana tras):
 
@@ -600,6 +602,53 @@ zasady w `docs/ACCOUNTS.md`, `docs/AUTHORIZATION.md`, `docs/DATA_REQUESTS.md`):
   `data_request_export_in_progress`, `anonymization_row_mismatch`) oraz `role_pending_decision` (dziś żadna rola nie ma
   stanu `pending_decision`) są w schematach, ale nie w teście kontraktu; dziennik odczytu nie ma `truncated`/`limit` jak
   pozostałe listy (#159).
+
+Cechy modułów etapu 13 (`guardian-updates` — wniosek opiekuna o aktualizację kontaktu, kod weryfikacyjny i szablon
+wiadomości; `import` — opcje, podgląd i zapis; `year-close` — zamknięcie roku i przekazanie; `privacy-notice` — wersje informacji
+o przetwarzaniu danych; opis stanu, nie zmiana tras; zasady w `docs/YEAR_CLOSE.md`, `docs/PRIVACY_NOTICE.md`,
+`docs/AUTHORIZATION.md`):
+
+- Specyfikacja obejmuje 23 operacje z macierzy tras. Trasy publiczne (`GET`/`POST /api/public/guardian-update`,
+  `POST /api/public/guardian-update/verify`, `GET /api/public/privacy-notice`) nie mają sesji ani `401`; token linku jest jedynym
+  uwierzytelnieniem i odpowiedzi nie są wyrocznią (`404 invalid_or_expired_link` dla złego, wygasłego i zużytego tokenu, `400
+  invalid_or_expired_code` dla każdego niepowodzenia potwierdzenia kodu). Pozostałe trasy: admin/zarząd z przydziałem bez klasy
+  (wnioski, szablon, import, informacja), zarząd/skarbnik (zamknięcie roku; rozpoczęcie i zamknięcie — tylko zarząd; admin
+  techniczny → `403`). Krok w górę MFA (`403 mfa_stale`) mają zatwierdzenie szablonu wiadomości z kodem i zamknięcie roku.
+- **Tokeny i dane osobowe**: token linku (64 znaki szesnastkowe) jest tylko w odpowiedzi wydania; kod weryfikacyjny nie jest w żadnej
+  odpowiedzi (kolejka pokazuje stan `verification`, kod powodu i stan wysyłki). Publiczny podgląd: imię opiekuna i nazwy klas
+  dzieci. Kolejka wniosków (admin, zarząd) zawiera imię, proponowany adres i uwagę opiekuna — odczyt zostawia ślad w dzienniku.
+  Podgląd importu i wynik zapisu nie zawierają imion ani adresów (numery wierszy, komunikaty, liczniki, identyfikatory ze źródła);
+  zamknięcie roku i przekazanie — wyłącznie liczby, kody, daty i identyfikatory kont/obiektów; publiczna informacja — bez
+  identyfikatorów kont.
+- **Import nie jest uploadem pliku**: przeglądarka parsuje CSV/XLSX i wysyła JSON (`version`, `schoolYearId`, `columns`, `rows`);
+  typ treści sprawdza wzorzec `^application/json` (inny → `415 unsupported_media_type`, nie `invalid_content_type`), limit ciała
+  1 MiB (`413 request_too_large`), najwyżej 5000 wierszy (`413 too_many_rows`), komórka — tekst do 1000 znaków, liczba albo null.
+- **Idempotencja i ponowienia**: `Idempotency-Key` ma wyłącznie zapis importu (wymagany; `201`, ponowienie tym samym kluczem albo te
+  same dane bez nowych zapisów `200` z polem `replayed: true` w treści, bez nagłówka; ten sam klucz z innymi danymi `409
+  idempotency_key_reused`). Zatwierdzenie szablonu i zatwierdzenie/publikacja wersji informacji odpowiadają przy ponowieniu `200` z
+  nagłówkiem `Idempotency-Replayed: true` (pierwszy zapis bez nagłówka — `replayedOnRetry`). Decyzja o rozstrzygniętym wniosku
+  zwraca bieżący stan z `changed: false`; rozpoczęcie zamknięcia i punkt listy kontrolnej — `201`/`200` z `replayed`, zamknięcie —
+  `200` z `replayed`. Punkt listy kontrolnej i zamknięcie przyjmują żądanie bez treści (`bodyOptional`); decyzja o wniosku,
+  zatwierdzenie i publikacja wersji informacji nie czytają ciała.
+- **Zamknięty rok**: zapis importu do zamkniętego roku odrzuca trigger zamrożenia `enrollments`, a router tłumaczy go na `409
+  school_year_closed` (cała transakcja wycofana); rozpoczęcie i punkt listy kontrolnej zamkniętego roku → `409 school_year_closed`;
+  ponowienie zamknięcia przez osobę, której przydział wygasł tym zamknięciem → `409 school_year_closed`, przez zarząd bez zakresu
+  roku → `200` z `replayed: true`.
+- Rozbieżności i uwagi (opis, trasy bez zmian): **trasy administracyjne `guardian-updates` nie wymagają MFA same**
+  (`requireBoardContext` bez `requireMfa`) — przy `MFA_REQUIRED_ROLES` bez `admin`/`board` sesja bez MFA wydaje link, czyta kolejkę
+  i zatwierdza zmianę adresu opiekuna, podczas gdy import, informacja o przetwarzaniu danych i zamknięcie roku odmawiają (`403
+  forbidden`); `POST /api/admin/guardian-update-requests/{id}/approve|reject` z błędnym kodowaniem procentowym w ścieżce
+  (`%E0%A4%A`) daje `503 service_unavailable` (nieprzechwycony `URIError`, w logu klasa `bug`) także bez sesji, a format
+  identyfikatora jest sprawdzany przed sesją (`400 invalid_request` także bez logowania) — kodu `503` nie ma w schemacie; utworzenie wersji
+  informacji z nieistniejącym rokiem daje `400 invalid_reference` z routera (klucz obcy), choć kod trasy mapuje na `404
+  school_year_not_found` błąd unikalności (`23505`), który tu nie występuje — schemat opisuje rzeczywiste `400`; wzorzec klucza
+  importu (`^[A-Za-z0-9_-]{8,128}$`, zły → `400 idempotency_key_required`) różni się od `IdempotencyKey` w schemacie (dopuszcza
+  `.` i `:`, wymaga znaku alfanumerycznego na początku); `import` zgłasza zły typ treści kodem `unsupported_media_type`, pozostałe
+  moduły `invalid_content_type`; kody nieosiągalne w teście bez przeplotu transakcji, zegara albo danych sprzed walidacji
+  (`invalid_import` — wyjątek `validateRows`, `privacy_notice_not_draft` — wykluczony ograniczeniem bazy, `guardian_not_found` przy
+  zatwierdzeniu, `next_school_year_not_open`, `closing_balance_out_of_range`, `year_end_balance_mismatch`,
+  `year_end_confirmation_mismatch`) są w schematach, ale nie w teście kontraktu; zatwierdzenie szablonu bez `contentHash` nie
+  potwierdza wersji treści (pole opcjonalne).
 
 Kolejny moduł obejmuje się, dodając plik schematów, wpisując go do `SCHEMA_MODULES`, usuwając z
 `UNCOVERED_MODULES` i uruchamiając `npm run openapi:build`; test nie pozwala, by lista niepokrytych rosła.

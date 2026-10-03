@@ -101,6 +101,8 @@
       "email",
       "events",
       "families",
+      "guardian-updates",
+      "import",
       "ledger",
       "ledger-budget",
       "ledger-cash",
@@ -112,8 +114,10 @@
       "payment-instructions",
       "payment-references",
       "payments",
+      "privacy-notice",
       "reconciliation",
-      "session"
+      "session",
+      "year-close"
     ],
     "uncovered": [
       "audit-history",
@@ -121,16 +125,12 @@
       "board",
       "exports",
       "financial-reports",
-      "guardian-updates",
-      "import",
       "print",
-      "privacy-notice",
-      "representative",
-      "year-close"
+      "representative"
     ],
     "operations": {
       "total": 297,
-      "withSchema": 252
+      "withSchema": 275
     }
   },
   "paths": {
@@ -3807,9 +3807,40 @@
     "/api/admin/guardian-links": {
       "post": {
         "operationId": "guardianUpdates_issueLink",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardianLinkIssueRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "Utworzono."
+            "description": "Nowy jednorazowy link (token tylko tutaj, raz); zdarzenie `guardian_update_link.created`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardianUpdateLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -3822,7 +3853,52 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "guardian_not_found"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -3863,9 +3939,103 @@
     "/api/admin/guardian-update-requests": {
       "get": {
         "operationId": "guardianUpdates_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej strony tej samej listy z tym samym filtrem (inny filtr → 400 `invalid_cursor`)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 200
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "approved",
+                "rejected"
+              ],
+              "default": "pending"
+            },
+            "description": "Inna wartość → 400 `invalid_request`."
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wnioski od najstarszego (`created_at`, `id`), kursor keyset; odczyt zostawia ślad `guardian_update_request.list_viewed` (stan filtra i liczba, #133).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requests": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GuardianUpdateRequest"
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Kursor następnej strony; null na ostatniej."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null (lista niekompletna)."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Zastosowana wielkość strony."
+                    }
+                  },
+                  "required": [
+                    "requests",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -3878,7 +4048,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -3925,13 +4100,33 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zatwierdzenie: zmiana kontaktu opiekuna (historia `parent_request:{id}`), także z niepotwierdzonym nowym adresem (audyt `unverifiedContactChange`); niewysłany kod zostaje anulowany; rozstrzygnięty wniosek → bieżący stan, `changed: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardianUpdateDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -3944,7 +4139,27 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "guardian_not_found",
+              "request_not_found"
+            ]
           }
         },
         "security": [
@@ -3991,13 +4206,33 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Odrzucenie bez zmiany `guardians`; rozstrzygnięty wniosek → bieżący stan, `changed: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardianUpdateDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4010,7 +4245,26 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_not_found"
+            ]
           }
         },
         "security": [
@@ -4051,9 +4305,104 @@
     "/api/admin/guardian-verify-templates": {
       "get": {
         "operationId": "guardianUpdates_templatesList",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`nextCursor` z poprzedniej strony tej samej listy z tym samym filtrem (inny filtr → 400 `invalid_cursor`)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wersje szablonu od najnowszej (kursor po wersji); obowiązuje najnowsza zatwierdzona.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "templates": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GuardianVerifyTemplate"
+                      }
+                    },
+                    "currentTemplateId": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/EntityId",
+                          "description": "Najnowsza zatwierdzona wersja (także spoza bieżącej strony); null — brak."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Flaga `GUARDIAN_VERIFY_EMAIL_ENABLED=true`."
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Kursor następnej strony; null na ostatniej."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "true wtedy i tylko wtedy, gdy `nextCursor` nie jest null (lista niekompletna)."
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Zastosowana wielkość strony."
+                    }
+                  },
+                  "required": [
+                    "templates",
+                    "currentTemplateId",
+                    "enabled",
+                    "nextCursor",
+                    "truncated",
+                    "limit"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cursor",
+              "invalid_limit"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4066,7 +4415,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -4105,9 +4459,51 @@
       },
       "post": {
         "operationId": "guardianUpdates_templateCreate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardianVerifyTemplateCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "Utworzono."
+            "description": "Nowy szkic (kolejny numer wersji).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "template": {
+                      "$ref": "#/components/schemas/GuardianVerifyTemplate"
+                    }
+                  },
+                  "required": [
+                    "template"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "forbidden_wording",
+              "invalid_json",
+              "invalid_verify_template",
+              "verify_code_placeholder_required"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4120,7 +4516,39 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -4167,13 +4595,65 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardianVerifyTemplateApproveRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zatwierdzenie szkicu przez zarząd — inną osobę niż autor, ze świeżym MFA (#150); ponowienie przez tę samą osobę: ten sam stan z nagłówkiem `Idempotency-Replayed: true`, bez drugiego zdarzenia.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "template": {
+                      "$ref": "#/components/schemas/GuardianVerifyTemplate"
+                    }
+                  },
+                  "required": [
+                    "template"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_request"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -4186,7 +4666,68 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "mfa_stale",
+              "self_approval_forbidden"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "verify_template_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "verify_template_changed",
+              "verify_template_not_draft"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -5453,7 +5994,26 @@
         "operationId": "privacyNotice_list",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Wszystkie wersje od najnowszej (bez stronicowania).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notices": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PrivacyNotice"
+                      }
+                    }
+                  },
+                  "required": [
+                    "notices"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -5466,7 +6026,12 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -5505,9 +6070,52 @@
       },
       "post": {
         "operationId": "privacyNotice_create",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrivacyNoticeCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "Utworzono."
+            "description": "Nowy szkic (`draft`); zdarzenie `privacy_notice.created`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notice": {
+                      "$ref": "#/components/schemas/PrivacyNotice"
+                    }
+                  },
+                  "required": [
+                    "notice"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_body_text",
+              "invalid_decision_ref",
+              "invalid_json",
+              "invalid_reference",
+              "invalid_school_year"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -5520,7 +6128,39 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -5567,26 +6207,99 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zatwierdzenie szkicu przez inną osobę niż autor; wersja już zatwierdzona/opublikowana → ten sam stan z nagłówkiem `Idempotency-Replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notice": {
+                      "$ref": "#/components/schemas/PrivacyNotice"
+                    }
+                  },
+                  "required": [
+                    "notice"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthenticated"
-          },
-          "403": {
-            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "invalid_id"
+            ]
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "description": "Brak roli, MFA albo zatwierdzenie przez autora wersji (cztery oczy) — `forbidden`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "privacy_notice_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "privacy_notice_not_draft"
+            ]
           }
         },
         "security": [
@@ -5633,13 +6346,54 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Publikacja zatwierdzonej wersji (poprzednia → `superseded`); wersja opublikowana albo zastąpiona → ten sam stan z nagłówkiem `Idempotency-Replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notice": {
+                      "$ref": "#/components/schemas/PrivacyNotice"
+                    }
+                  },
+                  "required": [
+                    "notice"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                },
+                "required": false
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -5652,7 +6406,39 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "privacy_notice_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "privacy_notice_not_approved"
+            ]
           }
         },
         "security": [
@@ -22921,9 +23707,91 @@
     "/api/import/commit": {
       "post": {
         "operationId": "import_commit",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IdempotencyKey"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportCommitRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Ponowienie: ten sam klucz (podwójne kliknięcie) albo te same dane bez nowych zapisów — zapisany wynik, `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ImportBatch"
+                    },
+                    {
+                      "properties": {
+                        "replayed": {
+                          "const": true
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Zapis planu w jednej transakcji (wszystko albo nic), partia z odwołaniem do opublikowanej informacji o przetwarzaniu danych; zdarzenie `import.committed` z licznikami (bez danych osobowych).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ImportBatch"
+                    },
+                    {
+                      "properties": {
+                        "replayed": {
+                          "const": false
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "idempotency_key_required",
+              "invalid_cell",
+              "invalid_columns",
+              "invalid_json",
+              "invalid_options",
+              "invalid_payload",
+              "invalid_row_numbers",
+              "invalid_rows",
+              "invalid_school_year",
+              "preview_required",
+              "unsupported_version"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22936,7 +23804,74 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "import_disabled",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "fingerprint_mismatch",
+              "idempotency_key_reused",
+              "preview_stale",
+              "privacy_notice_missing",
+              "school_year_closed"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large",
+              "too_many_rows"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "unsupported_media_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "import_has_conflicts",
+              "invalid_import",
+              "no_classes_in_school_year",
+              "unknown_school_year"
+            ]
           }
         },
         "security": [
@@ -22979,7 +23914,47 @@
         "operationId": "import_options",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Lata szkolne w zakresie przydziału (od najnowszego) z nazwami klas — do mapowania kolumny „Klasa”.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schoolYears": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/EntityId"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "classes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Nazwy klas roku (alfabetycznie)."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "classes"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "schoolYears"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -22992,7 +23967,13 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "import_disabled",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
           }
         },
         "security": [
@@ -23033,9 +24014,47 @@
     "/api/import/preview": {
       "post": {
         "operationId": "import_preview",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPreviewRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Plan importu bez zapisu (`written: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_cell",
+              "invalid_columns",
+              "invalid_json",
+              "invalid_options",
+              "invalid_payload",
+              "invalid_row_numbers",
+              "invalid_rows",
+              "invalid_school_year",
+              "unsupported_version"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -23048,7 +24067,56 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "import_disabled",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large",
+              "too_many_rows"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "unsupported_media_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_import",
+              "no_classes_in_school_year",
+              "unknown_school_year"
+            ]
           }
         },
         "security": [
@@ -41085,15 +42153,37 @@
           {
             "name": "token",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "pattern": "^[0-9a-f]{32,128}$"
+            },
+            "description": "Token z linku; brak, zły format, nieznany, wygasły i zużyty → ta sama odpowiedź 404."
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Podgląd formularza (bez sesji).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardianUpdatePreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_or_expired_link"
+            ]
           }
         },
         "security": [],
@@ -41116,9 +42206,120 @@
       },
       "post": {
         "operationId": "guardianUpdates_submitPublic",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardianUpdateSubmitRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "Utworzono."
+            "description": "Wniosek `pending` (bez zmiany `guardians`); token zostaje zużyty. Nowy adres: wiersz weryfikacji, gdy włączona flaga, jest zatwierdzony szablon i opublikowana informacja o przetwarzaniu danych.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuardianUpdateSubmitted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_email",
+              "invalid_json",
+              "invalid_request"
+            ]
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_or_expired_link"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "link_used"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [],
@@ -41143,9 +42344,88 @@
     "/api/public/guardian-update/verify": {
       "post": {
         "operationId": "guardianUpdates_verifyPublic",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardianVerifyCodeRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Kod potwierdzony (także ponowienie tym samym poprawnym kodem — bez drugiego zdarzenia).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "verification": {
+                      "const": "confirmed"
+                    }
+                  },
+                  "required": [
+                    "verification"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_or_expired_code"
+            ]
+          },
+          "403": {
+            "description": "Brak uprawnień lub wymaganego MFA (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_origin"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [],
@@ -41521,7 +42801,27 @@
         "operationId": "privacyNotice_public",
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Obowiązująca (opublikowana) wersja, bez sesji; `Cache-Control: public, max-age=60`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyNoticePublic"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "privacy_notice_not_found"
+            ]
           }
         },
         "security": [],
@@ -46247,13 +47547,33 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Stan zamknięcia, lista kontrolna, bilans, kontrola końca roku i ostrzeżenia.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearCloseStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -46266,7 +47586,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -46313,7 +47651,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           },
           {
@@ -46321,13 +47659,57 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YearCloseChecklistRequest"
+              }
+            }
+          }
+        },
         "responses": {
+          "200": {
+            "description": "Punkt już potwierdzony: stan bez zapisu (pierwsza uwaga zostaje), `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearCloseStatusWrite"
+                }
+              }
+            }
+          },
           "201": {
-            "description": "Utworzono."
+            "description": "Potwierdzenie punktu (`year_close.checklist_confirmed`); `replayed: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearCloseStatusWrite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_document_id",
+              "invalid_json",
+              "invalid_note",
+              "invalid_report_snapshot",
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -46340,7 +47722,81 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_checklist_item",
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_closed",
+              "year_close_not_started"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
+          },
+          "422": {
+            "description": "Treść poprawna składniowo, ale odrzucona regułą (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "personal_data_forbidden",
+              "possible_personal_data"
+            ]
           }
         },
         "security": [
@@ -46387,13 +47843,45 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YearCloseCloseRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zamknięcie przez drugą osobę z zarządu (świeże MFA): bilans utrwalony, bilans otwarcia roku następnego, wygaszenie przydziałów roku, zamrożenie zapisów roku; `replayed: false`. Ponowienie po zamknięciu (przydział bez roku): ten sam stan, `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearCloseStatusWrite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_school_year_id",
+              "invalid_year_end_confirmation"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -46406,7 +47894,73 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required",
+              "mfa_stale"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "checklist_incomplete",
+              "closing_balance_out_of_range",
+              "four_eyes_required",
+              "next_year_opening_balance_exists",
+              "school_year_closed",
+              "year_close_not_started",
+              "year_end_balance_mismatch",
+              "year_end_confirmation_mismatch"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -46449,13 +48003,33 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Zestawienie przekazania (jedna migawka bazy); po zamknięciu czyta je też Rada roku następnego i admin (#195).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearCloseHandover"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -46468,7 +48042,25 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "school_year_not_found"
+            ]
           }
         },
         "security": [
@@ -46515,13 +48107,55 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YearCloseStartRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Sukces."
+            "description": "Ponowienie z tym samym rokiem następnym: stan bez zapisu, `replayed: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearCloseStatusWrite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Rozpoczęcie zamknięcia (`closing`); zdarzenie `year_close.started`; `replayed: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearCloseStatusWrite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Błąd walidacji żądania (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_json",
+              "invalid_next_school_year",
+              "invalid_school_year_id"
+            ]
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -46534,7 +48168,69 @@
                   "$ref": "#/components/schemas/Error"
                 }
               }
-            }
+            },
+            "x-rd-error-codes": [
+              "forbidden",
+              "invalid_origin",
+              "mfa_enrollment_required",
+              "mfa_required"
+            ]
+          },
+          "404": {
+            "description": "Nie znaleziono albo obiekt poza zakresem (polityka 403/404 zależy od modułu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "next_school_year_not_found",
+              "school_year_not_found"
+            ]
+          },
+          "409": {
+            "description": "Konflikt stanu albo klucza idempotencji (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_next_school_year",
+              "next_school_year_not_open",
+              "school_year_closed",
+              "year_close_already_started"
+            ]
+          },
+          "413": {
+            "description": "Żądanie albo wynik za duży (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "request_too_large"
+            ]
+          },
+          "415": {
+            "description": "Nieobsługiwany typ treści (kod z katalogu).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "x-rd-error-codes": [
+              "invalid_content_type"
+            ]
           }
         },
         "security": [
@@ -55039,6 +56735,437 @@
           }
         ]
       },
+      "GuardianLinkIssueRequest": {
+        "type": "object",
+        "properties": {
+          "guardianId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Opiekun (zły format → 400 `invalid_request`, nieistniejący → 404 `guardian_not_found`)."
+          }
+        },
+        "required": [
+          "guardianId"
+        ]
+      },
+      "GuardianUpdateDecision": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "description": "Stan wniosku po żądaniu; dla wniosku już rozstrzygniętego — dotychczasowy stan (także inny niż żądany)."
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "true: zatwierdzenie zmieniło kontakt opiekuna; false: odrzucenie, brak różnicy albo ponowienie."
+          },
+          "verification": {
+            "type": "string",
+            "enum": [
+              "none",
+              "sent",
+              "confirmed",
+              "expired",
+              "failed"
+            ],
+            "description": "Stan weryfikacji w chwili decyzji; tylko przy wniosku z nowym adresem."
+          }
+        },
+        "required": [
+          "requestId",
+          "status",
+          "changed"
+        ],
+        "additionalProperties": false
+      },
+      "GuardianUpdateLink": {
+        "type": "object",
+        "properties": {
+          "linkId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Jednorazowy token linku zwracany WYŁĄCZNIE w tej odpowiedzi (baza ma tylko skrót SHA-256). Zarząd przekazuje link sam (kartka, zatwierdzona kampania); moduł niczego nie wysyła."
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Ważność 14 dni od wydania (propozycja #140, do zatwierdzenia)."
+          }
+        },
+        "required": [
+          "linkId",
+          "token",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "GuardianUpdatePreview": {
+        "type": "object",
+        "properties": {
+          "guardianFirstName": {
+            "type": "string",
+            "description": "Imię opiekuna, do którego wydano link (bez nazwiska i adresu)."
+          },
+          "classNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Nazwy klas bieżących dzieci opiekuna (bez nazwisk, innych opiekunów i wpłat)."
+          }
+        },
+        "required": [
+          "guardianFirstName",
+          "classNames"
+        ],
+        "additionalProperties": false,
+        "description": "Publiczny podgląd formularza — dla posiadacza ważnego, nieużytego tokenu."
+      },
+      "GuardianUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "guardianFirstName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Imię opiekuna; null — opiekuna nie ma już w bazie."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "classNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "proposedEmail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Proponowany adres (null — usunięcie adresu); pole tylko, gdy wniosek zmienia adres."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proposedContactAllowed": {
+            "type": "boolean",
+            "description": "Proponowana zgoda na kontakt; pole tylko, gdy wniosek ją zmienia."
+          },
+          "proposedEmailSuppression": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Powód aktywnej blokady proponowanego adresu na liście wyłączeń (#94); bez skrótu adresu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification": {
+            "type": "string",
+            "enum": [
+              "none",
+              "sent",
+              "confirmed",
+              "expired",
+              "failed"
+            ],
+            "description": "Stan kodu weryfikacyjnego nowego adresu (#140 pkt 5)."
+          },
+          "verificationReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,60}$",
+                "description": "Kod powodu stanu (np. `verification_disabled`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verificationDelivery": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "skipped",
+                  "queued",
+                  "sending",
+                  "sent",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verificationExpiresAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime",
+                "description": "Termin ważności wysłanego kodu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Uwaga opiekuna (do 500 znaków; po bramce danych osobowych #152)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          }
+        },
+        "required": [
+          "id",
+          "guardianFirstName",
+          "classNames",
+          "proposedEmailSuppression",
+          "verification",
+          "verificationReason",
+          "verificationDelivery",
+          "verificationExpiresAt",
+          "note",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Wniosek w kolejce — dane osobowe (imię, proponowany adres) wyłącznie dla admina i zarządu; bez kodu i bez skrótów."
+      },
+      "GuardianUpdateSubmitRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32,128}$",
+            "writeOnly": true,
+            "description": "Jednorazowy token z linku (szesnastkowy); zły format → 404 `invalid_or_expired_link`."
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 254,
+                "description": "Nowy adres (po przycięciu i zmianie na małe litery musi przejść normalizację kolejki wysyłek; 400 `invalid_email`); null albo pusty — usunięcie adresu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contactAllowed": {
+            "type": "boolean",
+            "description": "Zgoda na kontakt (inny typ → 400 `invalid_request`)."
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "description": "Uwaga (bramka danych osobowych #152)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "Potwierdza ostrzeżenie 422 `possible_personal_data`."
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "email"
+            ]
+          },
+          {
+            "required": [
+              "contactAllowed"
+            ]
+          }
+        ],
+        "description": "Co najmniej jedno z pól `email`, `contactAllowed` (inaczej 400 `invalid_request`); brak lub zły token → 404."
+      },
+      "GuardianUpdateSubmitted": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "status": {
+            "const": "pending"
+          },
+          "emailVerification": {
+            "type": "string",
+            "enum": [
+              "requested",
+              "none"
+            ],
+            "description": "`requested`: powstał wiersz weryfikacji nowego adresu (kod wyśle worker); `none`: kodu nie będzie. Odpowiedź nie odróżnia adresu z listy wyłączeń od zleconej wysyłki (#94)."
+          }
+        },
+        "required": [
+          "requestId",
+          "status",
+          "emailVerification"
+        ],
+        "additionalProperties": false
+      },
+      "GuardianVerifyCodeRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32,128}$",
+            "writeOnly": true,
+            "description": "Jednorazowy token z linku (szesnastkowy); zły format → 404 `invalid_or_expired_link`."
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^\\d{8}$",
+            "writeOnly": true,
+            "description": "Kod z wiadomości (8 cyfr)."
+          }
+        },
+        "required": [
+          "token",
+          "code"
+        ],
+        "description": "Brak pola, zły format albo zły kod → ta sama odpowiedź 400 `invalid_or_expired_code`."
+      },
+      "GuardianVerifyTemplate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "subject": {
+            "type": "string"
+          },
+          "bodyText": {
+            "type": "string"
+          },
+          "contentHash": {
+            "$ref": "#/components/schemas/Sha256Hex"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "approvedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "subject",
+          "bodyText",
+          "contentHash",
+          "status",
+          "createdBy",
+          "createdAt",
+          "approvedBy",
+          "approvedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Wersja szablonu wiadomości z kodem (treść wpisuje zarząd, D-16); zatwierdzona wersja jest niezmienna."
+      },
+      "GuardianVerifyTemplateApproveRequest": {
+        "type": "object",
+        "properties": {
+          "contentHash": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "Skrót treści, którą zatwierdzający widział (inny → 409 `verify_template_changed`)."
+          }
+        },
+        "required": [],
+        "description": "Ciało JSON wymagane (może być `{}`)."
+      },
+      "GuardianVerifyTemplateCreateRequest": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200,
+            "description": "Po przycięciu 3-200 znaków, bez nowej linii, nawiasów klamrowych i znaków sterujących (400 `invalid_verify_template`)."
+          },
+          "bodyText": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 4000,
+            "description": "Po przycięciu 20-4000 znaków; wyłącznie znaczniki `{kod}` (wymagany, 400 `verify_code_placeholder_required`) i `{waznosc}`; zakazane sformułowania → 400 `forbidden_wording`."
+          }
+        },
+        "required": [
+          "subject",
+          "bodyText"
+        ]
+      },
       "HouseholdCard": {
         "type": "object",
         "properties": {
@@ -55305,6 +57432,427 @@
             ]
           }
         ]
+      },
+      "ImportBatch": {
+        "type": "object",
+        "properties": {
+          "batchId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "true: zapisany wcześniej wynik (ten sam klucz albo te same dane bez nowych zapisów)."
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ImportCounts"
+          }
+        },
+        "required": [
+          "batchId",
+          "schoolYearId",
+          "replayed",
+          "counts"
+        ],
+        "additionalProperties": false
+      },
+      "ImportCommitRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1,
+            "description": "Wersja formatu (inna → 400 `unsupported_version`)."
+          },
+          "schoolYearId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "description": "Rok importu (400 `invalid_school_year`; nieznany → 422 `unknown_school_year`)."
+          },
+          "columns": {
+            "const": [
+              "studentId",
+              "firstName",
+              "lastName",
+              "className",
+              "householdId",
+              "guardian1",
+              "email1",
+              "guardian2",
+              "email2"
+            ],
+            "description": "Dokładnie te kolumny w tej kolejności (400 `invalid_columns`)."
+          },
+          "rows": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5000,
+            "items": {
+              "type": "array",
+              "minItems": 9,
+              "maxItems": 9,
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Tekst do 1000 znaków, liczba skończona albo null (inaczej 400 `invalid_cell`)."
+              }
+            },
+            "description": "Wiersze danych (pusta lista albo wiersz o innej długości → 400 `invalid_rows`; ponad 5000 → 413 `too_many_rows`)."
+          },
+          "rowNumbers": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "description": "Numery wierszy w pliku, po jednym na wiersz (400 `invalid_row_numbers`)."
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "allowNewHouseholds": {
+                "type": "boolean",
+                "description": "Wiersz bez ID rodziny tworzy osobną rodzinę (domyślnie false — konflikt)."
+              },
+              "skipConflicts": {
+                "type": "boolean",
+                "description": "Zapis z pominięciem wierszy w konflikcie i błędnych (domyślnie false)."
+              }
+            },
+            "required": [],
+            "description": "Inny typ → 400 `invalid_options`."
+          },
+          "fingerprint": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "`fingerprint` z podglądu (brak → 400 `preview_required`; inny niż dane → 409 `fingerprint_mismatch`)."
+          },
+          "planDigest": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "`planDigest` z podglądu (brak → 400 `preview_required`; zmiana od podglądu → 409 `preview_stale`)."
+          }
+        },
+        "required": [
+          "version",
+          "schoolYearId",
+          "columns",
+          "rows",
+          "fingerprint",
+          "planDigest"
+        ]
+      },
+      "ImportCounts": {
+        "type": "object",
+        "properties": {
+          "rowsTotal": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "rowsAdded": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "rowsUpdated": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "rowsUnchanged": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "rowsConflict": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "rowsSkipped": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "householdsCreated": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "guardiansCreated": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "studentsCreated": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "enrollmentsCreated": {
+            "$ref": "#/components/schemas/Count"
+          },
+          "linksCreated": {
+            "$ref": "#/components/schemas/Count"
+          }
+        },
+        "required": [
+          "rowsTotal",
+          "rowsAdded",
+          "rowsUpdated",
+          "rowsUnchanged",
+          "rowsConflict",
+          "rowsSkipped",
+          "householdsCreated",
+          "guardiansCreated",
+          "studentsCreated",
+          "enrollmentsCreated",
+          "linksCreated"
+        ],
+        "additionalProperties": false,
+        "description": "Liczniki planu (wierszy wg akcji i rekordów do utworzenia)."
+      },
+      "ImportPlanRow": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "row": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Numer wiersza w pliku źródłowym (z `rowNumbers`, inaczej pozycja + 1)."
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "add",
+                  "update",
+                  "unchanged"
+                ]
+              },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "household",
+                    "student",
+                    "enrollment",
+                    "guardian",
+                    "link"
+                  ]
+                },
+                "description": "Rekordy, które zapis utworzy."
+              }
+            },
+            "required": [
+              "row",
+              "action",
+              "changes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "row": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Numer wiersza w pliku źródłowym (z `rowNumbers`, inaczej pozycja + 1)."
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "conflict",
+                  "skipped"
+                ]
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Powody konfliktu albo błędy walidacji wiersza (bez danych osobowych)."
+              }
+            },
+            "required": [
+              "row",
+              "action",
+              "messages"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "description": "Wynik planu dla wiersza: dopasowanie wyłącznie po identyfikatorach ze źródła, nigdy po nazwisku ani adresie."
+      },
+      "ImportPreview": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "fingerprint": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "Skrót znormalizowanych wierszy (do zapisu i rozpoznania ponowienia)."
+          },
+          "planDigest": {
+            "$ref": "#/components/schemas/Sha256Hex",
+            "description": "Skrót planu; zmiana danych w bazie od podglądu → 409 `preview_stale` przy zapisie."
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ImportCounts"
+          },
+          "commitAllowed": {
+            "type": "boolean",
+            "description": "true: brak wierszy w konflikcie i pominiętych (zapis bez `skipConflicts`)."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportPlanRow"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportRowMessage"
+            },
+            "description": "Ostrzeżenia walidacji i planu (np. ten sam adres w innej rodzinie), wg numeru wiersza."
+          },
+          "missingFromFile": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Identyfikatory ze źródła uczniów zapisanych w roku, których nie ma w pliku (bez imion i nazwisk)."
+              }
+            },
+            "required": [
+              "count",
+              "refs"
+            ],
+            "additionalProperties": false,
+            "description": "Informacyjnie (#98): nie wpływa na plan ani na `commitAllowed`."
+          },
+          "written": {
+            "const": false
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "fingerprint",
+          "planDigest",
+          "counts",
+          "commitAllowed",
+          "rows",
+          "warnings",
+          "missingFromFile",
+          "written"
+        ],
+        "additionalProperties": false,
+        "description": "Podgląd planu — nic nie jest zapisywane."
+      },
+      "ImportPreviewRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1,
+            "description": "Wersja formatu (inna → 400 `unsupported_version`)."
+          },
+          "schoolYearId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "description": "Rok importu (400 `invalid_school_year`; nieznany → 422 `unknown_school_year`)."
+          },
+          "columns": {
+            "const": [
+              "studentId",
+              "firstName",
+              "lastName",
+              "className",
+              "householdId",
+              "guardian1",
+              "email1",
+              "guardian2",
+              "email2"
+            ],
+            "description": "Dokładnie te kolumny w tej kolejności (400 `invalid_columns`)."
+          },
+          "rows": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5000,
+            "items": {
+              "type": "array",
+              "minItems": 9,
+              "maxItems": 9,
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Tekst do 1000 znaków, liczba skończona albo null (inaczej 400 `invalid_cell`)."
+              }
+            },
+            "description": "Wiersze danych (pusta lista albo wiersz o innej długości → 400 `invalid_rows`; ponad 5000 → 413 `too_many_rows`)."
+          },
+          "rowNumbers": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "description": "Numery wierszy w pliku, po jednym na wiersz (400 `invalid_row_numbers`)."
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "allowNewHouseholds": {
+                "type": "boolean",
+                "description": "Wiersz bez ID rodziny tworzy osobną rodzinę (domyślnie false — konflikt)."
+              },
+              "skipConflicts": {
+                "type": "boolean",
+                "description": "Zapis z pominięciem wierszy w konflikcie i błędnych (domyślnie false)."
+              }
+            },
+            "required": [],
+            "description": "Inny typ → 400 `invalid_options`."
+          }
+        },
+        "required": [
+          "version",
+          "schoolYearId",
+          "columns",
+          "rows"
+        ],
+        "description": "Znormalizowane wiersze z przeglądarki (plik nie trafia na serwer)."
+      },
+      "ImportRowMessage": {
+        "type": "object",
+        "properties": {
+          "row": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wiersza w pliku źródłowym (z `rowNumbers`, inaczej pozycja + 1)."
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "row",
+          "message"
+        ],
+        "additionalProperties": false
       },
       "InvitationAcceptRequest": {
         "type": "object",
@@ -62972,6 +65520,170 @@
         ],
         "description": "recorded = przypisana do gospodarstwa, unmatched = nieprzypisana do wyjaśnienia (nie „dłużnik”)."
       },
+      "PrivacyNotice": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Numer wersji (rośnie; podawany w stopce e-maila i na kartce)."
+          },
+          "schoolYearId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bodyText": {
+            "type": "string"
+          },
+          "contentHash": {
+            "$ref": "#/components/schemas/Sha256Hex"
+          },
+          "decisionRef": {
+            "type": "string",
+            "description": "Odwołanie do decyzji zarządu/szkoły (D-06)."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "approved",
+              "published",
+              "superseded"
+            ]
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/IsoDateTime"
+          },
+          "approvedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publishedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "schoolYearId",
+          "bodyText",
+          "contentHash",
+          "decisionRef",
+          "status",
+          "createdBy",
+          "createdAt",
+          "approvedBy",
+          "approvedAt",
+          "publishedBy",
+          "publishedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Wersja informacji o przetwarzaniu danych (niezmienna po zapisie poza przejściami stanu)."
+      },
+      "PrivacyNoticeCreateRequest": {
+        "type": "object",
+        "properties": {
+          "bodyText": {
+            "type": "string",
+            "maxLength": 20000,
+            "description": "Niepusta po przycięciu, do 20 000 znaków (400 `invalid_body_text`)."
+          },
+          "decisionRef": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Niepusty po przycięciu, do 200 znaków (400 `invalid_decision_ref`)."
+          },
+          "schoolYearId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Opcjonalny rok (zły format → 400 `invalid_school_year`; nieistniejący → 400 `invalid_reference` z routera)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "bodyText",
+          "decisionRef"
+        ]
+      },
+      "PrivacyNoticePublic": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bodyText": {
+            "type": "string"
+          },
+          "publishedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "bodyText",
+          "publishedAt"
+        ],
+        "additionalProperties": false,
+        "description": "Obowiązująca wersja dla strony publicznej — bez identyfikatorów kont."
+      },
       "Reconciliation": {
         "type": "object",
         "properties": {
@@ -64434,6 +67146,1229 @@
           "startsOn"
         ],
         "additionalProperties": false
+      },
+      "YearCloseBalance": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "live",
+              "closed"
+            ],
+            "description": "`closed` — wartości utrwalone przy zamknięciu."
+          },
+          "openingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "incomeCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "expenseCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "closingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "openingCashCents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignedCents",
+                "description": "Część poza rachunkiem (#199); null — zamknięcie sprzed migracji 0028."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closingCashCents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closingBankCents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignedCents",
+                "description": "Rachunek = całość − kasa (D-13)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "openingBalanceCents",
+          "incomeCents",
+          "expenseCents",
+          "closingBalanceCents",
+          "openingCashCents",
+          "closingCashCents",
+          "closingBankCents"
+        ],
+        "additionalProperties": false,
+        "description": "Bilans roku w eurocentach (EUR)."
+      },
+      "YearCloseChecklistItem": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "type": "string",
+            "enum": [
+              "financial_report",
+              "audit_commission_report",
+              "minutes_approved",
+              "resolutions_archived",
+              "reconciliation_confirmed",
+              "documents_handed_over"
+            ]
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "confirmedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "documentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Dokument zarządu albo finansowy zamykanego roku."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reportSnapshotId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Zatwierdzona, bieżąca migawka sprawozdania rocznego (tylko `financial_report`, #125)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "item",
+          "confirmed",
+          "confirmedBy",
+          "confirmedAt",
+          "note",
+          "documentId",
+          "reportSnapshotId"
+        ],
+        "additionalProperties": false
+      },
+      "YearCloseChecklistRequest": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 500,
+                "description": "Po przycięciu 3-500 znaków (400 `invalid_note`); bramka danych osobowych (#152)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "documentId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Dokument zarządu/finansowy tego roku; inny, nieistniejący i spoza roku → 400 `invalid_document_id`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reportSnapshotId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Tylko punkt `financial_report`: zatwierdzona, bieżąca migawka roku (inaczej 400 `invalid_report_snapshot`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmPersonalData": {
+            "type": "boolean",
+            "description": "Potwierdza ostrzeżenie 422 `possible_personal_data`."
+          }
+        },
+        "required": [],
+        "description": "Ciało opcjonalne: żądanie bez treści (także bez `Content-Type`) potwierdza punkt bez uwagi."
+      },
+      "YearCloseCloseRequest": {
+        "type": "object",
+        "properties": {
+          "confirmYearEndDiscrepancy": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "entry_dated_after_year_end",
+                  "explained_by_resolution",
+                  "explained_outside_system"
+                ]
+              },
+              "balanceDifferenceCents": {
+                "type": "integer",
+                "description": "Różnica widziana w `yearEndCheck` (inna → 409 `year_end_confirmation_mismatch`)."
+              },
+              "cashDifferenceCents": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "reason",
+              "balanceDifferenceCents",
+              "cashDifferenceCents"
+            ],
+            "description": "Jawne potwierdzenie rozbieżności salda końca roku (#169); zły kształt → 400 `invalid_year_end_confirmation`."
+          }
+        },
+        "required": [],
+        "description": "Ciało opcjonalne: bez rozbieżności salda zamknięcie nie wymaga treści."
+      },
+      "YearCloseHandover": {
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "$ref": "#/components/schemas/IsoDateTime",
+            "description": "Czas migawki bazy (#213)."
+          },
+          "final": {
+            "type": "boolean",
+            "description": "true: rok zamknięty (zestawienie ostateczne)."
+          },
+          "schoolYear": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              "label": {
+                "type": "string"
+              },
+              "startsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              "endsOn": {
+                "$ref": "#/components/schemas/IsoDate"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "startsOn",
+              "endsOn"
+            ],
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closing",
+              "closed"
+            ]
+          },
+          "closureId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextSchoolYearId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initiatedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finance": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "closed"
+                ]
+              },
+              "openingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "incomeCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "expenseCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "closingBalanceCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "openingCashCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents",
+                    "description": "Część poza rachunkiem (#199); null — zamknięcie sprzed migracji 0028."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "closingCashCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "closingBankCents": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignedCents",
+                    "description": "Rachunek = całość − kasa (D-13)."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ledgerEntryCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "ledgerCorrectionCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "nextYearOpeningBalance": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/EntityId"
+                      },
+                      "amountCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "adjustmentsCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "cashCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "cashAdjustmentsCents": {
+                        "$ref": "#/components/schemas/SignedCents"
+                      },
+                      "carriedFromClosure": {
+                        "type": "boolean",
+                        "description": "true: bilans otwarcia przeniesiony tym zamknięciem."
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "amountCents",
+                      "adjustmentsCents",
+                      "cashCents",
+                      "cashAdjustmentsCents",
+                      "carriedFromClosure"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "source",
+              "openingBalanceCents",
+              "incomeCents",
+              "expenseCents",
+              "closingBalanceCents",
+              "openingCashCents",
+              "closingCashCents",
+              "closingBankCents",
+              "ledgerEntryCount",
+              "ledgerCorrectionCount",
+              "nextYearOpeningBalance"
+            ],
+            "additionalProperties": false
+          },
+          "payments": {
+            "type": "object",
+            "properties": {
+              "recordedCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "recordedNetCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "unmatchedCount": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "unmatchedNetCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "unmatchedAllocatedCents": {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              "correctionCount": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "recordedCount",
+              "recordedNetCents",
+              "unmatchedCount",
+              "unmatchedNetCents",
+              "unmatchedAllocatedCents",
+              "correctionCount"
+            ],
+            "additionalProperties": false,
+            "description": "Liczby i kwoty wpłat roku — bez gospodarstw."
+          },
+          "meetings": {
+            "type": "object",
+            "properties": {
+              "byStatus": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/Count"
+                },
+                "description": "Liczba zebrań wg statusu."
+              },
+              "heldWithoutApprovedMinutes": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "byStatus",
+              "heldWithoutApprovedMinutes"
+            ],
+            "additionalProperties": false
+          },
+          "resolutions": {
+            "type": "object",
+            "properties": {
+              "byStatus": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/Count"
+                },
+                "description": "Liczba uchwał wg statusu (bez zastąpionych korektą)."
+              }
+            },
+            "required": [
+              "byStatus"
+            ],
+            "additionalProperties": false
+          },
+          "events": {
+            "type": "object",
+            "properties": {
+              "byStatus": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/Count"
+                },
+                "description": "Liczba wydarzeń wg statusu."
+              }
+            },
+            "required": [
+              "byStatus"
+            ],
+            "additionalProperties": false
+          },
+          "checklist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearCloseChecklistItem"
+            },
+            "minItems": 6,
+            "maxItems": 6
+          },
+          "roles": {
+            "type": "object",
+            "properties": {
+              "expiredGrantCount": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "activeGrantsNextYearByRole": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/Count"
+                },
+                "description": "Aktywne przydziały roku następnego wg roli (nowa Rada)."
+              }
+            },
+            "required": [
+              "expiredGrantCount",
+              "activeGrantsNextYearByRole"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "asOf",
+          "final",
+          "schoolYear",
+          "status",
+          "closureId",
+          "nextSchoolYearId",
+          "initiatedBy",
+          "closedBy",
+          "closedAt",
+          "finance",
+          "payments",
+          "meetings",
+          "resolutions",
+          "events",
+          "checklist",
+          "roles"
+        ],
+        "additionalProperties": false,
+        "description": "Zestawienie przekazania dokumentacji nowej Radzie (JSON, bez danych osobowych)."
+      },
+      "YearCloseStartRequest": {
+        "type": "object",
+        "properties": {
+          "nextSchoolYearId": {
+            "$ref": "#/components/schemas/Id",
+            "description": "Rok następny (400 `invalid_next_school_year`; nieznany → 404 `next_school_year_not_found`; nie następuje po zamykanym → 409 `invalid_next_school_year`)."
+          }
+        },
+        "required": [
+          "nextSchoolYearId"
+        ]
+      },
+      "YearCloseStatus": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closing",
+              "closed"
+            ],
+            "description": "`open` — zamknięcia nie rozpoczęto."
+          },
+          "closureId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextSchoolYearId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Rok, do którego przechodzi bilans zamknięcia."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initiatedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Konto rozpoczynające (nie może zamknąć — cztery oczy)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initiatedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "carriedOpeningBalanceId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Bilans otwarcia roku następnego utworzony przy zamknięciu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiredGrantCount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Count",
+                "description": "Przydziały wygaszone zamknięciem."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checklist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearCloseChecklistItem"
+            },
+            "minItems": 6,
+            "maxItems": 6,
+            "description": "Wszystkie punkty w stałej kolejności."
+          },
+          "missingChecklistItems": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "financial_report",
+                "audit_commission_report",
+                "minutes_approved",
+                "resolutions_archived",
+                "reconciliation_confirmed",
+                "documents_handed_over"
+              ]
+            }
+          },
+          "balance": {
+            "$ref": "#/components/schemas/YearCloseBalance"
+          },
+          "yearEndCheck": {
+            "$ref": "#/components/schemas/YearCloseYearEndCheck"
+          },
+          "expenseReviews": {
+            "type": "object",
+            "properties": {
+              "unverified": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/SignedCents"
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents"
+                ],
+                "additionalProperties": false
+              },
+              "questioned": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/SignedCents"
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "unverified",
+              "questioned"
+            ],
+            "additionalProperties": false,
+            "description": "Wydatki bez weryfikacji drugiej osoby i zakwestionowane (#97) — nie blokują zamknięcia."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearCloseWarning"
+            },
+            "description": "Ostrzeżenia informacyjne (#80, #138) w stałej kolejności; nie blokują zamknięcia."
+          },
+          "accessReview": {
+            "type": "object",
+            "properties": {
+              "informational": {
+                "const": true
+              },
+              "reads": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accessKind": {
+                      "type": "string"
+                    },
+                    "entries": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "hits": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "actors": {
+                      "$ref": "#/components/schemas/Count"
+                    }
+                  },
+                  "required": [
+                    "accessKind",
+                    "entries",
+                    "hits",
+                    "actors"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "readsWithoutValidGrant": {
+                "type": "object",
+                "properties": {
+                  "entries": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "hits": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "actors": {
+                    "$ref": "#/components/schemas/Count"
+                  }
+                },
+                "required": [
+                  "entries",
+                  "hits",
+                  "actors"
+                ],
+                "additionalProperties": false
+              },
+              "activeGrantsInScope": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "informational",
+              "reads",
+              "readsWithoutValidGrant",
+              "activeGrantsInScope"
+            ],
+            "additionalProperties": false,
+            "description": "Przegląd dziennika odczytu danych rodzin roku (#133): tylko liczby, bez identyfikatorów kont i gospodarstw."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "status",
+          "closureId",
+          "nextSchoolYearId",
+          "initiatedBy",
+          "initiatedAt",
+          "closedBy",
+          "closedAt",
+          "carriedOpeningBalanceId",
+          "expiredGrantCount",
+          "checklist",
+          "missingChecklistItems",
+          "balance",
+          "yearEndCheck",
+          "expenseReviews",
+          "warnings",
+          "accessReview"
+        ],
+        "additionalProperties": false,
+        "description": "Stan zamknięcia roku (jedna migawka bazy, #213)."
+      },
+      "YearCloseStatusWrite": {
+        "type": "object",
+        "properties": {
+          "schoolYearId": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closing",
+              "closed"
+            ],
+            "description": "`open` — zamknięcia nie rozpoczęto."
+          },
+          "closureId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextSchoolYearId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Rok, do którego przechodzi bilans zamknięcia."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initiatedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Konto rozpoczynające (nie może zamknąć — cztery oczy)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initiatedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IsoDateTime"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "carriedOpeningBalanceId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityId",
+                "description": "Bilans otwarcia roku następnego utworzony przy zamknięciu."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiredGrantCount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Count",
+                "description": "Przydziały wygaszone zamknięciem."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checklist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearCloseChecklistItem"
+            },
+            "minItems": 6,
+            "maxItems": 6,
+            "description": "Wszystkie punkty w stałej kolejności."
+          },
+          "missingChecklistItems": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "financial_report",
+                "audit_commission_report",
+                "minutes_approved",
+                "resolutions_archived",
+                "reconciliation_confirmed",
+                "documents_handed_over"
+              ]
+            }
+          },
+          "balance": {
+            "$ref": "#/components/schemas/YearCloseBalance"
+          },
+          "yearEndCheck": {
+            "$ref": "#/components/schemas/YearCloseYearEndCheck"
+          },
+          "expenseReviews": {
+            "type": "object",
+            "properties": {
+              "unverified": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/SignedCents"
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents"
+                ],
+                "additionalProperties": false
+              },
+              "questioned": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "netCents": {
+                    "$ref": "#/components/schemas/SignedCents"
+                  }
+                },
+                "required": [
+                  "count",
+                  "netCents"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "unverified",
+              "questioned"
+            ],
+            "additionalProperties": false,
+            "description": "Wydatki bez weryfikacji drugiej osoby i zakwestionowane (#97) — nie blokują zamknięcia."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YearCloseWarning"
+            },
+            "description": "Ostrzeżenia informacyjne (#80, #138) w stałej kolejności; nie blokują zamknięcia."
+          },
+          "accessReview": {
+            "type": "object",
+            "properties": {
+              "informational": {
+                "const": true
+              },
+              "reads": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accessKind": {
+                      "type": "string"
+                    },
+                    "entries": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "hits": {
+                      "$ref": "#/components/schemas/Count"
+                    },
+                    "actors": {
+                      "$ref": "#/components/schemas/Count"
+                    }
+                  },
+                  "required": [
+                    "accessKind",
+                    "entries",
+                    "hits",
+                    "actors"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "readsWithoutValidGrant": {
+                "type": "object",
+                "properties": {
+                  "entries": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "hits": {
+                    "$ref": "#/components/schemas/Count"
+                  },
+                  "actors": {
+                    "$ref": "#/components/schemas/Count"
+                  }
+                },
+                "required": [
+                  "entries",
+                  "hits",
+                  "actors"
+                ],
+                "additionalProperties": false
+              },
+              "activeGrantsInScope": {
+                "$ref": "#/components/schemas/Count"
+              }
+            },
+            "required": [
+              "informational",
+              "reads",
+              "readsWithoutValidGrant",
+              "activeGrantsInScope"
+            ],
+            "additionalProperties": false,
+            "description": "Przegląd dziennika odczytu danych rodzin roku (#133): tylko liczby, bez identyfikatorów kont i gospodarstw."
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "true: ponowienie zakończonej operacji — stan bez nowego zapisu i zdarzenia."
+          }
+        },
+        "required": [
+          "schoolYearId",
+          "status",
+          "closureId",
+          "nextSchoolYearId",
+          "initiatedBy",
+          "initiatedAt",
+          "closedBy",
+          "closedAt",
+          "carriedOpeningBalanceId",
+          "expiredGrantCount",
+          "checklist",
+          "missingChecklistItems",
+          "balance",
+          "yearEndCheck",
+          "expenseReviews",
+          "warnings",
+          "accessReview",
+          "replayed"
+        ],
+        "additionalProperties": false,
+        "description": "Stan po zapisie (rozpoczęcie, punkt listy kontrolnej, zamknięcie)."
+      },
+      "YearCloseWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "unallocated_payments",
+              "payments_not_in_ledger",
+              "payment_ledger_amount_mismatch",
+              "expenses_without_evidence",
+              "large_expenses_without_resolution",
+              "reconciliation_missing",
+              "reconciliation_before_year_end",
+              "reconciliation_difference",
+              "reconciliation_drafts",
+              "unmatched_statement_lines",
+              "open_email_campaigns"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "amountCents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignedCents"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "count",
+          "amountCents"
+        ],
+        "additionalProperties": false,
+        "description": "Liczba i kwota — bez opisów wpisów i identyfikatorów osób; „brak wpisu wpłaty” nie jest statusem dłużnika."
+      },
+      "YearCloseYearEndCheck": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Bilans zamknięcia = saldo księgi na koniec roku (całość i kasa)."
+          },
+          "closingBalanceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "balanceAtYearEndCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "balanceDifferenceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "closingCashCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "cashAtYearEndCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "cashDifferenceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "closingBankCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "bankAtYearEndCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          },
+          "bankDifferenceCents": {
+            "$ref": "#/components/schemas/SignedCents"
+          }
+        },
+        "required": [
+          "ok",
+          "closingBalanceCents",
+          "balanceAtYearEndCents",
+          "balanceDifferenceCents",
+          "closingCashCents",
+          "cashAtYearEndCents",
+          "cashDifferenceCents",
+          "closingBankCents",
+          "bankAtYearEndCents",
+          "bankDifferenceCents"
+        ],
+        "additionalProperties": false,
+        "description": "Kontrola salda końca roku (#169)."
       }
     },
     "x-rd-error-catalog": [

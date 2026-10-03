@@ -1,4 +1,4 @@
-// Rejestr schematów OpenAPI (#160, etapy 2-12) i jawny rejestr pokrycia.
+// Rejestr schematów OpenAPI (#160, etapy 2-13) i jawny rejestr pokrycia.
 //
 // Każdy plik `src/pg/schemas/<moduł>.js` eksportuje:
 //   name        nazwa modułu tras (jak `name` w src/pg/routes/*.js i `module` w macierzy tras),
@@ -36,6 +36,7 @@ import * as admin from './admin.js';
 import * as paymentInstructions from './payment-instructions.js';
 import * as paymentReferences from './payment-references.js';
 import * as payments from './payments.js';
+import * as privacyNotice from './privacy-notice.js';
 import * as ledger from './ledger.js';
 import * as ledgerBudget from './ledger-budget.js';
 import * as ledgerCash from './ledger-cash.js';
@@ -44,26 +45,29 @@ import * as documents from './documents.js';
 import * as email from './email.js';
 import * as events from './events.js';
 import * as families from './families.js';
+import * as guardianUpdates from './guardian-updates.js';
+import * as importModule from './import.js';
 import * as login from './login.js';
 import * as meetings from './meetings.js';
 import * as mfa from './mfa.js';
 import * as news from './news.js';
 import * as reconciliation from './reconciliation.js';
 import * as session from './session.js';
+import * as yearClose from './year-close.js';
 import { COMMON_COMPONENTS } from './common.js';
 
 export const SCHEMA_MODULES = Object.freeze([
-  admin, documents, email, events, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, login, meetings, mfa, news,
-  paymentInstructions, paymentReferences, payments, reconciliation, session,
+  admin, documents, email, events, families, guardianUpdates, importModule, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, login,
+  meetings, mfa, news, paymentInstructions, paymentReferences, payments, privacyNotice, reconciliation, session, yearClose,
 ]);
 
-// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapach 11 i 12: wpłaty, księga
+// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapach 11-13: wpłaty, księga
 // z preliminarzem, kasą i centrami kosztów, rodziny, sesja, uzgodnienia wyciągów bankowych, kampanie e-mail,
-// zebrania, dokumenty, wydarzenia, aktualności z galerią, logowanie hasłem i MFA oraz administracja kont i ról).
+// zebrania, dokumenty, wydarzenia, aktualności z galerią, logowanie hasłem i MFA, administracja kont i ról oraz
+// wnioski opiekunów o aktualizację kontaktu, import, zamknięcie roku i informacja o przetwarzaniu danych).
 export const UNCOVERED_MODULES = Object.freeze([
   'audit-history', 'audit-reviews', 'board', 'exports',
-  'financial-reports', 'guardian-updates', 'import', 'print',
-  'privacy-notice', 'representative', 'year-close',
+  'financial-reports', 'print', 'representative',
 ]);
 
 export const COVERED_MODULES = Object.freeze(SCHEMA_MODULES.map((module) => module.name).sort());

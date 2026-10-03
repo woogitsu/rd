@@ -261,7 +261,7 @@ w CI jest wymagany przez `ci-ok`. Nowy plik obejmuje się kontrolą, dopisując 
 (`src/pg/schemas/index.js`: etap 2 — `payments`, `payment-references`, `payment-instructions`, `ledger`;
 etap 3 — `families`, `session`; etap 4 — `ledger-budget`, `ledger-cash`, `ledger-cost-centers`; etap 5 — `reconciliation`;
 etap 6 — `email`; etap 7 — `meetings`; etap 8 — `documents`; etap 9 — `events`; etap 10 — `news`; etap 11 — `login`,
-`mfa`; etap 12 — `admin`; razem 252 operacje)
+`mfa`; etap 12 — `admin`; etap 13 — `guardian-updates`, `import`, `year-close`, `privacy-notice`; razem 275 operacji)
 mają schematy ciał żądań i odpowiedzi
 (`src/pg/schemas/<moduł>.js`, opis mechanizmu w `docs/API.md`). `tests/openapi-contract.test.js` sprawdza:
 
@@ -273,7 +273,7 @@ mają schematy ciał żądań i odpowiedzi
   w kontroli struktury pliku `src/documents.js` i kursorze list, dla `events` w module domenowym `src/pg/events.js`,
   dla `news` w module domenowym `src/pg/news.js` i kursorze list, dla `login` w `src/pg/login.js` i polityce haseł
   `src/pg/password.js`, dla `mfa` w `src/pg/mfa.js`, dla `admin` w modułach wniosków, partii zaproszeń, promocji, RODO,
-  anonimizacji, resetu kont (`src/pg/login.js`) i kursorze list, `ROUTE_HELPER_SOURCES`);
+  anonimizacji, resetu kont (`src/pg/login.js`) i kursorze list, dla `guardian-updates` w kursorze list, `ROUTE_HELPER_SOURCES`);
 - **prawdziwe odpowiedzi** (PGlite, dane syntetyczne) przez `tests/helpers/contract-client.js` i walidator
   `tests/helpers/json-schema.js` (bez nowej zależności; nieznane słowo kluczowe schematu rzuca wyjątek, więc nie
   przepuszcza po cichu): utworzenie, ponowienie z tym samym kluczem (`Idempotency-Replayed`), korekta częściowa,
@@ -703,6 +703,48 @@ wniosku ma `requestBody.required: false`, schematy list, wniosków, kont, przydz
 - pominięcie każdego wymaganego pola ciała → `400` (pusta mapa klas → `422 class_map_required`) i każda odpowiedź sukcesu ze
   schematu (oba formaty eksportu) zwalidowana na prawdziwej odpowiedzi.
 
+Prawdziwe odpowiedzi etapu 13 (moduły `guardian-updates`, `import`, `privacy-notice`, `year-close`, 23 operacje) sprawdza
+`tests/openapi-contract-guardian-year.test.js` (ten sam `createContractClient`, PGlite, osobna baza na moduł, dane syntetyczne
+`@example.invalid`, imiona syntetyczne). Kod weryfikacyjny wysyła worker z transportem-atrapą wyłącznie na nowy adres z wniosku;
+pułapka sieci kończy się zerem. Osobny test sprawdza w specyfikacji, że klucz idempotencji ma tylko zapis importu (wymagany),
+nagłówek `Idempotency-Replayed` (`true`, `required: false`) — tylko zatwierdzenie szablonu i zatwierdzenie/publikacja wersji
+informacji, ciało opcjonalne — tylko punkt listy kontrolnej i zamknięcie roku, cztery trasy publiczne nie mają `401`, token linku
+jest tylko w odpowiedzi wydania, publiczna informacja nie ma identyfikatorów kont, `mfa_stale` mają zatwierdzenie szablonu i
+zamknięcie roku, a próbki odmów obejmują każdą operację. Scenariusz:
+
+- **granice ról na każdej z 19 operacji z sesją**: brak sesji `401`; skarbnik, przedstawiciel, Komisja Rewizyjna, dyrekcja i zarząd
+  zawężony do klasy `403 forbidden` (zamknięcie roku: także admin techniczny; rozpoczęcie i zamknięcie: także skarbnik; zatwierdzenie
+  szablonu: także admin); admin bez czynnika `403 mfa_enrollment_required`, z czynnikiem po samym haśle `403 mfa_required`; obcy
+  `Origin` `403 invalid_origin`; odmowy niczego nie zapisują;
+- **guardian-updates**: szablon (szkic, autor nie zatwierdza `self_approval_forbidden`, `mfa_stale`, `verify_template_changed`,
+  zatwierdzenie i ponowienie z `Idempotency-Replayed: true`, `verify_template_not_draft`, błędy treści i kursor wersji); link (token
+  raz, w bazie skrót; `guardian_not_found`, `invalid_request`, `400`/`413`/`415`); publiczny podgląd (imię i klasy rodzeństwa) i
+  formularz (`requested`, podwójne wysłanie `409 link_used`, zużyty link `404`); **dwoje opiekunów rodzeństwa**: błędy formularza
+  drugiego opiekuna nie zużywają linku (`invalid_email`, `invalid_request`, bramka danych osobowych `422`), kod innego wniosku nie
+  pasuje; potwierdzenie kodu (zły kod, ponowienie); kolejka z kursorem związanym ze statusem; zatwierdzenie (`changed: true`,
+  `verification: confirmed`), ponowienie i odrzucenie rozstrzygniętego wniosku `changed: false`; **zmiana wyłącznie u opiekuna z
+  zatwierdzonego wniosku** (drugi opiekun i inna rodzina bez zmian); jedno zdarzenie zatwierdzenia;
+- **import i privacy-notice**: opcje (zarząd widzi tylko rok przydziału), zarząd poza rokiem `403`, `APP_ENV=production` bez
+  `IMPORT_ENABLED` `403 import_disabled`; podgląd rodzeństwa z dwojgiem opiekunów bez imion i adresów; zapis bez opublikowanej
+  informacji `409 privacy_notice_missing`; wersje informacji (autor nie zatwierdza, publikacja bez zatwierdzenia `409`, ponowienia
+  z nagłówkiem, zastąpienie poprzedniej, publiczna wersja z `Cache-Control`, błędy pól, `invalid_reference`, `invalid_id`,
+  `404`); zapis `201`, **podwójne kliknięcie i te same dane z nowym kluczem** `200 replayed: true` bez duplikatów; konflikty `422
+  import_has_conflicts` i jawne `skipConflicts`, `idempotency_key_reused`, `fingerprint_mismatch`, `preview_stale`; błędy treści
+  `400` (każde pole formatu), `413 too_many_rows`, `413 request_too_large`, `415 unsupported_media_type`, `422 unknown_school_year`,
+  `422 no_classes_in_school_year`, brak klucza i podglądu;
+- **year-close**: stan otwartego roku z bilansem, kontrolą końca roku i ostrzeżeniami (liczby i kwoty), przekazanie przed
+  zamknięciem; `invalid_school_year_id`, `school_year_not_found` na każdej trasie; przed rozpoczęciem `year_close_not_started`;
+  rozpoczęcie (`next_school_year_not_found`, rok wcześniejszy `409 invalid_next_school_year`, `201`, ponowienie `200`,
+  `year_close_already_started`); lista kontrolna (`invalid_checklist_item`, `invalid_note`, `invalid_document_id`,
+  `invalid_report_snapshot`, bramka danych osobowych, ponowienie nie nadpisuje uwagi, żądanie bez treści); zamknięcie
+  (`checklist_incomplete` z brakującymi punktami, **cztery oczy** `four_eyes_required`, `mfa_stale`,
+  `invalid_year_end_confirmation`, `200`); ponowienie przez osobę z wygasłym przydziałem `409 school_year_closed`, przez zarząd bez
+  roku `200 replayed: true`, jedno zdarzenie; po zamknięciu rozpoczęcie i punkt listy `409 school_year_closed`; przekazanie dla
+  zarządu i Rady roku następnego (#195); `next_year_opening_balance_exists` (osobna para lat); **import do zamkniętego roku `409
+  school_year_closed`** z wycofaniem całej transakcji;
+- pominięcie każdego wymaganego pola ciała → `400` (brak tokenu w formularzu → `404 invalid_or_expired_link`) i każda odpowiedź
+  sukcesu ze schematu zwalidowana na prawdziwej odpowiedzi.
+
 Schematy odpowiedzi są ścisłe: nowe pole w odpowiedzi trasy psuje test, dopóki schemat nie zostanie świadomie
 zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, usunięcie z `UNCOVERED_MODULES`,
 `npm run openapi:build` i scenariusz w teście kontraktu (kolejne moduły rozszerzają
@@ -710,8 +752,8 @@ zmieniony. Dodając kolejny moduł: plik schematów, wpis w `SCHEMA_MODULES`, us
 `tests/openapi-contract-families.test.js`, `tests/openapi-contract-ledger-extra.test.js`,
 `tests/openapi-contract-reconciliation.test.js`, `tests/openapi-contract-email.test.js`,
 `tests/openapi-contract-meetings.test.js`, `tests/openapi-contract-documents.test.js`,
-`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js` i
-`tests/openapi-contract-admin.test.js`).
+`tests/openapi-contract-events.test.js`, `tests/openapi-contract-news.test.js`, `tests/openapi-contract-auth.test.js`,
+`tests/openapi-contract-admin.test.js` i `tests/openapi-contract-guardian-year.test.js`).
 
 ## Szablon bazy PGlite i czas testów (#111)
 
