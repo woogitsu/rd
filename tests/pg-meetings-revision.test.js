@@ -3,14 +3,11 @@
 // domeny .invalid.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   createMeeting, createResolution, updateMeeting, updateResolution,
 } from '../src/pg/meetings.js';
+import { createPgliteTestDb } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 
 const grant = (role, extra = {}) => ({ role, classId: null, schoolYearId: 'year', expiresAt: null, ...extra });
 const board = { userId: 'board', grants: [grant('board')], mfaVerified: true };
@@ -28,8 +25,7 @@ async function newMeeting(db, extra = {}) {
 }
 
 async function meetingsDb() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query(`INSERT INTO school_years VALUES ('year','2026/27','2026-09-01','2027-08-31')`);
   await db.query("INSERT INTO classes (id, school_year_id, name) VALUES ('class-a','year','1A')");
   for (const id of ['board']) {

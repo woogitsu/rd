@@ -322,7 +322,7 @@ test('#185: ten sam użytkownik ma najwyżej 2 uploady naraz; inny użytkownik n
 
 // Podwójne kliknięcie dużego pliku: dwa równoległe żądania z tym samym kluczem
 // idempotencji mieszczą się w limicie na użytkownika, a na końcu jest jeden dokument.
-test('#185: podwójne kliknięcie (ten sam klucz, równolegle) daje jeden dokument', async () => withEnv(async (db, env, storage) => {
+test('#185: podwójne kliknięcie (ten sam klucz, Promise.all; PGlite: po kolei, nie wyścig) daje jeden dokument', async () => withEnv(async (db, env, storage) => {
   resetUploadSlotsForTests();
   const cookie = await treasurer(db);
   const key = `double-click-${Date.now()}`;
@@ -897,7 +897,7 @@ test('#82 wyścig: dwa równoległe zastąpienia tego samego dokumentu RÓŻNYMI
   assert.equal(await statusEventCount(db, original.data.document.id), 1);
 }));
 
-test('#82 podwójne kliknięcie „Unieważnij” (ten sam klucz, równolegle): jedno zdarzenie i jeden wpis audytu', async () => withEnv(async (db, env) => {
+test('#82 podwójne kliknięcie „Unieważnij” (ten sam klucz, Promise.all; PGlite: po kolei, nie wyścig): jedno zdarzenie i jeden wpis audytu', async () => withEnv(async (db, env) => {
   const cookie = await treasurer(db);
   const { data } = await upload(env, { cookie });
   const results = await Promise.all([0, 1].map(() => changeStatus(env, { cookie, id: data.document.id, action: 'void', key: 'void-double-click-82' })));

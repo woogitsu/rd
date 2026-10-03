@@ -1,15 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
-import { loadMigrations } from '../src/postgres-migrations.js';
 import {
   approve, cancel, createDraft, formatBrusselsLocal, getInternal, handle, listInternal,
   listPublic, parseBrusselsLocal, publish, submit, updateDraft,
 } from '../src/pg/events.js';
-import { lifecycleActors } from './helpers/pg.js';
+import { createPgliteTestDb, lifecycleActors } from './helpers/pg.js';
 
-const directory = fileURLToPath(new URL('../postgres/migrations/', import.meta.url));
 const ORIGIN = 'https://rd.example.invalid';
 
 const board1 = { userId: 'board1', grants: [{ role: 'board', classId: null, schoolYearId: 'year' }], mfaVerified: true };
@@ -20,8 +16,7 @@ const rep1B = { userId: 'rep1b', grants: [{ role: 'representative', classId: 'c1
 const treasurer = { userId: 'treasurer', grants: [{ role: 'treasurer', classId: null, schoolYearId: null }], mfaVerified: true };
 
 async function eventsDb() {
-  const db = new PGlite();
-  for (const migration of await loadMigrations(directory)) await db.exec(migration.sql);
+  const db = await createPgliteTestDb();
   await db.query("INSERT INTO school_years VALUES ('year','2026/27','2026-09-01','2027-08-31'), ('other','2027/28','2027-09-01','2028-08-31')");
   await db.query("INSERT INTO classes VALUES ('c1a','year','1A'), ('c1b','year','1B')");
   for (const id of ['board1', 'board2', 'admin', 'rep1a', 'rep1b', 'treasurer']) {
