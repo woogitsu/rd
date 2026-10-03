@@ -1,4 +1,4 @@
-// Rejestr schematów OpenAPI (#160, etap 2) i jawny rejestr pokrycia.
+// Rejestr schematów OpenAPI (#160, etapy 2-3) i jawny rejestr pokrycia.
 //
 // Każdy plik `src/pg/schemas/<moduł>.js` eksportuje:
 //   name        nazwa modułu tras (jak `name` w src/pg/routes/*.js i `module` w macierzy tras),
@@ -9,9 +9,11 @@
 //   body            schemat ciała żądania JSON,
 //   idempotencyKey  true (wymagany nagłówek Idempotency-Key) albo 'optional',
 //   query           { nazwa: { schema, required?, description? } } — parametry zapytania ponad tymi z macierzy,
-//   responses       { status: { description, schema, contentType?, replayed? } } — odpowiedzi sukcesu
-//                   z kształtem; `replayed: 'true'|'false'` dodaje nagłówek Idempotency-Replayed,
+//   responses       { status: { description, schema?, contentType?, replayed? } } — odpowiedzi sukcesu
+//                   z kształtem; `replayed: 'true'|'false'` dodaje nagłówek Idempotency-Replayed;
+//                   bez `schema` = odpowiedź bez treści (np. 204),
 //   errors          { status: [kody] } — kody błędów tej trasy; muszą istnieć w docs/API_ERRORS.md.
+//                   Pusta lista = status z macierzy tras, którego trasa w praktyce nie zwraca.
 //
 // Generator (scripts/build-openapi.js) dołącza wpisy do operacji z macierzy tras
 // (tests/helpers/route-matrix.js); tests/openapi-contract.test.js sprawdza pokrycie
@@ -24,16 +26,19 @@ import * as paymentInstructions from './payment-instructions.js';
 import * as paymentReferences from './payment-references.js';
 import * as payments from './payments.js';
 import * as ledger from './ledger.js';
+import * as families from './families.js';
+import * as session from './session.js';
 import { COMMON_COMPONENTS } from './common.js';
 
-export const SCHEMA_MODULES = Object.freeze([ledger, paymentInstructions, paymentReferences, payments]);
+export const SCHEMA_MODULES = Object.freeze([families, ledger, paymentInstructions, paymentReferences, payments, session]);
 
-// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 2: wpłaty i księga).
+// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 3: wpłaty, księga,
+// rodziny i sesja).
 export const UNCOVERED_MODULES = Object.freeze([
   'admin', 'audit-history', 'audit-reviews', 'board', 'documents', 'email', 'events', 'exports',
-  'families', 'financial-reports', 'guardian-updates', 'import', 'ledger-budget', 'ledger-cash',
+  'financial-reports', 'guardian-updates', 'import', 'ledger-budget', 'ledger-cash',
   'ledger-cost-centers', 'login', 'meetings', 'mfa', 'news', 'print', 'privacy-notice',
-  'reconciliation', 'representative', 'session', 'year-close',
+  'reconciliation', 'representative', 'year-close',
 ]);
 
 export const COVERED_MODULES = Object.freeze(SCHEMA_MODULES.map((module) => module.name).sort());

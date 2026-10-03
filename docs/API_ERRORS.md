@@ -568,12 +568,12 @@ i transakcje z `src/db.js`:
 - **`405` zawsze z `Allow`.** `tests/pg-tx-retry.test.js` skanuje `src/pg/**`
   i sprawdza odpowiedzi na nieobsługiwane metody.
 
-## OpenAPI (#160, etapy 1-2)
+## OpenAPI (#160, etapy 1-3)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem
 `npm run openapi:build` z `tests/helpers/route-matrix.js`, z tabeli kodów
 powyżej i ze schematów `src/pg/schemas/*` (moduły pokryte w etapie 2: wpłaty
-i księga; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
+i księga, w etapie 3: rodziny i sesja; przy ich operacjach `x-rd-error-codes` wymienia kody per status, a
 `tests/openapi-contract.test.js` sprawdza, że należą do tego katalogu i
 występują w źródle trasy); `tests/openapi.test.js` psuje się przy ręcznej
 edycji pliku albo trasie dopisanej bez regeneracji. Role w `x-rd-roles` to **założenia** z
@@ -647,7 +647,7 @@ błędów"). Nie obejmuje:
   `families.js`/`documents.js` i `payments.js`/`ledger.js`/`email.js`/
   `reconciliation.js` opisane w issue #160);
 - schematów ciał żądań i odpowiedzi dla modułów jeszcze niepokrytych w
-  `docs/openapi.json` (etap 2 objął wpłaty i księgę; reszta wg
+  `docs/openapi.json` (etap 2 objął wpłaty i księgę, etap 3 rodziny i sesję; reszta wg
   `x-rd-schema-coverage`, patrz `docs/API.md`, „Schematy żądań i odpowiedzi”);
 - objęcia sprawdzaniem typów całego `src/pg/**`. Dziś (#160): `jsconfig.json`
   z `checkJs` dla `src/pg/input.js`, `scope.js`, `pii-gate.js`, `audit.js`,

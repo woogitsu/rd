@@ -7,7 +7,7 @@
 //   npm run openapi:build           # regeneruje docs/openapi.json
 //   npm run openapi:build -- --check  # 0 = aktualny, 1 = trzeba regenerować
 //
-// Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga); pozostałe są
+// Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga, rodziny, sesja); pozostałe są
 // jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
 // tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
 // „do zatwierdzenia” przez zarząd/szkołę.
@@ -105,12 +105,11 @@ const RESPONSE_TEXT = {
 
 const ref = (name) => ({ $ref: `#/components/schemas/${name}` });
 
-// Odpowiedź sukcesu ze schematu trasy (src/pg/schemas): treść JSON albo plik.
+// Odpowiedź sukcesu ze schematu trasy (src/pg/schemas): treść JSON albo plik; bez `schema`
+// (np. 204 wylogowania) odpowiedź nie ma treści.
 function schemaResponse(spec) {
-  const response = {
-    description: spec.description,
-    content: { [spec.contentType ?? 'application/json']: { schema: spec.schema } },
-  };
+  const response = { description: spec.description };
+  if (spec.schema !== undefined) response.content = { [spec.contentType ?? 'application/json']: { schema: spec.schema } };
   if (spec.replayed) {
     response.headers = {
       'Idempotency-Replayed': {
@@ -153,6 +152,10 @@ function applySchema(operation, entry) {
     const existing = operation.responses[status];
     const response = existing ?? { description: RESPONSE_TEXT[status] ?? 'Błąd (kod z katalogu).', content: errorContent() };
     response['x-rd-error-codes'] = uniqSorted([...(response['x-rd-error-codes'] ?? []), ...codes]);
+    // Pusta lista: status wynika z macierzy tras, ale trasa go nie zwraca (np. 403 dla tras sesji).
+    if (!response['x-rd-error-codes'].length) {
+      response.description = 'Status z macierzy tras (x-rd-deny-status); trasa go nie zwraca, więc lista kodów jest pusta.';
+    }
     operation.responses[status] = response;
   }
   operation.responses = sortKeys(operation.responses);
