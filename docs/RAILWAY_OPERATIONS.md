@@ -1006,13 +1006,15 @@ zmiennych ani nie wykonuje redeployu Railway.
 
 **Zachowanie w `read_only`** (kod: `src/write-mode.js`, `src/pg/app.js`):
 
-- Każde żądanie `/api/*` metodą zmieniającą stan (`POST`, `PUT`, `PATCH`, `DELETE`)
+- Każde żądanie `/api/*` metodą inną niż `GET` i `HEAD` (`POST`, `PUT`, `PATCH`,
+  `DELETE`, ale też `OPTIONS` i metoda nieznana — [API.md](API.md), „Metody HTTP a zapis”)
   dostaje `503` z `{ "error": "read_only" }` i nagłówkiem `Retry-After`
   (300 s), **przed** routingiem modułów i przed jakimkolwiek zapisem — także dla
   webhooka Brevo (dostawca ponowi zdarzenie). Kod `read_only` jest inny niż
   `service_unavailable`; komunikat w `shared/messages.js`, opis w
   [API_ERRORS.md](API_ERRORS.md). Odrzucenie jest logowane jako
-  `write_mode_rejected` (metoda i ścieżka, bez danych osobowych).
+  `write_mode_rejected` (metoda i ścieżka, bez danych osobowych; metoda spoza
+  `POST`/`PUT`/`PATCH`/`DELETE`/`OPTIONS` jako `OTHER`).
 - `GET` i `/health` działają bez zmian, z zachowaniem granic ról; przedstawiciel
   klasy nadal widzi wyłącznie przypisane klasy. `/health/ready` dodaje
   `write_mode`, ale pozostaje `200`, gdy proces i baza są zdrowe.

@@ -17,6 +17,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { isSameOrigin } from '../auth.js';
+import { isSafeMethod } from './http.js';
 import { actorContext, authorizedClassIds, hasAnyMatchingGrant, isAuthorizedScoped } from './scope.js';
 import { detectPossiblePersonalData } from './pii-check.js';
 import { gateFreeText, loadKnownNames, piiAuditMetadata } from './pii-gate.js';
@@ -2270,7 +2271,7 @@ export async function handle(request, env, url, json) {
     const target = route(request.method, url.pathname);
     if (!target) return json({ error: 'not_found' }, 404);
     if (target.name === 'method') return json({ error: 'method_not_allowed' }, 405, { Allow: target.allowed.join(', ') });
-    const mutation = request.method !== 'GET' && request.method !== 'HEAD';
+    const mutation = !isSafeMethod(request.method);
     if (mutation && !isSameOrigin(request)) return json({ error: 'invalid_origin' }, 403);
     const db = env?.db;
     if (!db) throw new MeetingError('service_unavailable', 503);

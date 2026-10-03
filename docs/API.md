@@ -251,6 +251,42 @@ Wskazania użytkownika 2026-10-03 (do formalnego potwierdzenia, D-08/D-10; `docs
 Testy: `tests/pg-families.test.js` (opis „moduł rodzin: e-mail opiekuna i zapisy tylko z MFA (#751)”),
 `tests/openapi-contract-families.test.js`, macierz (`householdEmailCheck` w `tests/helpers/route-matrix.js`).
 
+## Metody HTTP a zapis: Origin, tryb tylko do odczytu, HEAD i OPTIONS (po #748)
+
+Reguła routera (`src/pg/app.js`, `isSafeMethod` w `src/pg/http.js`): pod `/api/` metodami bezpiecznymi są
+wyłącznie `GET` i `HEAD`. Każda inna metoda (`POST`, `PUT`, `PATCH`, `DELETE`, a także `OPTIONS` i metoda
+nieznana, np. `PROPFIND`) jest traktowana jak zapis, zanim trafi do modułu:
+
+- bez zgodnego nagłówka `Origin` dostaje `403 invalid_origin` (wyjątki jak dotąd: `POST` webhooka Brevo
+  i `POST /api/email/preferences` — `allowsCrossOrigin` modułu e-mail);
+- w trybie `APP_WRITE_MODE=read_only` dostaje `503 read_only` z `Retry-After` (poza `/api/login` i `/api/logout`).
+
+API nie obsługuje CORS (aplikacja jednego originu, bez nagłówków `Access-Control-*`), więc `OPTIONS` nie ma
+legalnego użycia. Żądanie preflight z obcej domeny dostaje `403 invalid_origin`. `OPTIONS` ze zgodnym `Origin`
+trafia do modułu, który odpowiada `404` albo `405` z nagłówkiem `Allow` (#156).
+
+`HEAD` jest metodą bezpieczną: nie wymaga `Origin` i działa w trybie tylko do odczytu, a bramka MFA działa jak
+dla `GET`. Żadna trasa `/api/` go jednak nie obsługuje. Moduł odpowiada `404` albo `405` z `Allow` jak na każdą
+nieobsługiwaną metodę, nigdy `2xx`, i niczego nie zapisuje (także śladu odczytu typu `*.list_viewed`).
+Wybrano tę regułę, bo wymaga najmniej zmian: przed poprawką `HEAD` dostawał już `404`/`405` w niemal wszystkich
+modułach. Obsługa `HEAD` jak `GET` bez treści uruchamiałaby odczyty, które zapisują zdarzenia audytu (eksporty,
+listy). Strony i pliki statyczne poza `/api/` (`src/node-app.js`, `src/pg/public-site.js`) obsługują `HEAD`
+jak dotąd.
+
+Zmiany zachowania:
+
+- `OPTIONS` (i metoda nieznana) bez `Origin` albo z obcym `Origin`: `403 invalid_origin` zamiast `404`/`405`
+  modułu. W `read_only`: `503 read_only`.
+- `HEAD` bez `Origin` w modułach e-mail (`/api/email/*` poza webhookiem i preferencjami) i aktualności
+  (`/api/news*`, `/api/news-photos*`): `404`/`405` modułu zamiast `403 invalid_origin`. Te moduły, a także
+  zebrania i rodziny (tam bez zmiany odpowiedzi), sprawdzają Origin tą samą funkcją `isSafeMethod` co router.
+- Pozostałe odpowiedzi bez zmian.
+
+Ryzyko resztkowe: router przepuszcza `HEAD` do modułów, bo tylko moduł zna nagłówek `Allow` danej ścieżki.
+Moduł, który dopasuje ścieżkę bez sprawdzenia metody (błąd z #748), wykonałby ją także dla `HEAD`, z pominięciem
+`Origin` i `read_only`. Przed tym chroni test regresyjny `tests/pg-route-method-guard.test.js` (docs/TESTING.md,
+„Strażnik metod HTTP”). Ciasteczko sesji ma `SameSite=Lax`, więc obca strona nie wyśle go z żądaniem `HEAD`.
+
 ## Schematy żądań i odpowiedzi (OpenAPI, #160, etapy 2-14)
 
 `docs/openapi.json` (OpenAPI 3.1) jest generowany poleceniem `npm run openapi:build` (sprawdzenie bez

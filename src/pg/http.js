@@ -23,7 +23,16 @@ export function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), { status, headers: buildHeaders({ ...JSON_HEADERS, ...headers }) });
 }
 
-export const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// Metody bezpieczne (po #748): wyłącznie GET i HEAD. Każda inna metoda — także
+// OPTIONS i metoda nieznana — jest traktowana jak zapis: router wymaga dla niej
+// zgodnego Origin i blokuje ją w trybie tylko do odczytu, zanim trafi do modułu.
+// API nie obsługuje CORS (aplikacja jednego originu), więc OPTIONS nie ma
+// legalnego użycia. HEAD nie zmienia danych i nie jest obsługiwany przez żadną
+// trasę /api/: moduł odpowiada na niego 404 albo 405 z Allow, jak na każdą
+// nieobsługiwaną metodę (docs/API.md, „Metody HTTP a zapis”).
+export function isSafeMethod(method) {
+  return method === 'GET' || method === 'HEAD';
+}
 
 // Log techniczny bez danych osobowych: tylko nazwa modułu i kod błędu.
 // Nie logujemy error.message ani error.detail — PostgreSQL potrafi w nich
