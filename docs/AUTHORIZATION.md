@@ -196,12 +196,12 @@ Bramka MFA routera (issue #3, `src/pg/mfa-policy.js`, opis w [AUTH.md](AUTH.md))
 | `POST /api/ledger/budget/:lineId/revisions` | jak wyżej, rok linii | tak | 403 | #107; nowa wersja z `supersedes_id`; nieaktualna wersja lub równoległa rewizja: 409 `budget_line_superseded` |
 | `POST /api/ledger/budget/adoptions` | zarząd — przydział bez klasy, rok 1 | tak | 403 | #107; admin i skarbnik: 403; fotografia bieżących wersji linii, opcjonalnie z uchwałą zebrania ogólnego |
 | `GET /api/ledger/budget/history?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #107; wszystkie wersje linii i przyjęcia |
-| `GET /api/ledger/budget/execution?schoolYearId=:year` | jak wyżej | tak | 403 | #107; plan vs wykonanie, `format` = json, csv albo html; KR widzi zestawienie w raporcie (D-09) |
+| `GET /api/ledger/budget/execution?schoolYearId=:year` | jak wyżej | tak | 403 | #107; plan vs wykonanie, `format` = json, csv, xlsx albo html; KR widzi zestawienie w raporcie (D-09) |
 | `GET /api/ledger/reviews?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #97; stan weryfikacji wydatków, filtr `reviewStatus` |
 | `POST /api/ledger/:ledgerEntryId/reviews` | jak wyżej, rok wpisu; nie autor wpisu | tak | 403 | #97; autor wpisu: 403 `four_eyes_required` (także trigger bazy); przychód: 409 `review_expense_only`; zamknięty rok: 409 |
 | `GET /api/ledger/resolutions?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | #93; przyjęte uchwały zebrań ogólnych roku i roku poprzedniego: numer, tytuł, kwoty — bez treści (D-09) |
 | `POST /api/ledger/resolutions/:resolutionId/authorizations` | admin, zarząd — przydział bez klasy w roku uchwały | tak | 403 | #93; skarbnik: 403; uchwała spoza zakresu lub nieistniejąca: 404; zmiana kwoty = nowy wiersz z `supersedesId` (nieaktualny: 409 `authorization_superseded`) |
-| `GET /api/ledger/cost-centers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01; centra kosztów (#117), `type=event\|class`, `format=json\|csv`: wynik per wydarzenie/klasa + „ogólne”; przedstawiciel, audit, principal 403 (D-08/D-09) |
+| `GET /api/ledger/cost-centers?schoolYearId=:year` | admin, zarząd, skarbnik — przydział bez klasy, rok 1 | tak | 403 | SR-01; centra kosztów (#117), `type=event\|class`, `format=json\|csv\|xlsx`: wynik per wydarzenie/klasa + „ogólne”; przedstawiciel, audit, principal 403 (D-08/D-09) |
 | `GET /api/ledger/:ledgerEntryId/allocations` | jak wyżej, rok wpisu | tak | 403 | SR-01; historia wersji przypisania (#117) |
 | `POST /api/ledger/:ledgerEntryId/allocations` | jak wyżej, rok wpisu | tak | 403 | SR-01; nowa wersja przypisania (#117); nieaktualna `supersedesId`: 409 `allocation_version_conflict` |
 | `GET /api/ledger/cost-centers/events/:eventId` | jak wyżej, rok wydarzenia | tak | 403 | SR-01; rozliczenie wydarzenia (#117); nieistniejące: 404 |
