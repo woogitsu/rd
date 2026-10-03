@@ -9,7 +9,7 @@
 //
 // Schematy mają dziś tylko moduły z `COVERED_MODULES` (wpłaty, księga z preliminarzem, kasą i centrami
 // kosztów, rodziny, sesja, uzgodnienia wyciągów z raportem KR, kampanie e-mail, zebrania, dokumenty, wydarzenia, aktualności,
-// logowanie i MFA); pozostałe są
+// administracja kont i ról, logowanie i MFA); pozostałe są
 // jawnie wymienione w `UNCOVERED_MODULES` i `x-rd-schema-coverage`. Generator nie zmienia
 // tras. Role w `x-rd-roles` są ZAŁOŻENIAMI z docs/AUTHORIZATION.md (D-08/D-09) —
 // „do zatwierdzenia” przez zarząd/szkołę.
@@ -137,10 +137,12 @@ function schemaResponse(spec) {
 
   // Nagłówek tylko przy ponowieniu (#160 etap 6): zapis bez klucza idempotencji (np. zatwierdzenie
   // kampanii e-mail) przy pierwszym wykonaniu odpowiada bez nagłówka, a ponowienie wysyła `true`.
+  // Opcjonalny klucz idempotencji (#160 etap 12, rejestracja żądania osoby): `false` tylko przy zapisie z kluczem.
   if (spec.replayedOptional) {
     response.headers['Idempotency-Replayed'].required = false;
-    response.headers['Idempotency-Replayed'].description = 'true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; '
-      + 'brak nagłówka: zapis wykonany teraz.';
+    response.headers['Idempotency-Replayed'].description = [spec.replayed].flat().includes('true')
+      ? 'true: ponowienie rozpoznane po stanie obiektu, bez nowego zapisu; brak nagłówka: zapis wykonany teraz.'
+      : 'false: zapis wykonany teraz z nagłówkiem Idempotency-Key; brak nagłówka: zapis bez klucza (klucz jest opcjonalny).';
   }
   return response;
 }
@@ -167,7 +169,8 @@ function schemaParameters(parameters, entry) {
 // Dołącza schematy trasy do operacji: requestBody, odpowiedzi sukcesu z kształtem i kody błędów.
 function applySchema(operation, entry) {
   if (entry.body) {
-    operation.requestBody = { required: true, content: { 'application/json': { schema: entry.body } } };
+    // `bodyOptional` (#160 etap 12): trasa przyjmuje też żądanie bez treści i bez Content-Type.
+    operation.requestBody = { required: !entry.bodyOptional, content: { 'application/json': { schema: entry.body } } };
   }
   // Ciało inne niż JSON (#160 etap 8): przesłanie dokumentu to surowe bajty pliku — mapa typ treści → schemat.
   if (entry.bodyContent) {

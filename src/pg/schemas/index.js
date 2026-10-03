@@ -1,4 +1,4 @@
-// Rejestr schematów OpenAPI (#160, etapy 2-11) i jawny rejestr pokrycia.
+// Rejestr schematów OpenAPI (#160, etapy 2-12) i jawny rejestr pokrycia.
 //
 // Każdy plik `src/pg/schemas/<moduł>.js` eksportuje:
 //   name        nazwa modułu tras (jak `name` w src/pg/routes/*.js i `module` w macierzy tras),
@@ -6,7 +6,7 @@
 //   routes      { 'METODA /ścieżka-openapi': wpis } — ścieżka z `{param}`, bez zapytania.
 //
 // Wpis trasy (wszystkie pola poza `responses` opcjonalne):
-//   body            schemat ciała żądania JSON,
+//   body            schemat ciała żądania JSON (`bodyOptional: true` — trasa przyjmuje też żądanie bez treści, etap 12),
 //   bodyContent     { typ treści: schemat } — ciało inne niż JSON (np. surowe bajty przesyłanego dokumentu, etap 8),
 //                   z opcjonalnym `bodyDescription`; wyklucza `body`,
 //   idempotencyKey  true (wymagany nagłówek Idempotency-Key) albo 'optional',
@@ -15,7 +15,8 @@
 //                   sukcesu z kształtem; `replayed: 'true'|'false'` dodaje nagłówek Idempotency-Replayed
 //                   (lista `['false', 'true']`, gdy ten sam status zwraca obie wartości, np. zatwierdzenie
 //                   uzgodnienia bez klucza idempotencji; `replayedOptional: true`, helper `replayedOnRetry`:
-//                   nagłówek tylko przy ponowieniu, z wartością `true`);
+//                   nagłówek tylko przy ponowieniu, z wartością `true`; z `replayed: 'false'` — nagłówek tylko przy
+//                   opcjonalnym kluczu idempotencji, etap 12);
 //                   `content` = { typ treści: schemat } dla trasy z kilkoma formatami (parametr `format`,
 //                   helper `formatsResponse`); bez `schema` i `content` = odpowiedź bez treści (np. 204),
 //   errors          { status: [kody] } — kody błędów tej trasy; muszą istnieć w docs/API_ERRORS.md.
@@ -31,6 +32,7 @@
 // KOLEJNE PR-y zmniejszają UNCOVERED_MODULES: dopisz plik schematów modułu, dodaj go do
 // SCHEMA_MODULES, usuń nazwę z UNCOVERED_MODULES i uruchom `npm run openapi:build`.
 // Test pilnuje, że lista pokrywa dokładnie moduły macierzy bez schematów i nie rośnie.
+import * as admin from './admin.js';
 import * as paymentInstructions from './payment-instructions.js';
 import * as paymentReferences from './payment-references.js';
 import * as payments from './payments.js';
@@ -51,15 +53,15 @@ import * as session from './session.js';
 import { COMMON_COMPONENTS } from './common.js';
 
 export const SCHEMA_MODULES = Object.freeze([
-  documents, email, events, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, login, meetings, mfa, news,
+  admin, documents, email, events, families, ledger, ledgerBudget, ledgerCash, ledgerCostCenters, login, meetings, mfa, news,
   paymentInstructions, paymentReferences, payments, reconciliation, session,
 ]);
 
-// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapie 11: wpłaty, księga
+// Moduły z macierzy tras, które NIE mają jeszcze schematów (stan po etapach 11 i 12: wpłaty, księga
 // z preliminarzem, kasą i centrami kosztów, rodziny, sesja, uzgodnienia wyciągów bankowych, kampanie e-mail,
-// zebrania, dokumenty, wydarzenia, aktualności z galerią, logowanie hasłem i MFA).
+// zebrania, dokumenty, wydarzenia, aktualności z galerią, logowanie hasłem i MFA oraz administracja kont i ról).
 export const UNCOVERED_MODULES = Object.freeze([
-  'admin', 'audit-history', 'audit-reviews', 'board', 'exports',
+  'audit-history', 'audit-reviews', 'board', 'exports',
   'financial-reports', 'guardian-updates', 'import', 'print',
   'privacy-notice', 'representative', 'year-close',
 ]);
